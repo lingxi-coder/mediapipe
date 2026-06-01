@@ -383,6 +383,8 @@ Cache hit/invalidation (tile-plan/matrix, surface, input-tensor, output-buffer);
 
 ## Appendix A — Full roadmap (context only)
 
+> **Superseded:** the canonical, build-ordered roadmap now lives in `2026-06-01-roadmap.md`. Backend inference and BoTSORT are sequenced last there. The table below is the original (out-of-order) labelling, kept only for historical context; map its `M#` labels through the roadmap doc's "Prior label" column.
+
 | Group | Milestone | Feature | Depends on |
 |---|---|---|---|
 | 1 | M4 | Inference metadata (static, once; drives tiling) — build first | — (model resource) |

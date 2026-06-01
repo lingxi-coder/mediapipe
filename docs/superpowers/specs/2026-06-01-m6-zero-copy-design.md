@@ -177,4 +177,6 @@ These GPU tests are authored alongside the GL converter but executed only where 
 
 ## Appendix — relation to the roadmap
 
+> **Canonical roadmap:** `2026-06-01-roadmap.md`. There this spec is **Phase 5 (OpenGL zero-copy)** with **Phase 7** the LiteRT-Next follow-on; backend inference (Phase 6) and BoTSORT (Phase 8) come last. Legacy `M6/M6a/M6b` labels below map to Phases 5/7.
+
 From the detection-core spec's roadmap: `M6 | Zero-copy GPU: OpenGL-on-TFLite input path + backend-wide LiteRT-Next/platform backends | depends on M3 (contract), M5`. This spec realizes the **M3-contract-dependent OpenGL-on-TFLite slice (M6a)** and designs the **M5-dependent LiteRT-Next slice (M6b)** as a follow-on. Group-1 contracts (`InferenceMetadata` side packet, `StreamingTilesToTensorBatchCalculator` bookkeeping + `T <= batch_capacity` guard, `TensorBatchInfo`) are reused unchanged.
