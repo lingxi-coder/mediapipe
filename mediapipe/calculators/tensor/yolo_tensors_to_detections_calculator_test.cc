@@ -80,5 +80,40 @@ TEST(YoloTensorsToDetectionsCalculatorTest, ChannelsFirstSingleClass) {
   EXPECT_NEAR(bb.height(), 0.4f, 1e-5);
 }
 
+TEST(YoloTensorsToDetectionsCalculatorTest, ChannelsLastSameResult) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_LAST
+        num_classes: 1
+        conf_threshold: 0.25
+      }
+    }
+  )pb"));
+
+  // Shape [N=1, A=2, C=5]; row-major a*C + c. Same two anchors as Task 2.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 2, 5},
+                       {0.5f, 0.5f, 0.2f, 0.4f, 0.9f,
+                        0.25f, 0.75f, 0.1f, 0.1f, 0.1f})
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<
+          std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 1);
+  const auto& bb = batch[0][0].location_data().relative_bounding_box();
+  EXPECT_NEAR(bb.xmin(), 0.4f, 1e-5);
+  EXPECT_NEAR(bb.ymin(), 0.3f, 1e-5);
+  EXPECT_NEAR(bb.width(), 0.2f, 1e-5);
+  EXPECT_NEAR(bb.height(), 0.4f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe
