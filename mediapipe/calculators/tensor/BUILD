@@ -2579,3 +2579,19 @@ cc_test(
         "//mediapipe/framework/port:status_matchers",
     ],
 )
+
+cc_test(
+    name = "tiled_obb_pipeline_test",
+    srcs = ["tiled_obb_pipeline_test.cc"],
+    size = "small",
+    deps = [
+        ":merge_tile_detections_accumulator_calculator",
+        ":tiling_types",
+        "//mediapipe/calculators/util:rotated_non_max_suppression_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
