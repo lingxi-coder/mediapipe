@@ -34,6 +34,7 @@
 #include "mediapipe/framework/api3/contract.h"
 #include "mediapipe/framework/api3/node.h"
 #include "mediapipe/framework/calculator_framework.h"
+#include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/framework/resources.h"
@@ -179,9 +180,14 @@ class InferenceCalculator : public NodeIntf {
   static constexpr SideInput<
       mediapipe::InferenceCalculatorOptions::InputOutputConfig>::Optional
       kSideInIoMap{"IO_CONFIG"};
+  // Optional: when wired, emits static model metadata once at Open(). Only the
+  // CPU/TFLite backend populates it today (other backends would need to
+  // override GetModelMetadata); leaving it unconnected is a no-op.
+  static constexpr SideOutput<InferenceMetadata>::Optional kSideOutMetadata{
+      "METADATA"};
   MEDIAPIPE_NODE_CONTRACT(kInTensors, kInTensor, kSideInCustomOpResolver,
                           kSideInOpResolver, kSideInModel, kOutTensors,
-                          kOutTensor, kDelegate, kSideInIoMap);
+                          kOutTensor, kDelegate, kSideInIoMap, kSideOutMetadata);
 
  protected:
   using TfLiteDelegatePtr =

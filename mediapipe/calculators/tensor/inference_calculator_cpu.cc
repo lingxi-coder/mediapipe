@@ -69,6 +69,14 @@ absl::Status InferenceCalculatorCpuImpl::UpdateContract(
 
 absl::Status InferenceCalculatorCpuImpl::Open(CalculatorContext* cc) {
   MP_ASSIGN_OR_RETURN(inference_runner_, CreateInferenceRunner(cc));
+  // Emit static model metadata once, only if the graph wired the optional
+  // METADATA side packet. Unwired graphs are unaffected.
+  if (InferenceCalculator::kSideOutMetadata(cc).IsConnected()) {
+    MP_ASSIGN_OR_RETURN(InferenceMetadata metadata,
+                        inference_runner_->GetModelMetadata());
+    InferenceCalculator::kSideOutMetadata(cc).Set(
+        api2::MakePacket<InferenceMetadata>(std::move(metadata)));
+  }
   return InferenceCalculatorNodeImpl::UpdateIoMapping(
       cc, inference_runner_->GetInputOutputTensorNames());
 }
