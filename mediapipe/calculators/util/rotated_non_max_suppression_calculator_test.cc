@@ -82,5 +82,43 @@ TEST(RotatedNmsCalculatorTest, RotationSeparatesOtherwiseOverlappingBoxes) {
   EXPECT_EQ(out.size(), 2);  // low rotated-IoU -> both survive
 }
 
+TEST(RotatedNmsCalculatorTest, ClassAwareDoesNotSuppressAcrossClasses) {
+  // Two overlapping boxes of DIFFERENT classes.
+  auto build = [](bool agnostic) {
+    CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(
+        agnostic
+            ? R"pb(
+                calculator: "RotatedNonMaxSuppressionCalculator"
+                input_stream: "ORIENTED_DETECTIONS:in"
+                output_stream: "ORIENTED_DETECTIONS:out"
+                options {
+                  [mediapipe.RotatedNonMaxSuppressionCalculatorOptions.ext] {
+                    iou_threshold: 0.5 class_agnostic: true
+                  }
+                })pb"
+            : R"pb(
+                calculator: "RotatedNonMaxSuppressionCalculator"
+                input_stream: "ORIENTED_DETECTIONS:in"
+                output_stream: "ORIENTED_DETECTIONS:out"
+                options {
+                  [mediapipe.RotatedNonMaxSuppressionCalculatorOptions.ext] {
+                    iou_threshold: 0.5 class_agnostic: false
+                  }
+                })pb"));
+    auto in = std::make_unique<std::vector<OrientedDetection>>();
+    in->push_back(MakeObb(0.5f, 0.5f, 0.4f, 0.4f, 0.0f, 0.95f, /*label=*/0));
+    in->push_back(MakeObb(0.5f, 0.5f, 0.4f, 0.4f, 0.0f, 0.80f, /*label=*/1));
+    runner.MutableInputs()->Tag("ORIENTED_DETECTIONS").packets.push_back(
+        Adopt(in.release()).At(Timestamp(0)));
+    MP_EXPECT_OK(runner.Run());
+    return runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+        .Get<std::vector<OrientedDetection>>()
+        .size();
+  };
+
+  EXPECT_EQ(build(/*agnostic=*/false), 2u);  // different classes -> both kept
+  EXPECT_EQ(build(/*agnostic=*/true), 1u);   // agnostic -> dup suppressed
+}
+
 }  // namespace
 }  // namespace mediapipe
