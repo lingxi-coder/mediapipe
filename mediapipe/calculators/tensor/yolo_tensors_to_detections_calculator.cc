@@ -113,6 +113,15 @@ class YoloTensorsToDetectionsCalculator : public Node {
       d.add_label_id(best);
       dets->push_back(std::move(d));
     }
+    const int k = options_.max_detections_before_nms();
+    if (k >= 0 && static_cast<int>(dets->size()) > k) {
+      std::partial_sort(
+          dets->begin(), dets->begin() + k, dets->end(),
+          [](const Detection& l, const Detection& r) {
+            return l.score(0) > r.score(0);
+          });
+      dets->resize(k);
+    }
   }
 
   mediapipe::YoloTensorsToDetectionsCalculatorOptions options_;

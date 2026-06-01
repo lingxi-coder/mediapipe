@@ -186,5 +186,42 @@ TEST(YoloTensorsToDetectionsCalculatorTest, BatchNativeTwoRows) {
   EXPECT_EQ(batch[1].size(), 0);    // empty row still present
 }
 
+TEST(YoloTensorsToDetectionsCalculatorTest, TopKKeepsHighestScores) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.1
+        max_detections_before_nms: 2
+      }
+    }
+  )pb"));
+
+  // Shape [N=1, C=5, A=3]; index c*A + a. Three anchors, scores .3,.9,.6.
+  // top-2 by score -> keep .9 and .6, drop .3.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 5, 3},
+                       {0.5f, 0.5f, 0.5f,    // cx
+                        0.5f, 0.5f, 0.5f,    // cy
+                        0.2f, 0.2f, 0.2f,    // w
+                        0.2f, 0.2f, 0.2f,    // h
+                        0.3f, 0.9f, 0.6f})   // score
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<
+          std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 2);
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);  // sorted desc
+  EXPECT_NEAR(batch[0][1].score(0), 0.6f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe
