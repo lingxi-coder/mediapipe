@@ -742,7 +742,9 @@ cc_library_with_tflite(
     deps = [
         ":tensor_span",
         "//mediapipe/framework:calculator_context",
+        "//mediapipe/framework/formats:inference_metadata_cc_proto",
         "//mediapipe/framework/formats:tensor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
 )
