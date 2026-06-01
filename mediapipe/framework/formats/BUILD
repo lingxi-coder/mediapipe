@@ -53,6 +53,11 @@ mediapipe_register_type(
 )
 
 mediapipe_proto_library(
+    name = "oriented_detection_proto",
+    srcs = ["oriented_detection.proto"],
+)
+
+mediapipe_proto_library(
     name = "classification_proto",
     srcs = ["classification.proto"],
 )
