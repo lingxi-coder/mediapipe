@@ -35,24 +35,21 @@ exports_files(["LICENSE"])
 # "include/opencv4/opencv2/**/*.h*" and the include prefix needs to be set to
 # "include/opencv4".
 
-PREFIX = "opt/opencv@3"
+# Version-independent Homebrew symlink (opt/opencv -> Cellar/opencv/<version>),
+# so this does not need editing after `brew upgrade opencv`. For OpenCV 4 the
+# headers live under include/opencv4/ (handled below).
+PREFIX = "opt/opencv"
 
 cc_library(
     name = "opencv",
     srcs = glob(
         [
             paths.join(PREFIX, "lib/libopencv_core.dylib"),
-            paths.join(PREFIX, "lib/libopencv_calib3d.dylib"),
-            paths.join(PREFIX, "lib/libopencv_features2d.dylib"),
-            paths.join(PREFIX, "lib/libopencv_highgui.dylib"),
-            paths.join(PREFIX, "lib/libopencv_imgcodecs.dylib"),
             paths.join(PREFIX, "lib/libopencv_imgproc.dylib"),
-            paths.join(PREFIX, "lib/libopencv_video.dylib"),
-            paths.join(PREFIX, "lib/libopencv_videoio.dylib"),
         ],
     ),
-    hdrs = glob([paths.join(PREFIX, "include/opencv2/**/*.h*")]),
-    includes = [paths.join(PREFIX, "include/")],
+    hdrs = glob([paths.join(PREFIX, "include/opencv4/opencv2/**/*.h*")]),
+    includes = [paths.join(PREFIX, "include/opencv4/")],
     linkstatic = 1,
     visibility = ["//visibility:public"],
 )
