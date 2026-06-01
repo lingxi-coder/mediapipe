@@ -115,5 +115,44 @@ TEST(YoloTensorsToDetectionsCalculatorTest, ChannelsLastSameResult) {
   EXPECT_NEAR(bb.height(), 0.4f, 1e-5);
 }
 
+TEST(YoloTensorsToDetectionsCalculatorTest, MultiClassArgmaxAndThreshold) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 3
+        conf_threshold: 0.5
+      }
+    }
+  )pb"));
+
+  // Shape [N=1, C=7, A=2]; channels = cx,cy,w,h, s0,s1,s2 ; index c*A + a.
+  // Anchor0: box(.5,.5,.2,.2) scores [.1,.8,.3] -> class 1, score .8 (kept)
+  // Anchor1: box(.5,.5,.2,.2) scores [.4,.2,.1] -> max .4 < .5 (dropped)
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 7, 2},
+                       {0.5f, 0.5f,   // cx
+                        0.5f, 0.5f,   // cy
+                        0.2f, 0.2f,   // w
+                        0.2f, 0.2f,   // h
+                        0.1f, 0.4f,   // s0
+                        0.8f, 0.2f,   // s1
+                        0.3f, 0.1f})  // s2
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<
+          std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 1);
+  EXPECT_EQ(batch[0][0].label_id(0), 1);
+  EXPECT_NEAR(batch[0][0].score(0), 0.8f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe
