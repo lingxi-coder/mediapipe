@@ -24,11 +24,11 @@ The parent request adds seven features to MediaPipe:
 These span four subsystems and are too large for one spec. They were decomposed by dependency:
 
 - **Group 1 — Detection core (this spec):** M1 multi-batch, M2 YOLO detect + OBB, M3 external tiling, M4 inference metadata — all on the **CPU** TFLite/LiteRT path. Buildable on TFLite-exported YOLO models; lowest risk; delivers a working YOLO-OBB tiled batched detector.
-- **Deferred follow-ons (designed here, implemented later — §14):** **M3.5** tile/input/output caching (perf, default-off), **M4.5** video-mode FlowPackager scheduler, and the **OpenGL zero-copy** input path (folded into **M6**).
+- **Deferred follow-ons (designed here, implemented later — §14):** **M8** tile/input/output caching (perf, default-off), **M4.5** video-mode FlowPackager scheduler, and the **OpenGL zero-copy** input path (folded into **M6**).
 - **Group 2 — Inference backends:** M5 pluggable backend + ONNX/PT/TensorRT/CoreML, M6 zero-copy GPU (OpenGL-on-TFLite slice + backend-wide LiteRT-Next).
 - **Group 3 — Tracking:** M7 BoTSORT.
 
-Dependencies: **M4→M1/M3** (inference metadata is the source of truth that drives tile packaging), M1→M3, M2↔M3, M5→M6; M2 introduces the OBB type consumed by M1/M3/M7; M7 is otherwise independent. The Group-1 calculator contracts are designed so M3.5/M4.5/M6 attach without breaking them.
+Dependencies: **M4→M1/M3** (inference metadata is the source of truth that drives tile packaging), M1→M3, M2↔M3, M5→M6; M2 introduces the OBB type consumed by M1/M3/M7; M7 is otherwise independent. The Group-1 calculator contracts are designed so M8/M4.5/M6 attach without breaking them.
 
 ## 2. Locked decisions
 
@@ -46,7 +46,7 @@ Dependencies: **M4→M1/M3** (inference metadata is the source of truth that dri
 | Tiling performance model | Stream each filled tile batch directly to inference; do not materialize all tile images or all tile batches. | For `T > batch_capacity`, inference starts after the first `batch_capacity` tiles are tensorized instead of waiting for every tile. This is a CPU-path design property, independent of GPU zero-copy. |
 | Inference metadata | Static, model-level; **sourced from the loaded inference instance** via a new read-only `InferenceRunner::GetModelMetadata()`, surfaced by `InferenceCalculator` as an **opt-in `METADATA` output side packet**, emitted **exactly once** at `Open()` after the runner initializes. Source of truth for tile packaging (input H/W/C, dtype, layout, `batch_capacity`, fixed/dynamic batch). | Some models only expose true I/O specs *after* load (dynamic shapes, quant, signatures), so the loaded instance is the only accurate source — and this generalizes to the M5 backends (TensorRT/CoreML/ONNX must be loaded to introspect). This is the **one sanctioned, contained exception to Approach A**: additive and guarded — off unless `METADATA` is wired, so behavior is byte-for-byte upstream otherwise. Per-frame timing is not part of it. |
 
-**Deferred by design (see §14, contracts kept stable):** GPU/OpenGL zero-copy input path → **M6**; tile/input/output caches → **M3.5**; video-mode FlowPackager scheduling → **M4.5**. Group 1 is CPU-correct first; these attach as default-off perf/feature layers, each gated on the CPU baseline passing tests.
+**Deferred by design (see §14, contracts kept stable):** GPU/OpenGL zero-copy input path → **M6**; tile/input/output caches → **M8**; video-mode FlowPackager scheduling → **M4.5**. Group 1 is CPU-correct first; these attach as default-off perf/feature layers, each gated on the CPU baseline passing tests.
 
 ## 3. Current-state findings (codebase)
 
@@ -225,7 +225,7 @@ Per-frame timing/stats (latency, batch count) are intentionally excluded — met
 - New YOLO decoders read `dim[0]` from each inference batch and emit one inner vector per tensor row. Padded rows are dropped later by merge using `TensorBatchInfo`; the existing SSD calculator is never modified.
 - Cross-frame batching is out of scope. If `T < batch_capacity`, run an underfilled/padded single-frame batch rather than combining with another frame.
 - **Hard constraint:** `batch_capacity` and input geometry come from `InferenceMetadata`, so the packed tensor matches the model by construction. The calculator still guards that the emitted `N` is `<= batch_capacity` (and `== batch_capacity` for fixed-batch models, padding the remainder), failing with a clear, actionable error on mismatch.
-- A bounded input-tensor cache and the OpenGL write path are **deferred** (§14, M3.5/M6); the CPU calculator allocates/reuses CPU-backed `Tensor`s simply for Group 1.
+- A bounded input-tensor cache and the OpenGL write path are **deferred** (§14, M8/M6); the CPU calculator allocates/reuses CPU-backed `Tensor`s simply for Group 1.
 - Interaction with GPU delegate and dynamic batch is a known risk (§13).
 
 ## 7. M2 — YOLO decode + NMS
@@ -250,7 +250,7 @@ Per-frame timing/stats (latency, batch count) are intentionally excluded — met
   - Merge inverts each tile's tile-to-tensor matrix, then composes tensor-to-tile with `TileGeometry`, accounting for crop offset, resize scale, keep-aspect-ratio padding, and any `NormalizedRect` rotation.
   - Axis-aligned projection can **share helper code** with `detection_projection_calculator` but cannot call that calculator directly (this path is batched/tile-indexed). OBB projection is separate: transform the four oriented-box corners through the composed affine matrix, fit the rotated rectangle, and recompute center/size/rotation in full-frame-normalized coords.
 - Output after final NMS: one merged detection vector in full-frame-normalized coords per frame; rendering optional via `annotation_overlay`.
-- **Contract stability for deferred work:** keep the calculator contract stable so the M3.5 caches and the M6 OpenGL zero-copy input path attach without interface changes.
+- **Contract stability for deferred work:** keep the calculator contract stable so the M8 caches and the M6 OpenGL zero-copy input path attach without interface changes.
 
 ## 9. M4 — Inference metadata
 
@@ -324,7 +324,7 @@ Separate sub-plan, sequenced after Group 1 calculators are verified. Not a Group
 7. `MergeTileDetectionsAccumulator` (M3): projection, **padded-row removal**, bounded frame accumulation, final global-NMS ordering.
 8. Graph-level examples/tests for tiled batched YOLO and YOLO-OBB → **Group 1 done.**
 
-Then, as separate gated milestones (§14), each default-off and only after the CPU baseline passes: **M3.5** caches → **M6** OpenGL zero-copy input path → **M4.5** video scheduler. Tasks API wrappers (§10) remain a follow-up sub-plan.
+Then, as separate gated milestones (§14), each default-off and only after the CPU baseline passes: **M8** caches → **M6** OpenGL zero-copy input path → **M4.5** video scheduler. Tasks API wrappers (§10) remain a follow-up sub-plan.
 
 ## 13. Risks & open items (Group 1)
 
@@ -342,7 +342,9 @@ Then, as separate gated milestones (§14), each default-off and only after the C
 
 These were promoted out of Group 1 to keep milestone one CPU-correct and low-risk. Designs are preserved so the Group-1 contracts can be built to accommodate them. Each is default-off and gated on the CPU baseline passing tests.
 
-### 14.1 M3.5 — Tile / input / output caching (perf)
+### 14.1 M8 — Tile / input / output caching (perf)
+
+> Renamed from "M8" → **M8** to avoid implying it is part of the completed M3 (external tiling). M8 is a standalone deferred perf milestone that builds *on top of* finished M1–M3; it is not unfinished M3 work.
 Bounded caches, all bounded by explicit options (`max_in_flight_frames`, `max_cached_tile_plans`, `max_tile_surfaces`, `max_input_tensors`, `max_output_buffers`):
 1. **Tile geometry/matrix cache** — `TilePlan`, normalized rects, priority order, tile-to-tensor matrices, keyed by image size, tile-rect hash, preprocessing options, model input size, tensor layout, keep-aspect-ratio. Geometry only, no pixels.
 2. **Tile surface cache** — reusable tile render targets/surfaces for implementations that need intermediate surfaces (keyed by tile size, format, GL context).
@@ -372,7 +374,7 @@ Prior final detections cache ─► VideoTileSchedulerCalculator ─► TilePlan
 
 **Boundary risk:** cross-frame candidate propagation overlaps M7 (BoTSORT). Keep M4.5 strictly scheduling/caching; if flow confidence is poor or cache chunks are missing, fall back to full tiled detection. Revisit whether candidate propagation should instead live in M7 before implementing.
 
-`FlowPackagerCalculator`'s `CACHE_DIR` is a video-metadata cache (offline/random-access tracking metadata), distinct from the M3.5 tile/input/output caches; in live mode consume `TRACKING` directly and treat `COMPLETE` as offline-cache-finalization only.
+`FlowPackagerCalculator`'s `CACHE_DIR` is a video-metadata cache (offline/random-access tracking metadata), distinct from the M8 tile/input/output caches; in live mode consume `TRACKING` directly and treat `COMPLETE` as offline-cache-finalization only.
 
 ### 14.4 Deferred tests
 Cache hit/invalidation (tile-plan/matrix, surface, input-tensor, output-buffer); OpenGL zero-copy (GPU-backed input takes GL path, no CPU readback/`ImageFrame`, textures released only after downstream use); video integration (synthetic/fixture video with FlowPackager `TrackingData`, repeated tile plans, skipped-inference frames, cache invalidation, final per-frame global NMS).
@@ -387,7 +389,7 @@ Cache hit/invalidation (tile-plan/matrix, surface, input-tensor, output-buffer);
 | 1 | M1 | Multi-batch (`N≥1`), ObjectDetection + OBB (CPU) | M4 |
 | 1 | M2 | YOLO detect + OBB decode + rotated NMS | — |
 | 1 | M3 | External tiling (externally supplied tiles → batch → merge), CPU | M1, M2, M4 |
-| 1.5 | M3.5 | Tile/input/output caching (perf, default-off) | M1–M3 |
+| 1.5 | M8 | Tile/input/output caching (perf, default-off) | M1–M3 |
 | 1.5 | M4.5 | Video-mode FlowPackager scheduler | M1–M3 |
 | 2 | M5 | Pluggable inference backend + ONNX/PT/TensorRT/CoreML (platform-gated) | — |
 | 2 | M6 | Zero-copy GPU: OpenGL-on-TFLite input path + backend-wide LiteRT-Next/platform backends | M3 (contract), M5 |
