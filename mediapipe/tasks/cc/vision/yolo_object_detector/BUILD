@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -77,4 +78,26 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
     ],
     alwayslink = 1,
+)
+
+cc_test(
+    name = "yolo_object_detector_test",
+    srcs = ["yolo_object_detector_test.cc"],
+    data = [
+        # Image fixture (always present — fetched from GCS via mediapipe_files).
+        "//mediapipe/tasks/testdata/vision:test_images",
+        # Model fixture (NOT yet available — add when yolov8n.tflite lands):
+        # "//mediapipe/tasks/testdata/vision:yolov8n.tflite",
+    ],
+    deps = [
+        ":yolo_object_detector",
+        "//mediapipe/framework/deps:file_helpers",
+        "//mediapipe/framework/deps:file_path",
+        "//mediapipe/framework/formats:image",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/tasks/cc/components/containers:detection_result",
+        "//mediapipe/tasks/cc/vision/utils:image_utils",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
 )
