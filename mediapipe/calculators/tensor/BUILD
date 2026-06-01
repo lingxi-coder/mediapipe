@@ -2444,6 +2444,11 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "tiling_types",
+    hdrs = ["tiling_types.h"],
+)
+
 cc_test(
     name = "vector_to_tensor_calculator_test",
     srcs = ["vector_to_tensor_calculator_test.cc"],
