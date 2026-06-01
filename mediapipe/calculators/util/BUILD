@@ -456,6 +456,36 @@ cc_library(
 )
 
 cc_library(
+    name = "rotated_non_max_suppression_calculator",
+    srcs = ["rotated_non_max_suppression_calculator.cc"],
+    deps = [
+        ":rotated_non_max_suppression_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:opencv_core",
+        "//mediapipe/framework/port:opencv_imgproc",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "rotated_non_max_suppression_calculator_test",
+    srcs = ["rotated_non_max_suppression_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":rotated_non_max_suppression_calculator",
+        ":rotated_non_max_suppression_calculator_cc_proto",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_library(
     name = "thresholding_calculator",
     srcs = ["thresholding_calculator.cc"],
     deps = [
