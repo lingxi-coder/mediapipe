@@ -2339,6 +2339,15 @@ mediapipe_proto_library(
     srcs = ["vector_to_tensor_calculator.proto"],
 )
 
+mediapipe_proto_library(
+    name = "yolo_tensors_to_detections_calculator_proto",
+    srcs = ["yolo_tensors_to_detections_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
 cc_test(
     name = "vector_to_tensor_calculator_test",
     srcs = ["vector_to_tensor_calculator_test.cc"],
