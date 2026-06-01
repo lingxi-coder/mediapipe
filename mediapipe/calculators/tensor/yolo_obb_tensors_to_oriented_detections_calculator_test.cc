@@ -80,5 +80,37 @@ TEST(YoloObbCalculatorTest, ChannelsFirstSingleClassWithAngle) {
   EXPECT_EQ(d.label_id(0), 0);
 }
 
+TEST(YoloObbCalculatorTest, BatchNativeTwoRows) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.25
+      }
+    }
+  )pb"));
+
+  // Shape [N=2, C=6, A=1]; index (n*C + c)*A + a, A=1 so = n*6 + c.
+  // Row0 score .9 angle .3 (kept); Row1 score .1 (dropped) -> sizes {1,0}.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{2, 6, 1},
+                       {0.5f, 0.5f, 0.2f, 0.4f, 0.9f, 0.3f,    // row 0
+                        0.5f, 0.5f, 0.2f, 0.4f, 0.1f, 0.0f})   // row 1
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                          .Get<std::vector<std::vector<OrientedDetection>>>();
+  ASSERT_EQ(batch.size(), 2);
+  EXPECT_EQ(batch[0].size(), 1);
+  EXPECT_EQ(batch[1].size(), 0);
+  EXPECT_NEAR(batch[0][0].rotation(), 0.3f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe
