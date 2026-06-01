@@ -2550,3 +2550,32 @@ cc_test(
         "@com_google_absl//absl/strings",
     ],
 )
+
+cc_library(
+    name = "merge_tile_detections_accumulator_calculator",
+    srcs = ["merge_tile_detections_accumulator_calculator.cc"],
+    deps = [
+        ":tiling_types",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "merge_tile_detections_accumulator_calculator_test",
+    srcs = ["merge_tile_detections_accumulator_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":merge_tile_detections_accumulator_calculator",
+        ":tiling_types",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
