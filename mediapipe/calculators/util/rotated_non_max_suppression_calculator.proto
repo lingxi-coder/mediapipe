@@ -1,0 +1,38 @@
+// Copyright 2026 The MediaPipe Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package mediapipe;
+
+import "mediapipe/framework/calculator.proto";
+
+// Options for RotatedNonMaxSuppressionCalculator. Greedy NMS over oriented
+// detections using rotated-rectangle IoU.
+message RotatedNonMaxSuppressionCalculatorOptions {
+  extend .mediapipe.CalculatorOptions {
+    optional RotatedNonMaxSuppressionCalculatorOptions ext = 471230003;
+  }
+
+  // A detection suppresses a lower-scoring one if their rotated IoU is at or
+  // above this threshold.
+  optional float iou_threshold = 1 [default = 0.45];
+
+  // Maximum detections to return (after suppression). -1 = no limit.
+  optional int32 max_detections = 2 [default = -1];
+
+  // If true, suppression ignores class; otherwise only detections sharing the
+  // top label_id can suppress each other.
+  optional bool class_agnostic = 3 [default = false];
+}

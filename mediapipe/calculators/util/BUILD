@@ -116,6 +116,15 @@ mediapipe_proto_library(
 )
 
 mediapipe_proto_library(
+    name = "rotated_non_max_suppression_calculator_proto",
+    srcs = ["rotated_non_max_suppression_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+mediapipe_proto_library(
     name = "packet_frequency_proto",
     srcs = ["packet_frequency.proto"],
 )
