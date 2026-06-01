@@ -26,6 +26,7 @@ Group 1 built a CPU tiling→inference pipeline: `StreamingTilesToTensorBatchCal
 | Verification | **Design-only now**; implementation deferred to a Linux/Android GL env; code structured to split CPU-testable logic from GL-context code | This macOS machine can't build/run desktop-GL GPU calculators; Group 1's local TDD loop doesn't extend to the GL runtime. |
 | Inference runner | Use `inference_calculator_gl_advanced` or an equivalent direct-SSBO binding path for true zero-copy | The standard `inference_calculator_gl.cc` currently copies input with `glCopyBufferSubData`; it is a GPU-with-copy fallback, not the M6a zero-copy path. |
 | Structure | Reuse the existing `ImageToTensorConverter` row-offset interface first; add only thin tile/batch helpers around it if needed | The existing converter already accepts `tensor_buffer_offset` and the GL buffer converter writes one ROI into an SSBO offset. Avoid a parallel converter abstraction unless implementation proves it necessary. |
+| Caching | M6a owns a **bounded, fence-gated GL input-tensor pool** (§5.1); the other cache layers stay in the separate **M3.5** milestone (detection-core spec §14.1) | Zero-copy removes the CPU↔GPU *copy*, but allocating a fresh GL SSBO every frame pays a per-frame GPU *allocation* cost that erases much of the win — so buffer reuse is intrinsic to M6a's value (and §5's double/triple-buffering already half-mandates it). M3.5's layer 3 was already labeled "primary zero-copy cache in GPU mode." Tile-geometry, output/decoder, and model/delegate caches remain orthogonal M3.5 perf. |
 
 ## 3. Current-state findings (codebase, verified)
 
@@ -97,8 +98,18 @@ If later profiling shows per-row dispatch overhead is too high, add an optional 
 - **Sync, memory visibility, and lifetime:**
   - `OpenGlBufferView` fences/release callbacks handle cross-context ordering and object lifetime, but they do **not** make SSBO writes visible by themselves.
   - After zero-fill and tile shader writes, issue the required GL memory barrier before inference reads the SSBO (at minimum `GL_SHADER_STORAGE_BARRIER_BIT`; include `GL_BUFFER_UPDATE_BARRIER_BIT` when the padding clear path uses buffer update commands).
-  - Use double/triple-buffered input tensors plus release callbacks so an input tensor is not reused for another frame or batch until downstream inference packets release it.
-  - Do not call `GetOpenGlBufferWriteView()` multiple times on the same already-valid `Tensor` instance as a cache reuse mechanism; `Tensor` is designed for single writes. If pooling is required, pool ownership/storage behind fresh logical tensor packets or another explicitly synchronized buffer wrapper.
+  - Use double/triple-buffered input tensors (the bounded pool of §5.1) plus release callbacks so an input tensor is not reused for another frame or batch until downstream inference packets release it.
+  - Do not call `GetOpenGlBufferWriteView()` multiple times on the same already-valid `Tensor` instance as a cache reuse mechanism; `Tensor` is designed for single writes. Pooling reuses the underlying GL *storage* behind fresh logical tensor packets — see §5.1.
+
+### 5.1 GL input-tensor pool (bounded, fence-gated) — part of M6a
+
+The double/triple-buffering above is concretely a small bounded pool of GL-backed input tensors, reused across frames so the zero-copy path does not re-allocate SSBO storage every frame. This is **in M6a** (it is what makes zero-copy fast); the broader cache subsystem stays in M3.5 (§ "scope boundary" below).
+
+- **What is pooled:** the GL SSBO storage for the `[N,H,W,C]` input tensor. Because `InferenceMetadata` is static (M4), the shape/dtype/layout key is effectively constant per graph — so the pool is a fixed-size ring of identically-shaped buffers, not a general keyed map. (Key still includes shape/dtype/layout/memory-type so a metadata change forces a rebuild; metadata does not change post-init.)
+- **Single-write correctness:** `Tensor` is single-write, so the pool does **not** rewrite a live `Tensor`. It recycles the underlying GL buffer object behind a **fresh logical `Tensor`/packet** each frame (or an explicitly synchronized buffer wrapper). A buffer returns to the pool only after (a) its `OpenGlBufferView` `GlSync` fence has signaled and (b) the downstream inference packet that consumed it has been released (the release-callback discipline already required in §5). This couples the pool to the fence/barrier lifetime — it is not a plain map.
+- **Bounds:** explicit options `max_in_flight_frames` (default 1) and `max_input_tensors` (the ring depth, default 2–3). With `max_in_flight_frames=1` the ring is just the double/triple buffer; allowing more frames in flight grows the ring proportionally. The pool blocks/allocates-up-to-bound rather than growing unbounded.
+- **Scope boundary (what is NOT here):** the tile-geometry/matrix cache, tile-surface cache, output/decoder-buffer cache, and model/delegate cache remain **M3.5** (detection-core spec §14.1), cross-referenced — they help CPU and GPU alike and are not specific to zero-copy. The CPU path needs no pool change for M6a (Group-1 per-frame CPU allocation is acceptable; CPU buffer reuse, if wanted, is M3.5).
+- **Cache-correctness rules inherited from M3.5 §14.1:** a pooled buffer must never be reused before release; pooling must not mix tiles/detections across source frames; the pool is GL-context-scoped. Default the pool to a safe minimal depth and make depth an explicit option.
 
 ## 6. Inference consumption + the hard invariant
 
@@ -130,6 +141,7 @@ If later profiling shows per-row dispatch overhead is too high, add an optional 
 - No-readback assertions: GpuBuffer input takes the GL path and never calls `GetCpuReadView`/materializes `ImageFrame`.
 - Direct-bind assertion: the zero-copy graph uses `inference_calculator_gl_advanced` or an equivalent direct-SSBO runner and does not execute the standard `inference_calculator_gl.cc` input `glCopyBufferSubData` path.
 - GL memory visibility / lifetime: required memory barriers are issued after SSBO writes and before inference reads; an input tensor is not overwritten until downstream release; double/triple-buffer correctness.
+- Input-tensor pool (§5.1): *CPU-testable now* — ring depth/bound enforcement, key match against `InferenceMetadata`, no buffer handed out twice while in flight. *GL/on-device* — a pooled buffer is recycled only after its fence signals and the downstream packet releases; never reused before release; pool stays bounded by `max_input_tensors`/`max_in_flight_frames`.
 - End-to-end GPU graph: `GpuBuffer` frame → GL batcher → direct-SSBO GL inference → decode → merge → global NMS, asserting parity with the CPU pipeline on the same input.
 
 These GPU tests are authored alongside the GL converter but executed only where an OpenGL build+test environment exists (Linux/Android CI or on-device), per the verification decision.
@@ -140,6 +152,7 @@ These GPU tests are authored alongside the GL converter but executed only where 
 - Modify: `mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.cc` — select CPU/GL converter by input type, convert `TileGeometry` to `RotatedRect`, compute row offsets, preserve the existing batch bookkeeping + `T <= batch_capacity` guard.
 - Create only if needed: `mediapipe/calculators/tensor/tile_batch_to_tensor_helper.{cc,h}` — thin helper for tile-to-ROI conversion, row-offset math, dtype/layout validation, and repeated calls into `ImageToTensorConverter`. This helper must not introduce a second public converter abstraction.
 - Modify or configure: GL inference graph/calculator wiring to use `inference_calculator_gl_advanced` or an equivalent direct-SSBO binding runner for the M6a zero-copy graph.
+- Create (GL env): the bounded GL input-tensor pool (§5.1) — likely a small `GlInputTensorPool` owned by the batcher/GL converter (ring of GL buffers + fence-gated recycling). Its bookkeeping (ring index, bound, key match) is CPU-unit-testable; the GL recycling is build-gated. Reuse MediaPipe's existing `GpuBuffer`/GL buffer pools if they fit rather than inventing storage.
 - Modify: `mediapipe/calculators/tensor/BUILD` — build-gated GL deps/tests.
 - Tests: local CPU seam/helper tests, build-gated GL row-offset golden tests, GPU multi-batch tests, direct-bind/no-readback tests, and `tiled_gpu_pipeline_test.cc` (build-gated/on-device).
 
@@ -149,7 +162,7 @@ These GPU tests are authored alongside the GL converter but executed only where 
 2. **macOS is Metal, not desktop GL** — this machine can't even compile-verify the GL path. A Metal converter is possible but is M6b/parallel scope, not M6a.
 3. **Wrong GL inference runner silently breaking zero-copy** — standard `inference_calculator_gl.cc` performs an input copy. M6a graphs must use `inference_calculator_gl_advanced`/direct SSBO binding, with tests or instrumentation proving the copy path is not used.
 4. **GL tensor layout vs delegate expectation** — the TFLite GL delegate's expected input buffer layout (BHWC, alignment) must match what the converter writes; verify on-device. Texture-view is BHWC-only.
-5. **GL memory barrier / fence / lifetime correctness** — incorrect visibility or synchronization causes stale reads/races; needs explicit SSBO memory barriers, double/triple-buffer + release-callback discipline, and on-device tests.
+5. **GL memory barrier / fence / lifetime correctness, incl. the input-tensor pool (§5.1)** — incorrect visibility or synchronization causes stale reads/races; the pool must recycle a GL buffer only after its fence signals and the downstream packet releases (never reuse-before-release). Needs explicit SSBO memory barriers, fence-gated recycling, bounded depth, and on-device tests. Without the pool, zero-copy still works but re-allocates GPU storage per frame (perf, not correctness).
 6. **dtype support is narrower than metadata** — M6a initially supports float32 input packing. If metadata reports quantized/integer input, fail until that packing is designed.
 7. **Refactor regression risk** — changing CPU pixel-write plumbing could change CPU behavior; mitigated by keeping the Group-1 batcher tests green unchanged (verifiable now).
 8. **M6b depends on M5 + a new LiteRT-Next dependency** — large, separate effort; only the Group-1 batch contract and row-offset seam are committed to now.
@@ -157,7 +170,7 @@ These GPU tests are authored alongside the GL converter but executed only where 
 ## 12. Sequencing
 
 1. **(Now, locally verifiable)** Route CPU tile writes through the existing `ImageToTensorConverter` row-offset seam or a thin helper; preserve the shipped `T <= batch_capacity` guard; Group-1 batcher tests stay green.
-2. **(Deferred → GL env)** Enable GL batcher selection using the GL buffer converter, add explicit memory barriers, and write build-gated GL row-offset + batch tests.
+2. **(Deferred → GL env)** Enable GL batcher selection using the GL buffer converter, add the bounded fence-gated input-tensor pool (§5.1) + explicit memory barriers, and write build-gated GL row-offset + batch + pool tests.
 3. **(Deferred → GL env)** Wire the zero-copy graph to `inference_calculator_gl_advanced`/direct SSBO binding and prove the standard input-copy path is not used.
 4. **(Deferred → on-device/CI)** End-to-end GPU graph parity test.
 5. **(M6b, after M5)** LiteRT-Next/platform buffer writer + dependency for backend-wide zero-copy.
