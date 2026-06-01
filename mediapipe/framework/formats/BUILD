@@ -58,6 +58,11 @@ mediapipe_proto_library(
 )
 
 mediapipe_proto_library(
+    name = "inference_metadata_proto",
+    srcs = ["inference_metadata.proto"],
+)
+
+mediapipe_proto_library(
     name = "classification_proto",
     srcs = ["classification.proto"],
 )

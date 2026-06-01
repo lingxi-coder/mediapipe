@@ -1,0 +1,43 @@
+// Copyright 2026 The MediaPipe Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package mediapipe;
+
+// Describes one model input or output tensor.
+message TensorSpec {
+  optional string name = 1;
+  repeated int32 shape = 2 [packed = true];   // includes batch dim; -1 = dynamic
+  optional string dtype = 3;            // "float32", "uint8", "int8", ...
+  optional float quant_scale = 4;
+  optional int32 quant_zero_point = 5;
+}
+
+// Static, model-level metadata read from a loaded inference instance and
+// emitted once (as an output side packet) after successful initialization.
+// It is the source of truth used to pack tiles to the model's exact input.
+message InferenceMetadata {
+  optional string model_id = 1;
+  repeated TensorSpec input = 2;
+  repeated TensorSpec output = 3;
+  optional string backend = 4;          // backend actually selected (post-init)
+  optional int32 batch_capacity = 5;    // model input batch dim (>0 fixed)
+  optional bool is_dynamic_batch = 6;
+  optional int32 input_height = 7;
+  optional int32 input_width = 8;
+  optional int32 input_channels = 9;
+  optional string tensor_layout = 10;   // e.g. "BHWC"
+  optional int32 class_count = 11;
+}
