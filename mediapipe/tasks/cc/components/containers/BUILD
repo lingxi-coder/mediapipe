@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -77,5 +78,25 @@ cc_library(
     hdrs = ["landmark.h"],
     deps = [
         "//mediapipe/framework/formats:landmark_cc_proto",
+    ],
+)
+
+cc_library(
+    name = "oriented_object_detection_result",
+    srcs = ["oriented_object_detection_result.cc"],
+    hdrs = ["oriented_object_detection_result.h"],
+    deps = [
+        ":category",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+    ],
+)
+
+cc_test(
+    name = "oriented_object_detection_result_test",
+    srcs = ["oriented_object_detection_result_test.cc"],
+    deps = [
+        ":oriented_object_detection_result",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
     ],
 )
