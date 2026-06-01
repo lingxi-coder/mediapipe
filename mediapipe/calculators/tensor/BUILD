@@ -2488,6 +2488,52 @@ cc_test(
     ],
 )
 
+mediapipe_proto_library(
+    name = "streaming_tiles_to_tensor_batch_calculator_proto",
+    srcs = ["streaming_tiles_to_tensor_batch_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "streaming_tiles_to_tensor_batch_calculator",
+    srcs = ["streaming_tiles_to_tensor_batch_calculator.cc"],
+    deps = [
+        ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+        ":tiling_types",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/formats:inference_metadata_cc_proto",
+        "//mediapipe/framework/formats:tensor",
+        "//mediapipe/framework/port:opencv_core",
+        "//mediapipe/framework/port:opencv_imgproc",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "streaming_tiles_to_tensor_batch_calculator_test",
+    srcs = ["streaming_tiles_to_tensor_batch_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":streaming_tiles_to_tensor_batch_calculator",
+        ":tiling_types",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:inference_metadata_cc_proto",
+        "//mediapipe/framework/formats:tensor",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
 cc_test(
     name = "vector_to_tensor_calculator_test",
     srcs = ["vector_to_tensor_calculator_test.cc"],
