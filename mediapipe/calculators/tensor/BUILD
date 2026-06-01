@@ -914,6 +914,25 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "inference_calculator_metadata_test",
+    srcs = ["inference_calculator_metadata_test.cc"],
+    data = [":testdata/add.bin"],
+    size = "medium",
+    deps = [
+        ":inference_calculator",
+        ":inference_calculator_cc_proto",
+        ":inference_calculator_cpu",
+        ":inference_calculator_interface",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/formats:inference_metadata_cc_proto",
+        "//mediapipe/framework/formats:tensor",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
 cc_library(
     name = "inference_on_disk_cache_helper",
     srcs = ["inference_on_disk_cache_helper.cc"],
