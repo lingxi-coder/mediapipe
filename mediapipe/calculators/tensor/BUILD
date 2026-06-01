@@ -2414,6 +2414,33 @@ cc_test(
 )
 
 cc_library(
+    name = "yolo_batch_detections_to_single_calculator",
+    srcs = ["yolo_batch_detections_to_single_calculator.cc"],
+    deps = [
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "yolo_batch_detections_to_single_calculator_test",
+    srcs = ["yolo_batch_detections_to_single_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":yolo_batch_detections_to_single_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_library(
     name = "yolo_obb_tensors_to_oriented_detections_calculator",
     srcs = ["yolo_obb_tensors_to_oriented_detections_calculator.cc"],
     deps = [
