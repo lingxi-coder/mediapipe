@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,7 @@
 #include "mediapipe/calculators/tensor/tflite_delegate_ptr.h"
 #include "mediapipe/framework/api2/packet.h"
 #include "mediapipe/framework/calculator_framework.h"
+#include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/mediapipe_profiling.h"
 #include "mediapipe/framework/port/ret_check.h"
@@ -45,6 +47,18 @@ namespace {
 
 using Interpreter = ::tflite::Interpreter;
 using InterpreterBuilder = ::tflite::InterpreterBuilder;
+
+std::string TfLiteTypeName(TfLiteType type) {
+  switch (type) {
+    case kTfLiteFloat32: return "float32";
+    case kTfLiteUInt8:   return "uint8";
+    case kTfLiteInt8:    return "int8";
+    case kTfLiteInt32:   return "int32";
+    case kTfLiteInt64:   return "int64";
+    case kTfLiteFloat16: return "float16";
+    default:             return "unknown";
+  }
+}
 
 absl::Status VerifyModelTensorsForCustomAllocation(
     const Interpreter& interpreter) {
@@ -130,6 +144,8 @@ class InferenceInterpreterDelegateRunner : public InferenceRunner {
   const InputOutputTensorNames& GetInputOutputTensorNames() const override {
     return input_output_tensor_names_;
   }
+
+  absl::StatusOr<InferenceMetadata> GetModelMetadata() const override;
 
  private:
   api2::Packet<TfLiteModelPtr> model_;
@@ -273,6 +289,52 @@ absl::StatusOr<std::vector<Tensor>> InferenceInterpreterDelegateRunner::Run(
     feedback_manager_->SwapFeedbackTensors();
   }
   return output_tensors;
+}
+
+absl::StatusOr<InferenceMetadata>
+InferenceInterpreterDelegateRunner::GetModelMetadata() const {
+  RET_CHECK(interpreter_ != nullptr);
+  InferenceMetadata md;
+  md.set_backend("cpu");
+
+  auto fill_spec = [](const TfLiteTensor* t, TensorSpec* spec) {
+    if (t->name != nullptr) spec->set_name(t->name);
+    if (t->dims != nullptr) {
+      for (int i = 0; i < t->dims->size; ++i) spec->add_shape(t->dims->data[i]);
+    }
+    spec->set_dtype(TfLiteTypeName(t->type));
+    spec->set_quant_scale(t->params.scale);
+    spec->set_quant_zero_point(t->params.zero_point);
+  };
+
+  for (int idx : interpreter_->inputs()) {
+    const TfLiteTensor* t = interpreter_->tensor(idx);
+    RET_CHECK(t != nullptr) << "null input tensor at index " << idx;
+    fill_spec(t, md.add_input());
+  }
+  for (int idx : interpreter_->outputs()) {
+    const TfLiteTensor* t = interpreter_->tensor(idx);
+    RET_CHECK(t != nullptr) << "null output tensor at index " << idx;
+    fill_spec(t, md.add_output());
+  }
+
+  if (!interpreter_->inputs().empty()) {
+    const TfLiteTensor* in = interpreter_->tensor(interpreter_->inputs()[0]);
+    RET_CHECK(in != nullptr) << "null first input tensor";
+    if (in->dims != nullptr && in->dims->size == 4) {
+      md.set_batch_capacity(in->dims->data[0]);
+      md.set_input_height(in->dims->data[1]);
+      md.set_input_width(in->dims->data[2]);
+      md.set_input_channels(in->dims->data[3]);
+      md.set_tensor_layout("BHWC");
+    }
+    bool dynamic_batch = false;
+    if (in->dims_signature != nullptr && in->dims_signature->size >= 1) {
+      dynamic_batch = (in->dims_signature->data[0] == -1);
+    }
+    md.set_is_dynamic_batch(dynamic_batch);
+  }
+  return md;
 }
 
 absl::StatusOr<std::unique_ptr<InferenceRunner>>
