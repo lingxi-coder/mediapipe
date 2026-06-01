@@ -28,7 +28,7 @@ These span four subsystems and are too large for one spec. They were decomposed 
 - **Group 2 — Inference backends:** M5 pluggable backend + ONNX/PT/TensorRT/CoreML, M6 zero-copy GPU (OpenGL-on-TFLite slice + backend-wide LiteRT-Next).
 - **Group 3 — Tracking:** M7 BoTSORT.
 
-Dependencies: M1→M3, M2↔M3, M5→M6; M2 introduces the OBB type consumed by M1/M3/M7; M7 is otherwise independent. The Group-1 calculator contracts are designed so M3.5/M4.5/M6 attach without breaking them.
+Dependencies: **M4→M1/M3** (inference metadata is the source of truth that drives tile packaging), M1→M3, M2↔M3, M5→M6; M2 introduces the OBB type consumed by M1/M3/M7; M7 is otherwise independent. The Group-1 calculator contracts are designed so M3.5/M4.5/M6 attach without breaking them.
 
 ## 2. Locked decisions
 
@@ -44,6 +44,7 @@ Dependencies: M1→M3, M2↔M3, M5→M6; M2 introduces the OBB type consumed by 
 | Tiling output | Merged detections in full-frame-normalized coordinates with one final global NMS after tile projection | Keeps calculator outputs consistent with existing relative detection streams. Tasks API follow-up handles pixel-unit results. |
 | Batching boundary | Batch tiles from one frame only; never merge multiple frames into one model input. | Preserves per-frame latency, metadata, and global-NMS semantics. Underfilled batches allowed for `T < batch_capacity`. |
 | Tiling performance model | Stream each filled tile batch directly to inference; do not materialize all tile images or all tile batches. | For `T > batch_capacity`, inference starts after the first `batch_capacity` tiles are tensorized instead of waiting for every tile. This is a CPU-path design property, independent of GPU zero-copy. |
+| Inference metadata | Static, model-level; emitted **exactly once** after successful inference init, as an output side packet. It is the **source of truth** for tile packaging (input H/W/C, dtype, tensor layout, `batch_capacity`, fixed/dynamic batch). | An inference's metadata never changes, so it is sent once; packing tiles from it makes the tensors handed to inference exactly match the model → correctness. Per-frame timing is explicitly not part of it. |
 
 **Deferred by design (see §14, contracts kept stable):** GPU/OpenGL zero-copy input path → **M6**; tile/input/output caches → **M3.5**; video-mode FlowPackager scheduling → **M4.5**. Group 1 is CPU-correct first; these attach as default-off perf/feature layers, each gated on the CPU baseline passing tests.
 
@@ -72,25 +73,30 @@ All image input tensors use **BHWC** layout unless stated otherwise.
 - Tensor shapes use the form **`[N,H,W,C]`**.
 - **`N`** — actual batch dimension of the tensor passed to `InferenceCalculator` for the current tile batch.
 - **`H`, `W`, `C`** — model input height, width, channels.
-- **`batch_capacity`** — configured/model batch capacity. For fixed-batch models, the exported model input batch dim. For dynamic-batch models, the max tile rows per emitted batch.
+- **`batch_capacity`** — model batch capacity, obtained from `InferenceMetadata` (§9). For fixed-batch models, the exported model input batch dim. For dynamic-batch models, the max tile rows per emitted batch.
 - **`valid_count`** — valid tile rows in the current tensor. `0 < valid_count <= N`. For fixed-batch models, `N = batch_capacity` and rows `[valid_count,N)` are padded and ignored downstream. For dynamic-batch models, `N = valid_count`.
 - **`T`** — tile count for the frame.
 - **`A`** — YOLO candidate count before score filtering/top-K.
 
 ```
-Frame ─┐
-Tiles ─┤ (per-frame stream of tile rects)
-       ▼
-  TileSpecToTilePlanCalculator ──► TilePlan ──────────────────────────┐        [NEW, M3]
-       │                                                              │
-       ▼                                                              │
-  StreamingTilesToTensorBatchCalculator (CPU) ──► Tensor batch [N,H,W,C]        [NEW, M1/M3]
-                                         └► TensorBatchInfo
-                                         └► vector<Matrix> tile_to_tensor_matrices
+  model resource ─► InferenceMetadataCalculator                                [NEW, M4]
+                         │  emits ONCE after successful init
+                         ▼
+                    INFERENCE_METADATA  ──►  (user-facing output, emitted once)
+                         │  (side packet: input H/W/C, dtype, layout,
+                         │   batch_capacity, fixed/dynamic — source of truth)
+                         │
+        ┌────────────────┴───────────────────┐  consumed at Open to size/pack tiles
+        ▼                                     ▼
+Frame ─┐                                      │
+Tiles ─┤ (per-frame stream of tile rects)     │
+       ▼                                      │
+  TileSpecToTilePlanCalculator ──► TilePlan ──┤────────────────────────┐       [NEW, M3]
+       ▼                                      │                         │
+  StreamingTilesToTensorBatchCalculator (CPU) ◄┘ ─► Tensor batch [N,H,W,C]      [NEW, M1/M3]
+                                         └► TensorBatchInfo (+ tile_to_tensor matrices)
        ▼ (one packet per tile batch; source frame timestamp carried in TensorBatchInfo)
   InferenceCalculator (reuse) ──► raw outputs [N, …]
-       │
-       └─► batch_latency_us from stopwatch bracket
        ▼
   YoloTensorsToDetectionsCalculator        (axis-aligned)                      [NEW, M2]
   YoloObbTensorsToOrientedDetectionsCalc.  (oriented)                          [NEW, M2]
@@ -98,8 +104,8 @@ Tiles ─┤ (per-frame stream of tile rects)
   BatchDetections / BatchOrientedDetections + TensorBatchInfo
        ▼
   MergeTileDetectionsAccumulator ◄────────────────────────────────────┘       [NEW, M3]
-       │  project rows, accumulate frame candidates, emit at source timestamp
-       ├─► InferenceMetadataCalculator ──► INFERENCE_METADATA                  [NEW, M4]
+       │  drop padded rows (row >= valid_count), project rows,
+       │  accumulate frame candidates, emit at source timestamp
        ▼
   NonMaxSuppression (reuse) / RotatedNonMaxSuppressionCalculator               [NEW, M2]
        ▼
@@ -111,7 +117,7 @@ Tiles ─┤ (per-frame stream of tile rects)
 **Frame-level invariant:** every frame emits exactly one detection result after **one** final global NMS — empty frames, underfilled batches, single-tile frames, and multi-batch tiled frames included. Decode may threshold/top-K candidates for performance, but NMS is frame-global and runs only after all valid tile rows for that source frame are projected to full-frame-normalized coordinates.
 
 **Tile-count cases:**
-- `T == 0`: no inference; emit empty detections and metadata with `inference_batch_count=0`.
+- `T == 0`: no inference; emit empty detections for the frame. (Static `InferenceMetadata` is unaffected — it was already emitted once at init.)
 - `T < batch_capacity`: dynamic-batch models emit one underfilled tensor with `N=valid_count=T`; fixed-batch models emit one padded tensor with `N=batch_capacity`, and merge drops rows `>= valid_count`. Never borrow tiles from the next frame.
 - `T == batch_capacity`: one full tensor with `N=valid_count=batch_capacity`.
 - `T > batch_capacity`: emit each full tensor as soon as `batch_capacity` rows are tensorized. The last tensor uses `N=valid_count` (dynamic) or `N=batch_capacity` with padding (fixed).
@@ -186,34 +192,41 @@ package mediapipe;
 
 message TensorSpec {
   optional string name = 1;
-  repeated int32 shape = 2 [packed = true];
+  repeated int32 shape = 2 [packed = true];   // includes batch dim; -1 = dynamic
   optional string dtype = 3;            // "float32", "uint8", …
   optional float quant_scale = 4;
   optional int32 quant_zero_point = 5;
 }
 
+// Static, model-level metadata. Emitted EXACTLY ONCE after successful inference
+// initialization (output side packet). It does not change per frame and is the
+// source of truth for packing tiles to the model's exact input. No per-frame
+// fields by design.
 message InferenceMetadata {
   optional string model_id = 1;
-  repeated TensorSpec input = 2;
-  repeated TensorSpec output = 3;
+  repeated TensorSpec input = 2;        // model input tensor(s)
+  repeated TensorSpec output = 3;       // model output tensor(s)
   optional string backend = 4;          // declared/configured backend
-  optional int32 batch_capacity = 5;
-  optional int32 class_count = 6;
-  optional int64 inference_latency_us = 7;   // per-frame sum across inference batches; see §9
-  optional int32 inference_batch_count = 8;
-  optional int32 valid_input_count = 9;      // images or tiles processed for this frame
+  optional int32 batch_capacity = 5;    // model input batch dim (>0 fixed)
+  optional bool is_dynamic_batch = 6;   // true if batch dim accepts variable N
+  optional int32 input_height = 7;      // H of the model image input
+  optional int32 input_width = 8;       // W
+  optional int32 input_channels = 9;    // C
+  optional string tensor_layout = 10;   // e.g. "BHWC"
+  optional int32 class_count = 11;
 }
 ```
+Per-frame timing/stats (latency, batch count) are intentionally excluded — metadata is static. If per-frame timing is ever needed, expose it on a separate optional stats stream, not in this packet.
 
 ## 6. M1 — Multi-batch (`N ≥ 1`)
 
-- **`StreamingTilesToTensorBatchCalculator` (CPU, Group 1)** — input: source `IMAGE`, `TilePlan`, preprocessing options, configured/model `batch_capacity`, and fixed-vs-dynamic batch mode. Output: one `Tensor` batch packet, one `TensorBatchInfo`, and one tile-to-tensor matrix vector per emitted tile batch.
+- **`StreamingTilesToTensorBatchCalculator` (CPU, Group 1)** — inputs: source `IMAGE`, `TilePlan`, **`InferenceMetadata` (side packet — the source of truth for input `H/W/C`, dtype, tensor layout, `batch_capacity`, and fixed/dynamic batch)**, and preprocessing options (normalization only). Output: one `Tensor` batch packet, one `TensorBatchInfo`, and one tile-to-tensor matrix vector per emitted tile batch. Crop/resize/normalize target exactly the metadata-declared input geometry and dtype, so the packed tensor matches what the model expects — this is what guarantees accuracy.
 - It crops, resizes, normalizes, and writes directly into batch tensor rows. It must **not** emit `std::vector<Image>` cropped tiles, one tensor packet per tile, or a `std::vector<Tensor>` holding all batches for the frame in the production path.
 - For `T > batch_capacity`, it emits a batch packet immediately when `batch_capacity` rows are filled, then continues tensorizing later tiles for the same frame — letting inference overlap with remaining preprocessing.
 - Each output tensor has shape `[N,H,W,C]`; it validates uniform target shape/dtype and records `batch_size` (`N`), `valid_count`, `batch_capacity` in `TensorBatchInfo`.
 - New YOLO decoders read `dim[0]` from each inference batch and emit one inner vector per tensor row. Padded rows are dropped later by merge using `TensorBatchInfo`; the existing SSD calculator is never modified.
 - Cross-frame batching is out of scope. If `T < batch_capacity`, run an underfilled/padded single-frame batch rather than combining with another frame.
-- **Hard constraint:** the model must be exported with fixed batch `batch_capacity` or a dynamic batch dim accepting the emitted `N`. Add a guard comparing model input shape against emitted `N`, failing with a clear, actionable error.
+- **Hard constraint:** `batch_capacity` and input geometry come from `InferenceMetadata`, so the packed tensor matches the model by construction. The calculator still guards that the emitted `N` is `<= batch_capacity` (and `== batch_capacity` for fixed-batch models, padding the remainder), failing with a clear, actionable error on mismatch.
 - A bounded input-tensor cache and the OpenGL write path are **deferred** (§14, M3.5/M6); the CPU calculator allocates/reuses CPU-backed `Tensor`s simply for Group 1.
 - Interaction with GPU delegate and dynamic batch is a known risk (§13).
 
@@ -230,11 +243,11 @@ message InferenceMetadata {
 
 ## 8. M3 — External tiling (CPU)
 
-- **`TileSpecToTilePlanCalculator`** — inputs `IMAGE_SIZE`/`IMAGE` metadata plus externally supplied `TILES` (`std::vector<TileSpec>`, min `std::vector<NormalizedRect>`); validates the §5.2 contract, normalizes tile metadata, applies overflow policy, emits `TilePlan`. Empty tile lists emit an empty result for that frame.
+- **`TileSpecToTilePlanCalculator`** — inputs `IMAGE_SIZE`/`IMAGE` metadata, externally supplied `TILES` (`std::vector<TileSpec>`, min `std::vector<NormalizedRect>`), and the `InferenceMetadata` side packet (model input size / keep-aspect-ratio, needed to build each tile-to-tensor matrix). Validates the §5.2 contract, normalizes tile metadata, applies overflow policy, emits `TilePlan`. Empty tile lists emit an empty result for that frame.
 - The tile-generation algorithm is outside this calculator. Upstream may provide overlap grids, ROI proposals, tracker-guided tiles, saliency tiles, manual regions, or any custom source.
 - **`StreamingTilesToTensorBatchCalculator`** consumes the source `IMAGE` + `TilePlan` directly, filling one inference batch tensor row-by-row and emitting it as soon as it is full. Memory is bounded by the current output batch plus accumulator state; it does not wait for all `T` tiles before the first inference.
 - Performance guardrails: `max_tiles_per_frame` and `max_batches_per_frame` are explicit options. Default overflow = `FAIL`; optional `DROP_LOW_PRIORITY` only when tile priority is present. Per-tile score thresholding and top-K caps may run before merge to reduce NMS cost, but the only NMS remains the final frame-level global NMS.
-- **`MergeTileDetectionsAccumulator`** — inputs `BatchDetections`/`BatchOrientedDetections`, `TensorBatchInfo`, `TilePlan`, per-tile tensor matrices. It maps each valid decoded row to its `tile_index`, projects boxes to full-frame-normalized coords, drops padded rows, and accumulates frame candidates until all batches for `source_frame_timestamp` arrive.
+- **`MergeTileDetectionsAccumulator`** — inputs `BatchDetections`/`BatchOrientedDetections`, `TensorBatchInfo`, `TilePlan`, per-tile tensor matrices. It maps each valid decoded row to its `tile_index`, **drops padded rows (row index `>= valid_count`, so padding never contributes detections)**, projects the remaining boxes to full-frame-normalized coords, and accumulates frame candidates until all batches for `source_frame_timestamp` arrive.
   - Bounded: `max_in_flight_frames` defaults to `1`; memory remains bounded by `max_in_flight_frames * max_candidates_per_frame`.
   - Merge inverts each tile's tile-to-tensor matrix, then composes tensor-to-tile with `TileGeometry`, accounting for crop offset, resize scale, keep-aspect-ratio padding, and any `NormalizedRect` rotation.
   - Axis-aligned projection can **share helper code** with `detection_projection_calculator` but cannot call that calculator directly (this path is batched/tile-indexed). OBB projection is separate: transform the four oriented-box corners through the composed affine matrix, fit the rotated rectangle, and recompute center/size/rotation in full-frame-normalized coords.
@@ -243,10 +256,12 @@ message InferenceMetadata {
 
 ## 9. M4 — Inference metadata
 
-- **`InferenceMetadataCalculator`** emits `InferenceMetadata`.
-- Required inputs/side packets: model identifier/path or resource, declared backend/delegate options, input/output tensor specs, requested batch size, class count. Without an `InferenceCalculator` hook, `backend` means the *declared/configured* backend, not the guaranteed fallback-selected one.
-- Static fields (model id, input/output specs, declared backend, batch size, class count) computed at `Open`; emitted as a side packet or repeated per frame.
-- Per-frame latency default: a thin stopwatch-bracket calculator around each `InferenceCalculator` invocation (no core changes; honors isolation-first). The merge accumulator (or a paired metadata accumulator) sums batch latencies into one frame-level `InferenceMetadata` packet when `total_batches` for the source frame arrive. If precise backend/delegate timing is required, add a small `InferenceCalculator` hook in a later revision.
+M4 is **foundational, not a sink**: its output feeds the tiler (§6/§8), so it is built before them (§12).
+
+- **`InferenceMetadataCalculator`** derives static, model-level `InferenceMetadata` from the model resource (TFLite FlatBuffer): input/output `TensorSpec`s (shape incl. batch dim, dtype, quant), declared backend, `batch_capacity`/`is_dynamic_batch`, model input `H/W/C`, tensor layout, and class count.
+- **Emitted exactly once**, after the model/interpreter initializes successfully — emission is **gated on init success**, so a failed model load emits nothing. It is an **output side packet**, constant for the graph's lifetime.
+- That single side packet is **both** the user-facing metadata output **and** the source of truth consumed at `Open` by `TileSpecToTilePlanCalculator` and `StreamingTilesToTensorBatchCalculator`. Tiles are resized/normalized to the metadata-declared input geometry/dtype and batched to `batch_capacity`; this is precisely what makes the tensors handed to inference correct.
+- Static by design — **no per-frame fields**. `backend` is the declared/configured backend; the actually-selected fallback backend would need an `InferenceCalculator` hook (out of scope). If per-frame timing is ever wanted, it belongs on a separate optional stats stream, not here.
 
 ## 10. Tasks API follow-up ("Both")
 
@@ -265,7 +280,8 @@ Separate sub-plan, sequenced after Group 1 calculators are verified. Not a Group
   - `StreamingTilesToTensorBatchCalculator` (CPU): `T=0`, `T<batch_capacity`, `T=batch_capacity`, `T>batch_capacity`, fixed-batch padding, dynamic last batch, overflow policies, no cross-frame batching, no cropped-tile materialization, and first batch emitted before later tiles are tensorized.
   - `MergeTileDetectionsAccumulator`: known-overlap tiles, projection correctness, padded-row drop, frame-candidate flattening, out-of-order batch arrival, bounded in-flight state.
   - Final NMS graph tests: every frame (single-tile and multi-batch tiled) runs exactly one global NMS after projection.
-  - `InferenceMetadataCalculator`: static fields populated; latency present; multiple inference batches aggregate to one frame-level packet.
+  - `InferenceMetadataCalculator`: emitted **exactly once** after successful init; correct static fields (input/output specs, `batch_capacity`, `is_dynamic_batch`, input `H/W/C`, dtype, layout, class count); **not emitted on init failure**.
+  - Metadata-driven packing: tiles are resized/packed to the metadata-declared input geometry/dtype; emitted `N` never exceeds `batch_capacity`; fixed-batch padding rows are excluded from results (no padded-tile detections appear in the merged output).
 - Edge-case unit tests:
   - Tile definition/validation: positive size, finite coords, frame intersection, rotation handling, stable input-order `tile_index`, optional priority metadata.
   - External tile sources: overlap grids, tracker-guided ROI tiles, manual tiles, custom unordered inputs all normalize to the same `TilePlan` contract.
@@ -278,12 +294,12 @@ Separate sub-plan, sequenced after Group 1 calculators are verified. Not a Group
 ## 12. Suggested build order (CPU baseline first)
 
 1. `OrientedDetection` proto + batched-output conventions.
-2. `TileSpecToTilePlanCalculator` (validation + `TilePlan`).
-3. `StreamingTilesToTensorBatchCalculator` **(CPU)** + batch metadata/edge-case tests.
-4. `YoloTensorsToDetectionsCalculator` (batch-native) + reuse NMS → working batched YOLO detection.
-5. `YoloObbTensorsToOrientedDetectionsCalculator` + `RotatedNonMaxSuppressionCalculator`.
-6. `MergeTileDetectionsAccumulator` (M3): projection, bounded frame accumulation, final global-NMS ordering.
-7. `InferenceMetadataCalculator` (M4 — small, can land in parallel once metadata side packets are defined).
+2. `InferenceMetadataCalculator` (M4) — static metadata side packet from the model resource, gated on init success. **Built first because the tiler/batcher depend on it.**
+3. `TileSpecToTilePlanCalculator` (consumes metadata; validation + `TilePlan`).
+4. `StreamingTilesToTensorBatchCalculator` **(CPU)** (consumes metadata; packs to model input + `batch_capacity`) + batch metadata/edge-case tests.
+5. `YoloTensorsToDetectionsCalculator` (batch-native) + reuse NMS → working batched YOLO detection.
+6. `YoloObbTensorsToOrientedDetectionsCalculator` + `RotatedNonMaxSuppressionCalculator`.
+7. `MergeTileDetectionsAccumulator` (M3): projection, **padded-row removal**, bounded frame accumulation, final global-NMS ordering.
 8. Graph-level examples/tests for tiled batched YOLO and YOLO-OBB → **Group 1 done.**
 
 Then, as separate gated milestones (§14), each default-off and only after the CPU baseline passes: **M3.5** caches → **M6** OpenGL zero-copy input path → **M4.5** video scheduler. Tasks API wrappers (§10) remain a follow-up sub-plan.
@@ -293,7 +309,7 @@ Then, as separate gated milestones (§14), each default-off and only after the C
 1. **TFLite fixed-batch export for N>1** and its GPU-delegate interaction — some delegates dislike dynamic batch. Validate early with a real batched export.
 2. **YOLO output layout & dtype variance** across export tools — mitigated by configurable `layout` + initial `float32`-only validation; add dequant/autodetection only after golden tests exist.
 3. **Rotated-IoU NMS cost** — rotated-rect intersection is expensive; benchmark, cap `max_detections`.
-4. **M4 latency sourcing** — stopwatch-bracket vs core hook (see §9).
+4. **Metadata availability & accuracy** — tile packing depends on `InferenceMetadata` being available at the tiler's `Open` and matching the model exactly. Derive it from the model resource, gate emission on successful inference init, and fail loudly on any geometry/dtype/batch mismatch rather than silently mis-packing (see §9).
 5. **OBB projection through tiles** — rotation-aware transform must be verified against rotated ground truth, incl. crop, resize, padding, and future rotated tiles.
 6. **Tile count explosion** — external tile streams can exceed the latency budget. Enforce `max_tiles_per_frame`/`max_batches_per_frame`; make overflow explicit.
 7. **Streaming timestamp discipline** — batch packets use batch timestamps while outputs use source frame timestamps. Accumulators must enforce monotonic output, bounded in-flight frames, and clear errors for missing/duplicate batch indices.
@@ -345,10 +361,10 @@ Cache hit/invalidation (tile-plan/matrix, surface, input-tensor, output-buffer);
 
 | Group | Milestone | Feature | Depends on |
 |---|---|---|---|
-| 1 | M1 | Multi-batch (`N≥1`), ObjectDetection + OBB (CPU) | — |
+| 1 | M4 | Inference metadata (static, once; drives tiling) — build first | — (model resource) |
+| 1 | M1 | Multi-batch (`N≥1`), ObjectDetection + OBB (CPU) | M4 |
 | 1 | M2 | YOLO detect + OBB decode + rotated NMS | — |
-| 1 | M3 | External tiling (externally supplied tiles → batch → merge), CPU | M1, M2 |
-| 1 | M4 | Inference metadata output | — |
+| 1 | M3 | External tiling (externally supplied tiles → batch → merge), CPU | M1, M2, M4 |
 | 1.5 | M3.5 | Tile/input/output caching (perf, default-off) | M1–M3 |
 | 1.5 | M4.5 | Video-mode FlowPackager scheduler | M1–M3 |
 | 2 | M5 | Pluggable inference backend + ONNX/PT/TensorRT/CoreML (platform-gated) | — |
