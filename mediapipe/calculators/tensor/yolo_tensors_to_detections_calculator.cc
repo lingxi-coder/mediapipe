@@ -51,6 +51,7 @@ class YoloTensorsToDetectionsCalculator : public Node {
     const auto& dims = t.shape().dims;
     RET_CHECK_EQ(dims.size(), 3) << "expected a rank-3 tensor";
 
+    int N = dims[0];
     int num_classes = options_.num_classes();
     int channels = 4 + num_classes;
     int A;
@@ -67,8 +68,10 @@ class YoloTensorsToDetectionsCalculator : public Node {
     const float* data = view.buffer<float>();
 
     auto out = std::make_unique<std::vector<std::vector<Detection>>>();
-    out->resize(1);
-    DecodeRow(data, /*n=*/0, channels, A, num_classes, &(*out)[0]);
+    out->resize(N);
+    for (int n = 0; n < N; ++n) {
+      DecodeRow(data, n, channels, A, num_classes, &(*out)[n]);
+    }
 
     kOutDetections(cc).Send(std::move(out));
     return absl::OkStatus();

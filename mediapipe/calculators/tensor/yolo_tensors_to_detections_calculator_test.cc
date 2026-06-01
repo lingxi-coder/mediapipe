@@ -154,5 +154,37 @@ TEST(YoloTensorsToDetectionsCalculatorTest, MultiClassArgmaxAndThreshold) {
   EXPECT_NEAR(batch[0][0].score(0), 0.8f, 1e-5);
 }
 
+TEST(YoloTensorsToDetectionsCalculatorTest, BatchNativeTwoRows) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.25
+      }
+    }
+  )pb"));
+
+  // Shape [N=2, C=5, A=1]; per row index ((n*C)+c)*A + a, A=1 so = n*5 + c.
+  // Row0 score .9 (kept); Row1 score .1 (dropped) -> outer size 2, sizes {1,0}.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{2, 5, 1},
+                       {0.5f, 0.5f, 0.2f, 0.4f, 0.9f,    // row 0
+                        0.5f, 0.5f, 0.2f, 0.4f, 0.1f})   // row 1
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<
+          std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(batch.size(), 2);       // one inner vector per batch row
+  EXPECT_EQ(batch[0].size(), 1);
+  EXPECT_EQ(batch[1].size(), 0);    // empty row still present
+}
+
 }  // namespace
 }  // namespace mediapipe
