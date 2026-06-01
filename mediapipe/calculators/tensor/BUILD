@@ -2348,6 +2348,15 @@ mediapipe_proto_library(
     ],
 )
 
+mediapipe_proto_library(
+    name = "yolo_obb_tensors_to_oriented_detections_calculator_proto",
+    srcs = ["yolo_obb_tensors_to_oriented_detections_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
 cc_library(
     name = "yolo_tensors_to_detections_calculator",
     srcs = ["yolo_tensors_to_detections_calculator.cc"],

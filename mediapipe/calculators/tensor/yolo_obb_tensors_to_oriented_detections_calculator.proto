@@ -1,0 +1,44 @@
+// Copyright 2026 The MediaPipe Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package mediapipe;
+
+import "mediapipe/framework/calculator.proto";
+
+// Options for YoloObbTensorsToOrientedDetectionsCalculator: anchor-free
+// decoding of Ultralytics YOLOv8/v11-OBB output. Channel order per anchor is
+// [cx, cy, w, h, cls_0..cls_{num_classes-1}, angle]; angle is the LAST channel.
+message YoloObbTensorsToOrientedDetectionsCalculatorOptions {
+  extend .mediapipe.CalculatorOptions {
+    optional YoloObbTensorsToOrientedDetectionsCalculatorOptions ext = 471230002;
+  }
+
+  enum Layout {
+    LAYOUT_UNSPECIFIED = 0;
+    CHANNELS_FIRST = 1;  // [N, 4 + num_classes + 1, A]
+    CHANNELS_LAST = 2;   // [N, A, 4 + num_classes + 1]
+  }
+  optional Layout layout = 1 [default = CHANNELS_FIRST];
+
+  // [Required] Number of object classes.
+  optional int32 num_classes = 2;
+
+  optional float conf_threshold = 3 [default = 0.25];
+
+  // Per batch row, keep at most this many highest-scoring candidates before
+  // NMS. -1 keeps all candidates above conf_threshold.
+  optional int32 max_detections_before_nms = 4 [default = 300];
+}
