@@ -1,7 +1,6 @@
 # Copyright 2026 The MediaPipe Authors. Licensed under the Apache License 2.0.
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])
 
