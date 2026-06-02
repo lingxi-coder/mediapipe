@@ -14,6 +14,7 @@
 #include <memory>
 #include <vector>
 
+#include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/calculator_framework.h"
 #include "mediapipe/framework/formats/oriented_detection.pb.h"
@@ -32,13 +33,11 @@ TEST(TiledObbPipelineTest, MergeThenGlobalNmsDedupsAcrossTiles) {
   auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
     input_stream: "dets"
     input_stream: "info"
-    input_stream: "plan"
     output_stream: "out"
     node {
       calculator: "MergeTileDetectionsAccumulatorCalculator"
       input_stream: "ORIENTED_DETECTIONS:dets"
       input_stream: "BATCH_INFO:info"
-      input_stream: "TILE_PLAN:plan"
       output_stream: "ORIENTED_DETECTIONS:merged"
     }
     node {
@@ -54,35 +53,65 @@ TEST(TiledObbPipelineTest, MergeThenGlobalNmsDedupsAcrossTiles) {
   )pb");
 
   // Overlapping tiles: left covers x[0,0.6], right covers x[0.4,1.0].
-  TilePlan plan;
-  TileGeometry l; l.tile_index=0; l.x_center=.3; l.y_center=.5; l.width=.6; l.height=1.0;
-  TileGeometry r; r.tile_index=1; r.x_center=.7; r.y_center=.5; r.width=.6; r.height=1.0;
-  plan.tiles = {l, r};
+  // On a 100x100 frame:
+  //   left ROI:  {x=0,  y=0, width=60, height=100}
+  //   right ROI: {x=40, y=0, width=60, height=100}
+  TileGeometry l;
+  l.tile_index = 0;
+  l.x_center = .3f;
+  l.y_center = .5f;
+  l.width = .6f;
+  l.height = 1.0f;
+  TileGeometry r;
+  r.tile_index = 1;
+  r.x_center = .7f;
+  r.y_center = .5f;
+  r.width = .6f;
+  r.height = 1.0f;
+
+  TilePixelRoi left_roi{0, 0, 60, 100};
+  TilePixelRoi right_roi{40, 0, 60, 100};
+
+  auto geom = std::make_shared<TileBatchGeometry>();
+  geom->tile_indices = {0, 1};
+  geom->tile_geometries = {l, r};
+  geom->effective_pixel_rois = {left_roi, right_roi};
+  geom->tile_to_image_matrices = {TileToImageMatrix(left_roi, 100, 100),
+                                   TileToImageMatrix(right_roi, 100, 100)};
 
   // Object truly at frame (0.5,0.5,0.2,0.2). Tile-local coords:
   //   left:  cx=(0.5-0.0)/0.6=0.83333, w=0.2/0.6=0.33333
   //   right: cx=(0.5-0.4)/0.6=0.16667, w=0.33333
   auto obb = [](float cx, float cy, float w, float h, float s) {
-    OrientedDetection d; d.set_cx(cx); d.set_cy(cy); d.set_width(w);
-    d.set_height(h); d.set_rotation(0); d.add_score(s); d.add_label_id(0);
+    OrientedDetection d;
+    d.set_cx(cx);
+    d.set_cy(cy);
+    d.set_width(w);
+    d.set_height(h);
+    d.set_rotation(0);
+    d.add_score(s);
+    d.add_label_id(0);
     return d;
   };
   auto batch = std::make_unique<std::vector<std::vector<OrientedDetection>>>();
-  batch->push_back({obb(0.83333f, 0.5f, 0.33333f, 0.2f, 0.9f)});   // left
-  batch->push_back({obb(0.16667f, 0.5f, 0.33333f, 0.2f, 0.8f)});   // right
+  batch->push_back({obb(0.83333f, 0.5f, 0.33333f, 0.2f, 0.9f)});  // left
+  batch->push_back({obb(0.16667f, 0.5f, 0.33333f, 0.2f, 0.8f)});  // right
   TensorBatchInfo info;
-  info.source_frame_timestamp=0; info.total_batches=1; info.batch_capacity=2;
-  info.valid_count=2; info.tile_indices={0,1};
+  info.source_frame_timestamp = 0;
+  info.total_batches = 1;
+  info.batch_capacity = 2;
+  info.valid_count = 2;
+  info.tile_indices = {0, 1};
+  info.geometry = geom;
 
   std::vector<Packet> out_packets;
   CalculatorGraph graph;
   MP_ASSERT_OK(graph.Initialize(config));
   MP_ASSERT_OK(graph.ObserveOutputStream("out", [&](const Packet& p) {
-    out_packets.push_back(p); return absl::OkStatus();
+    out_packets.push_back(p);
+    return absl::OkStatus();
   }));
   MP_ASSERT_OK(graph.StartRun({}));
-  MP_ASSERT_OK(graph.AddPacketToInputStream(
-      "plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
   MP_ASSERT_OK(graph.AddPacketToInputStream(
       "info", MakePacket<TensorBatchInfo>(info).At(Timestamp(0))));
   MP_ASSERT_OK(graph.AddPacketToInputStream(

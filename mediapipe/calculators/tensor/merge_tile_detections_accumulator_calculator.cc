@@ -12,49 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <array>
 #include <map>
 #include <vector>
 
 #include "absl/status/status.h"
+#include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
+#include "mediapipe/framework/api2/packet.h"
 #include "mediapipe/framework/calculator_framework.h"
 #include "mediapipe/framework/formats/oriented_detection.pb.h"
 #include "mediapipe/framework/port/ret_check.h"
+#include "mediapipe/framework/timestamp.h"
 
 namespace mediapipe {
 namespace api2 {
 
 // Regroups batched per-tile oriented detections to the source frame, drops
-// padded rows, and projects tile-local boxes to full-frame coords. Emits the
-// flattened frame detections once all batches arrive. Axis-aligned tiles only:
-// projection is scale + offset; angle preserved.
+// padded rows, and projects tile-local boxes to full-frame coords using the
+// TileBatchGeometry carried on BATCH_INFO. Emits the flattened frame
+// detections at the original source frame timestamp once all batches arrive.
+// Axis-aligned tiles only: rotation is preserved.
 class MergeTileDetectionsAccumulatorCalculator : public Node {
  public:
   static constexpr Input<std::vector<std::vector<OrientedDetection>>> kInDets{
       "ORIENTED_DETECTIONS"};
   static constexpr Input<TensorBatchInfo> kInInfo{"BATCH_INFO"};
-  static constexpr Input<TilePlan> kInPlan{"TILE_PLAN"};
   static constexpr Output<std::vector<OrientedDetection>> kOut{
       "ORIENTED_DETECTIONS"};
-  MEDIAPIPE_NODE_CONTRACT(kInDets, kInInfo, kInPlan, kOut);
+  MEDIAPIPE_NODE_CONTRACT(kInDets, kInInfo, kOut,
+                          ::mediapipe::api2::TimestampChange::Arbitrary());
 
   absl::Status Process(CalculatorContext* cc) override {
     const auto& batch = *kInDets(cc);
     const TensorBatchInfo& info = *kInInfo(cc);
-    const TilePlan& plan = *kInPlan(cc);
-    RET_CHECK_EQ(info.valid_count, static_cast<int>(info.tile_indices.size()));
-
+    RET_CHECK(info.geometry != nullptr || info.valid_count == 0);
     auto& acc = pending_[info.source_frame_timestamp];
+    const auto& geom = info.geometry;
     for (int r = 0; r < info.valid_count; ++r) {
-      const int tile_index = info.tile_indices[r];
-      RET_CHECK_LT(tile_index, static_cast<int>(plan.tiles.size()));
-      const TileGeometry& g = plan.tiles[tile_index];
       if (r >= static_cast<int>(batch.size())) continue;
+      const TileGeometry& g = geom->tile_geometries[r];
+      const std::array<float, 16>& m = geom->tile_to_image_matrices[r];
       for (const OrientedDetection& d : batch[r]) {
         OrientedDetection out = d;
-        out.set_cx(g.x0() + d.cx() * g.width);
-        out.set_cy(g.y0() + d.cy() * g.height);
+        float fx, fy;
+        ApplyMatrix(m, d.cx(), d.cy(), &fx, &fy);
+        out.set_cx(fx);
+        out.set_cy(fy);
         out.set_width(d.width() * g.width);
         out.set_height(d.height() * g.height);
         // rotation preserved (axis-aligned tile).
@@ -63,12 +68,14 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
     }
     acc.batches_seen += 1;
     acc.total_batches = info.total_batches;
-
     if (acc.batches_seen >= acc.total_batches) {
-      std::vector<OrientedDetection> merged_val =
-          std::move(acc.received_dets);
+      std::vector<OrientedDetection> merged = std::move(acc.received_dets);
+      const int64_t src_ts = info.source_frame_timestamp;
       pending_.erase(info.source_frame_timestamp);
-      kOut(cc).Send(std::move(merged_val));
+      kOut(cc).Send(
+          mediapipe::api2::MakePacket<std::vector<OrientedDetection>>(
+              std::move(merged))
+              .At(::mediapipe::Timestamp(src_ts)));
     }
     return absl::OkStatus();
   }

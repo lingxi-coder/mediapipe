@@ -2633,11 +2633,14 @@ cc_library(
     name = "merge_tile_detections_accumulator_calculator",
     srcs = ["merge_tile_detections_accumulator_calculator.cc"],
     deps = [
+        ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/api2:packet",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
         "//mediapipe/framework/port:ret_check",
+        "//mediapipe/framework:timestamp",
         "@com_google_absl//absl/status",
     ],
     alwayslink = 1,
@@ -2649,6 +2652,7 @@ cc_test(
     size = "small",
     deps = [
         ":merge_tile_detections_accumulator_calculator",
+        ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_runner",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
@@ -2664,6 +2668,7 @@ cc_test(
     size = "small",
     deps = [
         ":merge_tile_detections_accumulator_calculator",
+        ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/calculators/util:rotated_non_max_suppression_calculator",
         "//mediapipe/framework:calculator_framework",
