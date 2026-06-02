@@ -62,5 +62,27 @@ TEST(BoundedLruCacheTest, EvictsLeastRecentlyUsed) {
   EXPECT_EQ(cache.stats().evictions, 1);
 }
 
+TEST(BoundedLruCacheTest, PutUpdatesExistingValue) {
+  BoundedLruCache<int> cache(2);
+  cache.Put(IntKey(1), 100);
+  cache.Put(IntKey(1), 200);  // update existing key, not a new insert
+  const int* v = cache.Get(IntKey(1));
+  ASSERT_NE(v, nullptr);
+  EXPECT_EQ(*v, 200);
+  EXPECT_EQ(cache.stats().inserts, 1);    // only the first Put counted
+  EXPECT_EQ(cache.stats().evictions, 0);
+}
+
+TEST(BoundedLruCacheTest, CapacityOneInsertEvicts) {
+  BoundedLruCache<int> cache(1);
+  cache.Put(IntKey(1), 1);
+  cache.Put(IntKey(2), 2);  // immediately evicts key 1
+  EXPECT_EQ(cache.Get(IntKey(1)), nullptr);
+  const int* v = cache.Get(IntKey(2));
+  ASSERT_NE(v, nullptr);
+  EXPECT_EQ(*v, 2);
+  EXPECT_EQ(cache.stats().evictions, 1);
+}
+
 }  // namespace
 }  // namespace mediapipe

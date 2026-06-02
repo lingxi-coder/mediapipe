@@ -88,10 +88,10 @@ class StableKeyBuilder {
     buf_.append(reinterpret_cast<const char*>(p), n);
   }
   static uint64_t Fnv1a(const std::string& s) {
-    uint64_t h = 1469598103934665603ull;
+    uint64_t h = 14695981039346656037ull;  // FNV-1a 64-bit offset basis
     for (unsigned char c : s) {
       h ^= c;
-      h *= 1099511628211ull;
+      h *= 1099511628211ull;  // FNV-1a 64-bit prime
     }
     return h;
   }
@@ -110,6 +110,8 @@ class BoundedLruCache {
 
   bool enabled() const { return capacity_ > 0; }
 
+  // Returns nullptr on miss. The returned pointer is valid only until the next
+  // Put() call (a Put may evict this entry); do not hold it across Put().
   const Value* Get(const StableCacheKey& key) {
     if (capacity_ == 0) return nullptr;
     auto it = index_.find(key.bytes);
