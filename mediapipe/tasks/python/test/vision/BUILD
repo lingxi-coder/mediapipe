@@ -289,3 +289,24 @@ py_test(
         "@mediapipe_pip_deps_numpy//:pkg",
     ],
 )
+
+py_test(
+    name = "oriented_object_detector_test",
+    srcs = ["oriented_object_detector_test.py"],
+    data = [
+        # test_models is intentionally omitted: yolov8n-obb.tflite is not present;
+        # the inference test is gated with unittest.skipUnless.
+        "//mediapipe/tasks/testdata/vision:test_images",
+    ],
+    tags = ["not_run:arm"],
+    deps = [
+        "//mediapipe/tasks/python/components/containers:oriented_detections",
+        "//mediapipe/tasks/python/core:base_options",
+        "//mediapipe/tasks/python/test:test_utils",
+        "//mediapipe/tasks/python/vision:oriented_object_detector",
+        "//mediapipe/tasks/python/vision/core:image",
+        "//mediapipe/tasks/python/vision/core:vision_task_running_mode",
+        "@mediapipe_pip_deps_absl_py//:pkg",
+        "@mediapipe_pip_deps_numpy//:pkg",
+    ],
+)
