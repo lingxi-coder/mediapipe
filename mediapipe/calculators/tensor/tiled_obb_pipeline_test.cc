@@ -364,5 +364,102 @@ TEST(TiledObbPipelineTest, EmptyFrameEmitsEmptyResultAtSourceTimestamp) {
   EXPECT_EQ(out.size(), 0);
 }
 
+// ---------------------------------------------------------------------------
+// Test: TWO distinct source frames flow through merge back-to-back and the
+// merged output stream stays strictly monotonic. Frame A (source ts 0) emits
+// 2 batches at synthetic ts 0 and 1; frame B (source ts 100) emits 1 batch at
+// synthetic ts 2. Merge must emit A's result at Timestamp(0) THEN B's at
+// Timestamp(100), in order. This locks in the cross-frame ordering that the
+// single-frame multi-batch test cannot exercise: the producer serializes all
+// of A's batches before any of B's, so A completes (and emits at its earlier
+// source ts) before B does.
+// ---------------------------------------------------------------------------
+TEST(TiledObbPipelineTest, MultipleFramesEmitInSourceTimestampOrder) {
+  auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+    input_stream: "dets"
+    input_stream: "info"
+    output_stream: "out"
+    node {
+      calculator: "MergeTileDetectionsAccumulatorCalculator"
+      input_stream: "ORIENTED_DETECTIONS:dets"
+      input_stream: "BATCH_INFO:info"
+      output_stream: "ORIENTED_DETECTIONS:merged"
+    }
+    node {
+      calculator: "RotatedNonMaxSuppressionCalculator"
+      input_stream: "ORIENTED_DETECTIONS:merged"
+      output_stream: "ORIENTED_DETECTIONS:out"
+      options {
+        [mediapipe.RotatedNonMaxSuppressionCalculatorOptions.ext] {
+          iou_threshold: 0.5
+        }
+      }
+    }
+  )pb");
+
+  // One full-frame tile on a 100x100 frame, reused for every batch.
+  TileGeometry tile;
+  tile.tile_index = 0;
+  tile.x_center = 0.5f;
+  tile.y_center = 0.5f;
+  tile.width = 1.0f;
+  tile.height = 1.0f;
+  TilePixelRoi roi{0, 0, 100, 100};
+
+  // Builds a single-row BATCH_INFO for (source frame ts, batch index, total).
+  auto make_info = [&](int64_t src_ts, int batch_index, int total_batches) {
+    TensorBatchInfo info;
+    info.source_frame_timestamp = src_ts;
+    info.batch_index = batch_index;
+    info.total_batches = total_batches;
+    info.batch_capacity = 1;
+    info.batch_size = 1;
+    info.valid_count = 1;
+    info.tile_indices = {0};
+    info.geometry = MakeGeom({tile}, {roi}, 100, 100);
+    return info;
+  };
+  auto make_batch = [](float cx) {
+    auto b = std::make_unique<std::vector<std::vector<OrientedDetection>>>();
+    b->push_back({MakeObb(cx, 0.5f, 0.2f, 0.2f, 0.9f)});
+    return b;
+  };
+
+  std::vector<Packet> out_packets;
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.Initialize(config));
+  MP_ASSERT_OK(graph.ObserveOutputStream("out", [&](const Packet& p) {
+    out_packets.push_back(p);
+    return absl::OkStatus();
+  }));
+  MP_ASSERT_OK(graph.StartRun({}));
+
+  // Frame A (source ts 0): two batches at synthetic ts 0 and 1.
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "info", MakePacket<TensorBatchInfo>(make_info(0, 0, 2)).At(Timestamp(0))));
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "dets", Adopt(make_batch(0.3f).release()).At(Timestamp(0))));
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "info", MakePacket<TensorBatchInfo>(make_info(0, 1, 2)).At(Timestamp(1))));
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "dets", Adopt(make_batch(0.7f).release()).At(Timestamp(1))));
+  // Frame B (source ts 100): one batch at synthetic ts 2.
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "info",
+      MakePacket<TensorBatchInfo>(make_info(100, 0, 1)).At(Timestamp(2))));
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "dets", Adopt(make_batch(0.5f).release()).At(Timestamp(2))));
+  MP_ASSERT_OK(graph.CloseAllPacketSources());
+  MP_ASSERT_OK(graph.WaitUntilDone());
+
+  // Two frames -> two merged outputs, strictly increasing source timestamps.
+  ASSERT_EQ(out_packets.size(), 2);
+  EXPECT_EQ(out_packets[0].Timestamp(), Timestamp(0));
+  EXPECT_EQ(out_packets[1].Timestamp(), Timestamp(100));
+  // Frame A accumulated both batches (cx 0.3 and 0.7, far apart -> NMS keeps 2).
+  EXPECT_EQ(out_packets[0].Get<std::vector<OrientedDetection>>().size(), 2);
+  EXPECT_EQ(out_packets[1].Get<std::vector<OrientedDetection>>().size(), 1);
+}
+
 }  // namespace
 }  // namespace mediapipe
