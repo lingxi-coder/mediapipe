@@ -345,7 +345,11 @@ class YoloObjectDetector:
     ctypes_options = MpYoloObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
-        display_names_locale=options.display_names_locale,
+        display_names_locale=(
+            options.display_names_locale.encode('utf-8')
+            if options.display_names_locale
+            else None
+        ),
         max_results=options.max_results,
         score_threshold=options.score_threshold,
         category_allowlist=allowlist_c,
