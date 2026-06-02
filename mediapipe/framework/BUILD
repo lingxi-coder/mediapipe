@@ -1946,6 +1946,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//mediapipe/framework:port",
+        "//mediapipe/framework/formats:cpu_buffer_pool",
     ] + select({
         "//mediapipe:android": [
             "//mediapipe/framework/formats:hardware_buffer_pool",

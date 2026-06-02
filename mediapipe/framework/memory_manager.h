@@ -14,10 +14,13 @@
 #ifndef MEDIAPIPE_FRAMEWORK_MEMORY_MANAGER_H_
 #define MEDIAPIPE_FRAMEWORK_MEMORY_MANAGER_H_
 
+#include <cstddef>
 #include <memory>
 
 // Defines MEDIAPIPE_TENSOR_USE_AHWB
 #include "mediapipe/framework/port.h"
+
+#include "mediapipe/framework/formats/cpu_buffer_pool.h"
 
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
 #include "mediapipe/framework/formats/hardware_buffer_pool.h"
@@ -54,27 +57,43 @@ namespace mediapipe {
 //                     Tensor::Shape{kTensorSize}, &memory_manager_);
 class MemoryManager {
  public:
-  MemoryManager() {
+  // cpu_buffer_pool_capacity == 0 (default) => no CPU pooling; GetCpuBufferPool()
+  // returns nullptr and Tensor CPU allocation is unchanged.
+  explicit MemoryManager(size_t cpu_buffer_pool_capacity = 0) {
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
     hardware_buffer_pool_ = std::make_shared<HardwareBufferPool>();
 #endif
+    if (cpu_buffer_pool_capacity > 0) {
+      cpu_buffer_pool_ =
+          std::make_shared<CpuBufferPool>(cpu_buffer_pool_capacity);
+    }
   }
 
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
   std::shared_ptr<HardwareBufferPool> GetAndroidHardwareBufferPool() const {
     return hardware_buffer_pool_;
   }
+
+  explicit MemoryManager(const MultiPoolOptions& options,
+                         size_t cpu_buffer_pool_capacity = 0)
+      : hardware_buffer_pool_(std::make_shared<HardwareBufferPool>(options)) {
+    if (cpu_buffer_pool_capacity > 0) {
+      cpu_buffer_pool_ =
+          std::make_shared<CpuBufferPool>(cpu_buffer_pool_capacity);
+    }
+  }
 #endif
 
-#ifdef MEDIAPIPE_TENSOR_USE_AHWB
-  explicit MemoryManager(const MultiPoolOptions& options)
-      : hardware_buffer_pool_(std::make_shared<HardwareBufferPool>(options)) {}
-#endif
+  // Null when CPU pooling is disabled.
+  std::shared_ptr<CpuBufferPool> GetCpuBufferPool() const {
+    return cpu_buffer_pool_;
+  }
 
  private:
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
   std::shared_ptr<HardwareBufferPool> hardware_buffer_pool_;
 #endif
+  std::shared_ptr<CpuBufferPool> cpu_buffer_pool_;
 };
 
 }  //  namespace mediapipe
