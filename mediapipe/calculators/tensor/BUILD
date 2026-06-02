@@ -2503,6 +2503,25 @@ cc_library(
     hdrs = ["tiling_types.h"],
 )
 
+cc_library(
+    name = "tiling_matrix_utils",
+    srcs = ["tiling_matrix_utils.cc"],
+    hdrs = ["tiling_matrix_utils.h"],
+    deps = [
+        ":image_to_tensor_utils",
+        ":tiling_types",
+    ],
+)
+
+cc_test(
+    name = "tiling_matrix_utils_test",
+    srcs = ["tiling_matrix_utils_test.cc"],
+    deps = [
+        ":tiling_matrix_utils",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
 mediapipe_proto_library(
     name = "tile_spec_to_tile_plan_calculator_proto",
     srcs = ["tile_spec_to_tile_plan_calculator.proto"],
