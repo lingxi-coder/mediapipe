@@ -18,6 +18,7 @@
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/tile_spec_to_tile_plan_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_cache_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
 #include "mediapipe/framework/calculator_framework.h"
@@ -36,17 +37,42 @@ class TileSpecToTilePlanCalculator : public Node {
 
   absl::Status Open(CalculatorContext* cc) override {
     options_ = cc->Options<mediapipe::TileSpecToTilePlanCalculatorOptions>();
+    RET_CHECK_GE(options_.max_cached_tile_plans(), 0);
+    plan_cache_ = BoundedLruCache<TilePlan>(
+        static_cast<size_t>(options_.max_cached_tile_plans()));
     return absl::OkStatus();
   }
 
   absl::Status Process(CalculatorContext* cc) override {
     const auto& tiles = *kInTiles(cc);
+
+    // Cache key: max_tiles_per_frame + the full tile-rect list. The TilePlan is
+    // a pure function of these, so a hit returns exactly what we would compute.
+    StableCacheKey key;
+    if (plan_cache_.enabled()) {
+      StableKeyBuilder kb;
+      kb.AddInt(options_.max_tiles_per_frame());
+      kb.AddInt(static_cast<int64_t>(tiles.size()));
+      for (const NormalizedRect& r : tiles) {
+        kb.AddFloat(r.x_center()).AddFloat(r.y_center());
+        kb.AddFloat(r.width()).AddFloat(r.height());
+        kb.AddBool(r.has_rotation()).AddFloat(r.rotation());
+      }
+      key = kb.Build();
+      if (const TilePlan* hit = plan_cache_.Get(key)) {
+        kOutPlan(cc).Send(std::make_unique<TilePlan>(*hit));
+        return absl::OkStatus();
+      }
+    }
+
+    // Miss (or caching disabled): validate + build, exactly as before.
     if (options_.max_tiles_per_frame() > 0) {
-      RET_CHECK_LE(static_cast<int>(tiles.size()), options_.max_tiles_per_frame())
+      RET_CHECK_LE(static_cast<int>(tiles.size()),
+                   options_.max_tiles_per_frame())
           << "tile count exceeds max_tiles_per_frame";
     }
-    auto plan = std::make_unique<TilePlan>();
-    plan->tiles.reserve(tiles.size());
+    TilePlan plan;
+    plan.tiles.reserve(tiles.size());
     for (int i = 0; i < static_cast<int>(tiles.size()); ++i) {
       const NormalizedRect& r = tiles[i];
       RET_CHECK(std::isfinite(r.x_center()) && std::isfinite(r.y_center()) &&
@@ -62,17 +88,22 @@ class TileSpecToTilePlanCalculator : public Node {
       g.y_center = r.y_center();
       g.width = r.width();
       g.height = r.height();
-      RET_CHECK(g.x0() < 1.0f && g.y0() < 1.0f &&
-                g.x0() + g.width > 0.0f && g.y0() + g.height > 0.0f)
+      RET_CHECK(g.x0() < 1.0f && g.y0() < 1.0f && g.x0() + g.width > 0.0f &&
+                g.y0() + g.height > 0.0f)
           << "tile " << i << " does not intersect the frame";
-      plan->tiles.push_back(g);
+      plan.tiles.push_back(g);
     }
-    kOutPlan(cc).Send(std::move(plan));
+
+    if (plan_cache_.enabled()) {
+      plan_cache_.Put(key, plan);  // store a copy; key already built above
+    }
+    kOutPlan(cc).Send(std::make_unique<TilePlan>(std::move(plan)));
     return absl::OkStatus();
   }
 
  private:
   mediapipe::TileSpecToTilePlanCalculatorOptions options_;
+  BoundedLruCache<TilePlan> plan_cache_{0};
 };
 
 MEDIAPIPE_REGISTER_NODE(TileSpecToTilePlanCalculator);

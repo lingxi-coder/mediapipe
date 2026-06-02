@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 
+#include "absl/strings/str_format.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/calculator_runner.h"
 #include "mediapipe/framework/formats/rect.pb.h"
@@ -29,6 +30,61 @@ NormalizedRect Rect(float xc, float yc, float w, float h) {
   NormalizedRect r;
   r.set_x_center(xc); r.set_y_center(yc); r.set_width(w); r.set_height(h);
   return r;
+}
+
+// Runs the calculator over `frames` tile-lists (one per timestamp) with the
+// given cache capacity; returns the emitted TilePlans in order.
+std::vector<TilePlan> RunPlan(
+    int max_cached_tile_plans,
+    const std::vector<std::vector<NormalizedRect>>& frames) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(
+      absl::StrFormat(R"pb(
+        calculator: "TileSpecToTilePlanCalculator"
+        input_stream: "TILES:tiles"
+        output_stream: "TILE_PLAN:plan"
+        options {
+          [mediapipe.TileSpecToTilePlanCalculatorOptions.ext] {
+            max_cached_tile_plans: %d
+          }
+        }
+      )pb",
+                      max_cached_tile_plans)));
+  for (int t = 0; t < static_cast<int>(frames.size()); ++t) {
+    auto tiles = std::make_unique<std::vector<NormalizedRect>>(frames[t]);
+    runner.MutableInputs()->Tag("TILES").packets.push_back(
+        Adopt(tiles.release()).At(Timestamp(t)));
+  }
+  MP_EXPECT_OK(runner.Run());
+  std::vector<TilePlan> out;
+  for (const Packet& p : runner.Outputs().Tag("TILE_PLAN").packets) {
+    out.push_back(p.Get<TilePlan>());
+  }
+  return out;
+}
+
+// Caching on must produce TilePlans identical to caching off, across repeated
+// identical frames (cache hits) and a changed frame (cache miss / recompute).
+TEST(TileSpecToTilePlanCalculatorTest, CacheEnabledMatchesDisabled) {
+  const std::vector<NormalizedRect> a = {Rect(0.25f, 0.25f, 0.5f, 0.5f),
+                                         Rect(0.75f, 0.75f, 0.5f, 0.5f)};
+  const std::vector<NormalizedRect> b = {Rect(0.5f, 0.5f, 0.4f, 0.4f)};
+  const std::vector<std::vector<NormalizedRect>> frames = {a, a, b, a};
+
+  const std::vector<TilePlan> off = RunPlan(/*max_cached_tile_plans=*/0, frames);
+  const std::vector<TilePlan> on = RunPlan(/*max_cached_tile_plans=*/4, frames);
+
+  ASSERT_EQ(off.size(), frames.size());
+  ASSERT_EQ(on.size(), off.size());
+  for (size_t f = 0; f < off.size(); ++f) {
+    ASSERT_EQ(on[f].tiles.size(), off[f].tiles.size());
+    for (size_t i = 0; i < off[f].tiles.size(); ++i) {
+      EXPECT_EQ(on[f].tiles[i].tile_index, off[f].tiles[i].tile_index);
+      EXPECT_FLOAT_EQ(on[f].tiles[i].x_center, off[f].tiles[i].x_center);
+      EXPECT_FLOAT_EQ(on[f].tiles[i].y_center, off[f].tiles[i].y_center);
+      EXPECT_FLOAT_EQ(on[f].tiles[i].width, off[f].tiles[i].width);
+      EXPECT_FLOAT_EQ(on[f].tiles[i].height, off[f].tiles[i].height);
+    }
+  }
 }
 
 TEST(TileSpecToTilePlanCalculatorTest, ValidatesAndIndexesTiles) {

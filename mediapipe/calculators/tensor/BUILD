@@ -2517,6 +2517,7 @@ cc_library(
     srcs = ["tile_spec_to_tile_plan_calculator.cc"],
     deps = [
         ":tile_spec_to_tile_plan_calculator_cc_proto",
+        ":tiling_cache_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
@@ -2539,6 +2540,7 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 

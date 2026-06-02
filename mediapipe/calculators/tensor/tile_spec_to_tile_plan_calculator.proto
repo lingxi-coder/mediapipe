@@ -24,4 +24,9 @@ message TileSpecToTilePlanCalculatorOptions {
   }
   // Reject a frame whose tile count exceeds this (0 = no limit).
   optional int32 max_tiles_per_frame = 1 [default = 0];
+  // Bounded LRU cache of computed TilePlans, keyed by the input tile rects +
+  // max_tiles_per_frame. 0 = disabled (no caching; default). When > 0, repeated
+  // identical tile lists (stable video tiling) reuse the validated plan instead
+  // of re-validating and rebuilding it.
+  optional int32 max_cached_tile_plans = 2 [default = 0];
 }
