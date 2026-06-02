@@ -17,6 +17,7 @@
 #include <memory>
 #include <vector>
 
+#include "mediapipe/calculators/tensor/tiling_cache_stats.h"
 #include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/calculator_runner.h"
@@ -414,6 +415,54 @@ TEST(StreamingTilesTest, CpuPoolOnVsOffIdenticalResults) {
       }
     }
   }
+}
+
+// Verifies that the optional CACHE_STATS output reports matrix cache hits.
+// Feed the same (image, plan) twice with max_cached_tile_matrices=4 and
+// emit_cache_stats=true. After two frames:
+//   - tile_matrix.misses >= 1 (first frame is a miss),
+//   - tile_matrix.hits >= 1 (second frame hits the cached geometry).
+TEST(StreamingTilesTest, CacheStatsReportsMatrixHits) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+    output_stream: "CACHE_STATS:stats"
+    options {
+      [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+        max_cached_tile_matrices: 4
+        emit_cache_stats: true
+      }
+    }
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(4, 8, 8, 3, /*dynamic=*/false));
+  // Send the same frame + plan twice so a cache hit occurs on the 2nd call.
+  for (int t = 0; t < 2; ++t) {
+    runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+        Adopt(WhiteFrame(16, 16).release()).At(Timestamp(t)));
+    runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+        MakePacket<TilePlan>(TwoTiles()).At(Timestamp(t)));
+  }
+  MP_ASSERT_OK(runner.Run());
+
+  const auto& stats_packets = runner.Outputs().Tag("CACHE_STATS").packets;
+  ASSERT_EQ(stats_packets.size(), 2u);
+
+  // Both packets are at the source timestamps (0 and 1).
+  EXPECT_EQ(stats_packets[0].Timestamp(), Timestamp(0));
+  EXPECT_EQ(stats_packets[1].Timestamp(), Timestamp(1));
+
+  // After the second frame, cumulative stats must show at least one miss
+  // (first frame) and at least one hit (second frame, same geometry key).
+  const TilingCacheStats& last = stats_packets[1].Get<TilingCacheStats>();
+  EXPECT_GE(last.tile_matrix.misses, 1)
+      << "expected at least one cache miss (first frame)";
+  EXPECT_GE(last.tile_matrix.hits, 1)
+      << "expected at least one cache hit (second frame, same geometry)";
 }
 
 }  // namespace

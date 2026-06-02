@@ -21,6 +21,7 @@
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_cache_stats.h"
 #include "mediapipe/calculators/tensor/tiling_cache_utils.h"
 #include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
@@ -49,7 +50,9 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   static constexpr SideInput<InferenceMetadata> kSideMeta{"METADATA"};
   static constexpr Output<std::vector<Tensor>> kOutTensors{"TENSORS"};
   static constexpr Output<TensorBatchInfo> kOutInfo{"BATCH_INFO"};
+  static constexpr Output<TilingCacheStats>::Optional kOutStats{"CACHE_STATS"};
   MEDIAPIPE_NODE_CONTRACT(kInImage, kInPlan, kSideMeta, kOutTensors, kOutInfo,
+                          kOutStats,
                           ::mediapipe::api2::TimestampChange::Arbitrary());
 
   absl::Status Open(CalculatorContext* cc) override {
@@ -169,6 +172,15 @@ class StreamingTilesToTensorBatchCalculator : public Node {
           mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
               .At(batch_ts_));
       ++batch_ts_;
+    }
+    if (options_.emit_cache_stats() && kOutStats(cc).IsConnected()) {
+      TilingCacheStats stats;
+      stats.tile_matrix = matrix_cache_.stats();
+      if (memory_manager_ && memory_manager_->GetCpuBufferPool()) {
+        stats.cpu_tensor_pool = memory_manager_->GetCpuBufferPool()->stats();
+      }
+      kOutStats(cc).Send(
+          mediapipe::api2::MakePacket<TilingCacheStats>(stats).At(Timestamp(ts)));
     }
     return absl::OkStatus();
   }

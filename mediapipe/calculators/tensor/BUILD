@@ -2577,6 +2577,7 @@ cc_library(
     srcs = ["streaming_tiles_to_tensor_batch_calculator.cc"],
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+        ":tiling_cache_stats",
         ":tiling_cache_utils",
         ":tiling_matrix_utils",
         ":tiling_types",
@@ -2601,6 +2602,7 @@ cc_test(
     size = "small",
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator",
+        ":tiling_cache_stats",
         ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_runner",
@@ -2677,6 +2679,15 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_library(
+    name = "tiling_cache_stats",
+    hdrs = ["tiling_cache_stats.h"],
+    deps = [
+        ":tiling_cache_utils",
+        "//mediapipe/framework/formats:cpu_buffer_pool",
     ],
 )
 

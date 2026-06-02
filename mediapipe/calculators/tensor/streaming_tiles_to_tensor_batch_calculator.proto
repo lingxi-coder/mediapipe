@@ -38,4 +38,9 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // tensor buffers in a calculator-local MemoryManager, reused after each
   // batch packet is released downstream.
   optional int32 max_cpu_tensor_workspaces = 3 [default = 0];
+
+  // When true AND a CACHE_STATS output is connected, emit cumulative stats
+  // once per source frame at the source timestamp. Must not allocate on the
+  // hot path when false or when CACHE_STATS is unconnected.
+  optional bool emit_cache_stats = 4 [default = false];
 }
