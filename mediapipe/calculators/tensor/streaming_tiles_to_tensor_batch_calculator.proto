@@ -33,4 +33,9 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // Pixels are NEVER cached; the crop/resize/normalize loop always runs every
   // frame. Only the matrix and ROI computation is skipped on a cache hit.
   optional int32 max_cached_tile_matrices = 2 [default = 0];
+
+  // 0 = disabled (per-batch alloc, unchanged); N > 0 = pool up to N batch
+  // tensor buffers in a calculator-local MemoryManager, reused after each
+  // batch packet is released downstream.
+  optional int32 max_cpu_tensor_workspaces = 3 [default = 0];
 }

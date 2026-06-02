@@ -328,5 +328,93 @@ TEST(StreamingTilesTest, MultiBatchEmissionWhenTExceedsCap) {
   EXPECT_EQ(ipk[1].Timestamp(), Timestamp(1));
 }
 
+// Verifies that enabling max_cpu_tensor_workspaces=2 produces identical tensor
+// float buffers and geometry matrices compared to running with the pool disabled
+// (max_cpu_tensor_workspaces=0, the default) over three consecutive frames.
+// This proves the pooled path is correctness-neutral and doesn't crash across
+// multiple frames.
+TEST(StreamingTilesTest, CpuPoolOnVsOffIdenticalResults) {
+  auto run_graph = [](int max_workspaces) {
+    std::string node_text = R"pb(
+      calculator: "StreamingTilesToTensorBatchCalculator"
+      input_stream: "IMAGE:image"
+      input_stream: "TILE_PLAN:plan"
+      input_side_packet: "METADATA:meta"
+      output_stream: "TENSORS:tensors"
+      output_stream: "BATCH_INFO:info"
+    )pb";
+    std::string pooled_node_text = R"pb(
+      calculator: "StreamingTilesToTensorBatchCalculator"
+      input_stream: "IMAGE:image"
+      input_stream: "TILE_PLAN:plan"
+      input_side_packet: "METADATA:meta"
+      output_stream: "TENSORS:tensors"
+      output_stream: "BATCH_INFO:info"
+      options {
+        [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+          max_cpu_tensor_workspaces: 2
+        }
+      }
+    )pb";
+    CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(
+        max_workspaces > 0 ? pooled_node_text : node_text));
+    runner.MutableSidePackets()->Tag("METADATA") =
+        MakePacket<InferenceMetadata>(Meta(4, 8, 8, 3, /*dynamic=*/false));
+    for (int t = 0; t < 3; ++t) {
+      runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+          Adopt(WhiteFrame(16, 16).release()).At(Timestamp(t)));
+      runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+          MakePacket<TilePlan>(TwoTiles()).At(Timestamp(t)));
+    }
+    MP_EXPECT_OK(runner.Run());
+    return std::make_pair(
+        runner.Outputs().Tag("TENSORS").packets,
+        runner.Outputs().Tag("BATCH_INFO").packets);
+  };
+
+  auto [pooled_tensors, pooled_infos] = run_graph(/*max_workspaces=*/2);
+  auto [default_tensors, default_infos] = run_graph(/*max_workspaces=*/0);
+
+  ASSERT_EQ(pooled_tensors.size(), 3u);
+  ASSERT_EQ(default_tensors.size(), 3u);
+
+  for (int t = 0; t < 3; ++t) {
+    const auto& pt = pooled_tensors[t].Get<std::vector<Tensor>>();
+    const auto& dt = default_tensors[t].Get<std::vector<Tensor>>();
+    ASSERT_EQ(pt.size(), 1u);
+    ASSERT_EQ(dt.size(), 1u);
+
+    // (a) Compare output tensor float buffers byte-for-byte.
+    const Tensor& pooled_t = pt[0];
+    const Tensor& default_t = dt[0];
+    ASSERT_EQ(pooled_t.shape().dims, default_t.shape().dims);
+    auto pr = pooled_t.GetCpuReadView();
+    auto dr = default_t.GetCpuReadView();
+    const float* pbuf = pr.buffer<float>();
+    const float* dbuf = dr.buffer<float>();
+    const int elems = pooled_t.shape().num_elements();
+    for (int e = 0; e < elems; ++e) {
+      EXPECT_EQ(pbuf[e], dbuf[e])
+          << "tensor mismatch at frame=" << t << " elem=" << e;
+    }
+
+    // (b) Compare geometry tile_to_image_matrices element-wise.
+    const auto& pi = pooled_infos[t].Get<TensorBatchInfo>();
+    const auto& di = default_infos[t].Get<TensorBatchInfo>();
+    ASSERT_NE(pi.geometry, nullptr);
+    ASSERT_NE(di.geometry, nullptr);
+    ASSERT_EQ(pi.geometry->tile_to_image_matrices.size(),
+              di.geometry->tile_to_image_matrices.size());
+    for (size_t m = 0; m < pi.geometry->tile_to_image_matrices.size(); ++m) {
+      for (int elem = 0; elem < 16; ++elem) {
+        EXPECT_FLOAT_EQ(pi.geometry->tile_to_image_matrices[m][elem],
+                        di.geometry->tile_to_image_matrices[m][elem])
+            << "matrix mismatch at frame=" << t << " matrix=" << m
+            << " elem=" << elem;
+      }
+    }
+  }
+}
+
 }  // namespace
 }  // namespace mediapipe

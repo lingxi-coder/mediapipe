@@ -31,6 +31,7 @@
 #include "mediapipe/framework/formats/image_frame_opencv.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
+#include "mediapipe/framework/memory_manager.h"
 #include "mediapipe/framework/port/opencv_core_inc.h"
 #include "mediapipe/framework/port/opencv_imgproc_inc.h"
 #include "mediapipe/framework/port/ret_check.h"
@@ -63,6 +64,11 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     RET_CHECK_GE(options_.max_cached_tile_matrices(), 0);
     matrix_cache_ = BoundedLruCache<std::shared_ptr<const TileBatchGeometry>>(
         static_cast<size_t>(options_.max_cached_tile_matrices()));
+    RET_CHECK_GE(options_.max_cpu_tensor_workspaces(), 0);
+    if (options_.max_cpu_tensor_workspaces() > 0) {
+      memory_manager_ = std::make_shared<MemoryManager>(
+          static_cast<size_t>(options_.max_cpu_tensor_workspaces()));
+    }
     return absl::OkStatus();
   }
 
@@ -94,7 +100,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       const int rows = std::min(cap, T - start);
       const int N = dynamic_batch_ ? rows : cap;
       Tensor tensor(Tensor::ElementType::kFloat32,
-                    Tensor::Shape{N, H, W, C});
+                    Tensor::Shape{N, H, W, C},
+                    memory_manager_.get());
       auto write = tensor.GetCpuWriteView();
       float* buf = write.buffer<float>();
       std::memset(buf, 0, sizeof(float) * N * H * W * C);
@@ -134,12 +141,10 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       for (int r = 0; r < rows; ++r) {
         const TilePixelRoi& proi = geom->effective_pixel_rois[r];
         cv::Mat roi = src(cv::Rect(proi.x, proi.y, proi.width, proi.height));
-        cv::Mat resized;
-        cv::resize(roi, resized, cv::Size(W, H));
-        cv::Mat f32;
-        resized.convertTo(f32, CV_32FC(C), 1.0 / 255.0);
+        cv::resize(roi, resized_workspace_, cv::Size(W, H));
+        resized_workspace_.convertTo(f32_workspace_, CV_32FC(C), 1.0 / 255.0);
         std::memcpy(buf + static_cast<size_t>(r) * H * W * C,
-                    f32.ptr<float>(0), sizeof(float) * H * W * C);
+                    f32_workspace_.ptr<float>(0), sizeof(float) * H * W * C);
       }
 
       std::vector<Tensor> tensors;
@@ -206,6 +211,9 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   // batch emit (following the BeginLoopCalculator pattern). Never reset —
   // guarantees output-stream timestamp monotonicity across all Process() calls.
   Timestamp batch_ts_ = Timestamp(0);
+  std::shared_ptr<MemoryManager> memory_manager_;  // null unless pooling enabled
+  cv::Mat resized_workspace_;  // reused across rows/batches when shape matches
+  cv::Mat f32_workspace_;
 };
 
 MEDIAPIPE_REGISTER_NODE(StreamingTilesToTensorBatchCalculator);

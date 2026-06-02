@@ -2585,6 +2585,7 @@ cc_library(
         "//mediapipe/framework/formats:image_frame",
         "//mediapipe/framework/formats:image_frame_opencv",
         "//mediapipe/framework/formats:inference_metadata_cc_proto",
+        "//mediapipe/framework:memory_manager",
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/framework/port:opencv_core",
         "//mediapipe/framework/port:opencv_imgproc",
