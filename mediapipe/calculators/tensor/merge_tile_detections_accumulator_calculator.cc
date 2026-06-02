@@ -61,16 +61,22 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
     auto& acc = pending_[info.source_frame_timestamp];
     for (int r = 0; r < info.valid_count; ++r) {
       if (r >= static_cast<int>(batch.size())) continue;
-      const TileGeometry& g = geom->tile_geometries[r];
       const std::array<float, 16>& m = geom->tile_to_image_matrices[r];
+      // Project the box with the tile's transform. The matrix is built from the
+      // EFFECTIVE sampled pixel ROI, so for a clamped/rounded boundary tile its
+      // x/y scales (m[0], m[5] for an axis-aligned tile = effective_roi.w/fw,
+      // effective_roi.h/fh) differ from the requested normalized tile size.
+      // Scale the box extent by the SAME matrix that projects the center;
+      // using the requested tile width/height would put center and size in
+      // different coordinate systems and corrupt boundary-tile boxes.
       for (const OrientedDetection& d : batch[r]) {
         OrientedDetection out = d;
         float fx, fy;
         ApplyMatrix(m, d.cx(), d.cy(), &fx, &fy);
         out.set_cx(fx);
         out.set_cy(fy);
-        out.set_width(d.width() * g.width);
-        out.set_height(d.height() * g.height);
+        out.set_width(d.width() * m[0]);
+        out.set_height(d.height() * m[5]);
         // rotation preserved (axis-aligned tile).
         acc.received_dets.push_back(std::move(out));
       }

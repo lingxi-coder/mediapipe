@@ -157,5 +157,62 @@ TEST(MergeTileAccumulatorTest, DropsPaddedRows) {
   ASSERT_EQ(merged.size(), 1);  // padded row dropped
 }
 
+// A boundary tile whose requested normalized geometry (width 0.6) was clamped
+// at sample time to a narrower effective pixel ROI (50px of a 100px frame =>
+// 0.5). Both the projected center AND size must follow the effective ROI, so a
+// tile-local box of width 0.4 maps to 0.4 * 0.5 = 0.20 — NOT 0.4 * 0.6 = 0.24
+// (which scaling by the requested tile width would wrongly produce).
+TEST(MergeTileAccumulatorTest, BoundaryTileScalesSizeByEffectiveRoiNotRequested) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+        calculator: "MergeTileDetectionsAccumulatorCalculator"
+        input_stream: "ORIENTED_DETECTIONS:dets"
+        input_stream: "BATCH_INFO:info"
+        output_stream: "ORIENTED_DETECTIONS:merged"
+      )pb"));
+
+  TileGeometry g;
+  g.tile_index = 0;
+  g.x_center = 0.3f;  // requested x0=0, width 0.6 -> [0, 0.6]
+  g.y_center = 0.5f;
+  g.width = 0.6f;
+  g.height = 1.0f;
+
+  // Effective ROI clamped to the left half (50px) — diverges from requested.
+  auto geom = std::make_shared<TileBatchGeometry>();
+  TilePixelRoi roi{/*x=*/0, /*y=*/0, /*width=*/50, /*height=*/100};
+  geom->tile_indices.push_back(0);
+  geom->tile_geometries.push_back(g);
+  geom->effective_pixel_rois.push_back(roi);
+  geom->tile_to_image_matrices.push_back(TileToImageMatrix(roi, 100, 100));
+
+  auto batch = std::make_unique<std::vector<std::vector<OrientedDetection>>>();
+  batch->push_back({Obb(0.5f, 0.5f, 0.4f, 0.4f)});  // tile-local center + size
+
+  TensorBatchInfo info;
+  info.source_frame_timestamp = 0;
+  info.total_batches = 1;
+  info.batch_capacity = 1;
+  info.valid_count = 1;
+  info.tile_indices = {0};
+  info.geometry = geom;
+
+  runner.MutableInputs()
+      ->Tag("ORIENTED_DETECTIONS")
+      .packets.push_back(Adopt(batch.release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("BATCH_INFO").packets.push_back(
+      MakePacket<TensorBatchInfo>(info).At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& merged = runner.Outputs()
+                           .Tag("ORIENTED_DETECTIONS")
+                           .packets[0]
+                           .Get<std::vector<OrientedDetection>>();
+  ASSERT_EQ(merged.size(), 1);
+  EXPECT_NEAR(merged[0].cx(), 0.25f, 1e-4);     // center of [0, 0.5]
+  EXPECT_NEAR(merged[0].width(), 0.20f, 1e-4);  // 0.4 * 0.5 (effective), not 0.24
+  EXPECT_NEAR(merged[0].height(), 0.40f, 1e-4); // 0.4 * 1.0
+}
+
 }  // namespace
 }  // namespace mediapipe
