@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "mediapipe/framework/memory_manager.h"
 #include "mediapipe/framework/port.h"  // IWYU pragma: keep
 #include "mediapipe/framework/port/gmock.h"
 #include "mediapipe/framework/port/gtest.h"
@@ -96,6 +97,28 @@ TEST(Cpu, TestViewMove) {
   auto p2 = v2.buffer<float>();
   EXPECT_EQ(p1, p2);
   EXPECT_EQ(v1.buffer<float>(), nullptr);  // NOLINT
+}
+
+TEST(TensorCpuPoolTest, DestroyedTensorReturnsBufferToPoolAndIsReused) {
+  MemoryManager mm(/*cpu_buffer_pool_capacity=*/2);
+  void* first_ptr = nullptr;
+  {
+    Tensor t(Tensor::ElementType::kFloat32, Tensor::Shape{16}, &mm);
+    auto view = t.GetCpuWriteView();
+    first_ptr = view.buffer<float>();
+    ASSERT_NE(first_ptr, nullptr);
+  }  // t destroyed here -> buffer returned to pool (simulates packet release).
+  Tensor t2(Tensor::ElementType::kFloat32, Tensor::Shape{16}, &mm);
+  auto view2 = t2.GetCpuWriteView();
+  EXPECT_EQ(view2.buffer<float>(), first_ptr);  // same buffer reused
+}
+
+TEST(TensorCpuPoolTest, NullPoolDisabledIsUnchanged) {
+  MemoryManager mm(/*cpu_buffer_pool_capacity=*/0);
+  EXPECT_EQ(mm.GetCpuBufferPool(), nullptr);
+  Tensor t(Tensor::ElementType::kFloat32, Tensor::Shape{16}, &mm);
+  auto view = t.GetCpuWriteView();
+  EXPECT_NE(view.buffer<float>(), nullptr);  // allocates normally, no crash
 }
 
 }  // namespace mediapipe

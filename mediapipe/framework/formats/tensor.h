@@ -33,6 +33,7 @@
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "mediapipe/framework/formats/cpu_buffer_pool.h"
 #include "mediapipe/framework/formats/tensor/internal.h"
 #include "mediapipe/framework/memory_manager.h"
 // Exports MEDIAPIPE_TENSOR_USE_AHWB macro.
@@ -568,6 +569,12 @@ class Tensor {
   mutable absl::Mutex view_mutex_;
 
   mutable void* cpu_buffer_ = nullptr;
+  // Co-owned CPU buffer pool (null when pooling disabled). Mirrors the AHWB
+  // hardware_buffer_pool_ pattern so the pool outlives this Tensor's buffer.
+  std::shared_ptr<CpuBufferPool> cpu_buffer_pool_;
+  // True when cpu_buffer_ was drawn from cpu_buffer_pool_ and must be returned
+  // there (not free()d) in FreeCpuBuffer().
+  mutable bool cpu_buffer_from_pool_ = false;
   absl::Status AllocateCpuBuffer() const;
   void FreeCpuBuffer() const;
   // Forward declaration of the MtlResources provides compile-time verification

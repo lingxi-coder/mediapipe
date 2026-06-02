@@ -640,6 +640,7 @@ cc_library(
         "//mediapipe/gpu/webgpu:use_webgpu_emscripten": ["-sUSE_WEBGPU=1"],
     }),
     deps = [
+        ":cpu_buffer_pool",
         "//mediapipe/framework:memory_manager",
         "//mediapipe/framework:port",
         "//mediapipe/framework/deps:no_destructor",
@@ -715,6 +716,7 @@ cc_test(
     ],
     deps = [
         ":tensor",
+        "//mediapipe/framework:memory_manager",
         "//mediapipe/framework:port",
         "//mediapipe/framework/port:gtest_main",
     ] + select({

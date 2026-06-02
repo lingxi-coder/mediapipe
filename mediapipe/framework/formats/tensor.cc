@@ -450,6 +450,8 @@ void Tensor::Move(Tensor* src) {
   element_type_ = src->element_type();
   src->element_type_ = ElementType::kNone;  // Mark as invalidated.
   cpu_buffer_ = std::exchange(src->cpu_buffer_, nullptr);
+  cpu_buffer_pool_ = std::move(src->cpu_buffer_pool_);
+  cpu_buffer_from_pool_ = std::exchange(src->cpu_buffer_from_pool_, false);
   ahwb_tracking_key_ = src->ahwb_tracking_key_;
   mtl_resources_ = std::move(src->mtl_resources_);
   MoveAhwbStuff(src);
@@ -486,6 +488,9 @@ Tensor::Tensor(ElementType element_type, const Shape& shape,
     hardware_buffer_pool_ = memory_manager->GetAndroidHardwareBufferPool();
   }
 #endif  // MEDIAPIPE_TENSOR_USE_AHWB
+  if (memory_manager) {
+    cpu_buffer_pool_ = memory_manager->GetCpuBufferPool();
+  }
 }
 Tensor::Tensor(ElementType element_type, const Shape& shape,
                const QuantizationParameters& quantization_parameters,
@@ -500,6 +505,9 @@ Tensor::Tensor(ElementType element_type, const Shape& shape,
     hardware_buffer_pool_ = memory_manager->GetAndroidHardwareBufferPool();
   }
 #endif  // MEDIAPIPE_TENSOR_USE_AHWB
+  if (memory_manager) {
+    cpu_buffer_pool_ = memory_manager->GetCpuBufferPool();
+  }
 }
 
 #if MEDIAPIPE_METAL_ENABLED
@@ -774,7 +782,10 @@ absl::Status Tensor::AllocateCpuBuffer() const {
     // memory page which should match common alignment requirements.
     cpu_buffer_ = AllocateVirtualMemory(bytes());
 #else
-    if (memory_alignment_ > 0) {
+    if (cpu_buffer_pool_ && cpu_buffer_pool_->enabled()) {
+      cpu_buffer_ = cpu_buffer_pool_->Acquire(bytes(), memory_alignment_);
+      cpu_buffer_from_pool_ = true;
+    } else if (memory_alignment_ > 0) {
       // TODO b/339271330 - Investigate how aligned memory performs in
       // MP WebAssembly targets.
       // TfLite custom allocation requires at least memory_alignment_ bytes.
@@ -796,12 +807,15 @@ void Tensor::FreeCpuBuffer() const {
 #if MEDIAPIPE_METAL_ENABLED
   free(cpu_buffer_);
 #else
-  if (memory_alignment_ > 0) {
+  if (cpu_buffer_from_pool_) {
+    cpu_buffer_pool_->Release(cpu_buffer_, bytes(), memory_alignment_);
+  } else if (memory_alignment_ > 0) {
     aligned_free(cpu_buffer_);
   } else {
     free(cpu_buffer_);
   }
 #endif  // MEDIAPIPE_METAL_ENABLED
+  cpu_buffer_from_pool_ = false;
   cpu_buffer_ = nullptr;
 }
 
