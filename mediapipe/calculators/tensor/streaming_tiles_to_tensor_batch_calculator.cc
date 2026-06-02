@@ -171,6 +171,15 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       kOutInfo(cc).Send(
           mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
               .At(batch_ts_));
+      // No TENSORS packet is produced for an empty frame, but the TENSORS
+      // stream must still advance past this timestamp. Otherwise downstream
+      // inference (which only emits detections for TENSORS timestamps) never
+      // advances its output bound, and the synchronized merge — which pairs
+      // BATCH_INFO with detections — would stall instead of emitting the empty
+      // source-frame result. Advancing the bound lets merge run Process() with
+      // empty detections. (EndLoopCalculator uses the same SetNextTimestampBound
+      // pattern to keep a companion stream live.)
+      kOutTensors(cc).SetNextTimestampBound(batch_ts_ + 1);
       ++batch_ts_;
     }
     if (options_.emit_cache_stats() && kOutStats(cc).IsConnected()) {
