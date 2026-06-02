@@ -66,6 +66,21 @@ TilePlan TwoTiles() {
   return p;
 }
 
+TilePlan ThreeTiles() {
+  // Three vertical thirds of the frame (tile_index 0, 1, 2).
+  TilePlan p;
+  for (int i = 0; i < 3; ++i) {
+    TileGeometry g;
+    g.tile_index = i;
+    g.x_center = (i + 0.5f) / 3.0f;
+    g.y_center = 0.5f;
+    g.width = 1.0f / 3.0f;
+    g.height = 1.0f;
+    p.tiles.push_back(g);
+  }
+  return p;
+}
+
 TEST(StreamingTilesTest, FixedBatchPadsToCapacity) {
   CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
     calculator: "StreamingTilesToTensorBatchCalculator"
@@ -253,6 +268,64 @@ TEST(StreamingTilesTest, CacheOnVsCacheOffIdenticalResults) {
           << "tensor mismatch at frame=" << t << " elem=" << e;
     }
   }
+}
+
+// Verifies multi-batch emission when tile count T exceeds batch_capacity.
+// cap=2, T=3 → 2 batches: batch[0] has tiles {0,1} (valid_count=2),
+// batch[1] has tile {2} (valid_count=1). Each batch is emitted at a distinct
+// synthetic timestamp (batch_ts_) so the two output Timestamps differ.
+TEST(StreamingTilesTest, MultiBatchEmissionWhenTExceedsCap) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  )pb"));
+  // cap=2, dynamic so N matches valid rows, T=3 → 2 batches
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(2, 8, 8, 3, /*dynamic=*/true));
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(8, 8).release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(ThreeTiles()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+
+  const auto& ipk = runner.Outputs().Tag("BATCH_INFO").packets;
+  const auto& tpk = runner.Outputs().Tag("TENSORS").packets;
+
+  // Exactly 2 batches emitted.
+  ASSERT_EQ(ipk.size(), 2u);
+  ASSERT_EQ(tpk.size(), 2u);
+
+  const auto& info0 = ipk[0].Get<TensorBatchInfo>();
+  const auto& info1 = ipk[1].Get<TensorBatchInfo>();
+
+  // total_batches == 2 in both.
+  EXPECT_EQ(info0.total_batches, 2);
+  EXPECT_EQ(info1.total_batches, 2);
+
+  // batch_index: 0 then 1.
+  EXPECT_EQ(info0.batch_index, 0);
+  EXPECT_EQ(info1.batch_index, 1);
+
+  // valid_count: 2 tiles in first batch, 1 in second.
+  EXPECT_EQ(info0.valid_count, 2);
+  EXPECT_EQ(info1.valid_count, 1);
+
+  // tile_indices cover all three tiles {0, 1, 2} across both batches.
+  ASSERT_EQ(info0.tile_indices.size(), 2u);
+  ASSERT_EQ(info1.tile_indices.size(), 1u);
+  EXPECT_EQ(info0.tile_indices[0], 0);
+  EXPECT_EQ(info0.tile_indices[1], 1);
+  EXPECT_EQ(info1.tile_indices[0], 2);
+
+  // The two output packets must have distinct timestamps.
+  EXPECT_NE(ipk[0].Timestamp(), ipk[1].Timestamp());
+  // Timestamps are Timestamp(0) and Timestamp(1) (batch_ts_ starts at 0).
+  EXPECT_EQ(ipk[0].Timestamp(), Timestamp(0));
+  EXPECT_EQ(ipk[1].Timestamp(), Timestamp(1));
 }
 
 }  // namespace

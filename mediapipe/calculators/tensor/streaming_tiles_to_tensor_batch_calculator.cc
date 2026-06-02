@@ -25,6 +25,7 @@
 #include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
+#include "mediapipe/framework/api2/packet.h"
 #include "mediapipe/framework/calculator_framework.h"
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/image_frame_opencv.h"
@@ -33,6 +34,7 @@
 #include "mediapipe/framework/port/opencv_core_inc.h"
 #include "mediapipe/framework/port/opencv_imgproc_inc.h"
 #include "mediapipe/framework/port/ret_check.h"
+#include "mediapipe/framework/timestamp.h"
 
 namespace mediapipe {
 namespace api2 {
@@ -46,7 +48,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   static constexpr SideInput<InferenceMetadata> kSideMeta{"METADATA"};
   static constexpr Output<std::vector<Tensor>> kOutTensors{"TENSORS"};
   static constexpr Output<TensorBatchInfo> kOutInfo{"BATCH_INFO"};
-  MEDIAPIPE_NODE_CONTRACT(kInImage, kInPlan, kSideMeta, kOutTensors, kOutInfo);
+  MEDIAPIPE_NODE_CONTRACT(kInImage, kInPlan, kSideMeta, kOutTensors, kOutInfo,
+                          ::mediapipe::api2::TimestampChange::Arbitrary());
 
   absl::Status Open(CalculatorContext* cc) override {
     options_ = cc->Options<
@@ -78,13 +81,11 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     const int fh = frame.Height();
 
     const int T = static_cast<int>(plan.tiles.size());
-    // Single-batch-per-frame only for now: emitting >1 batch per Process() at
-    // one input timestamp would violate output-stream timestamp monotonicity.
-    // Fail cleanly here rather than crash deeper in the framework. Multi-batch
-    // (T > batch_capacity) emission is deferred.
-    RET_CHECK_LE(T, cap)
-        << "tile count " << T << " exceeds batch_capacity " << cap
-        << "; multi-batch emission (T > batch_capacity) is not yet supported";
+    // Multi-batch emission is supported: when T > batch_capacity, each batch
+    // is emitted at a distinct synthetic timestamp (batch_ts_), which is a
+    // calculator-local monotonic counter incremented after each emit. This
+    // follows the BeginLoopCalculator pattern and guarantees output-stream
+    // timestamp monotonicity even when one Process() call emits multiple batches.
     const int total_batches = (T + cap - 1) / cap;  // 0 when T == 0
     const int64_t ts = cc->InputTimestamp().Value();
 
@@ -120,7 +121,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
 
       TensorBatchInfo info;
       info.source_frame_timestamp = ts;
-      info.batch_timestamp = ts;  // single-batch: emit at input ts (a later task changes this)
+      info.batch_timestamp = batch_ts_.Value();
       info.batch_index = emitted;
       info.total_batches = total_batches;
       info.batch_capacity = N;
@@ -143,9 +144,26 @@ class StreamingTilesToTensorBatchCalculator : public Node {
 
       std::vector<Tensor> tensors;
       tensors.push_back(std::move(tensor));
-      kOutTensors(cc).Send(std::move(tensors));
-      kOutInfo(cc).Send(std::move(info));
+      kOutTensors(cc).Send(
+          mediapipe::api2::MakePacket<std::vector<Tensor>>(std::move(tensors))
+              .At(batch_ts_));
+      kOutInfo(cc).Send(
+          mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+              .At(batch_ts_));
+      ++batch_ts_;
       ++emitted;
+    }
+    // If T == 0, emit one empty BATCH_INFO at batch_ts_ so merge sees the frame.
+    if (T == 0) {
+      TensorBatchInfo info;
+      info.source_frame_timestamp = ts;
+      info.batch_timestamp = batch_ts_.Value();
+      info.total_batches = 0;
+      info.valid_count = 0;
+      kOutInfo(cc).Send(
+          mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+              .At(batch_ts_));
+      ++batch_ts_;
     }
     return absl::OkStatus();
   }
@@ -184,6 +202,10 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   InferenceMetadata meta_;
   bool dynamic_batch_ = false;
   BoundedLruCache<std::shared_ptr<const TileBatchGeometry>> matrix_cache_{0};
+  // Monotonic synthetic timestamp for output packets. Incremented after each
+  // batch emit (following the BeginLoopCalculator pattern). Never reset —
+  // guarantees output-stream timestamp monotonicity across all Process() calls.
+  Timestamp batch_ts_ = Timestamp(0);
 };
 
 MEDIAPIPE_REGISTER_NODE(StreamingTilesToTensorBatchCalculator);
