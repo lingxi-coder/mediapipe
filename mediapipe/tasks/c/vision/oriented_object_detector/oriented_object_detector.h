@@ -64,35 +64,43 @@ struct MpOrientedObjectDetectorOptions {
   int num_classes;
 
   // Result callback for live-stream mode. Must be set iff running_mode is
-  // MP_RUNNING_MODE_LIVE_STREAM. Valid only for the callback's lifetime.
+  // MP_RUNNING_MODE_LIVE_STREAM. The arguments passed to the callback are valid
+  // only for the duration of the callback invocation.
   typedef void (*result_callback_fn)(
       MpStatus status, const MpOrientedObjectDetectorResult* result,
       const MpImagePtr image, int64_t timestamp_ms);
   result_callback_fn result_callback;
 };
 
+// Creates an OrientedObjectDetector from the provided `options`.
 MP_EXPORT MpStatus MpOrientedObjectDetectorCreate(
     struct MpOrientedObjectDetectorOptions* options,
     MpOrientedObjectDetectorPtr* detector_out, char** error_msg);
 
+// Performs oriented detection on a single image.
 MP_EXPORT MpStatus MpOrientedObjectDetectorDetectImage(
     MpOrientedObjectDetectorPtr detector, MpImagePtr image,
     const struct MpImageProcessingOptions* options,
     MpOrientedObjectDetectorResult* result, char** error_msg);
 
+// Performs oriented detection on a video frame (monotonically increasing
+// timestamps).
 MP_EXPORT MpStatus MpOrientedObjectDetectorDetectForVideo(
     MpOrientedObjectDetectorPtr detector, MpImagePtr image,
     const struct MpImageProcessingOptions* options, int64_t timestamp_ms,
     MpOrientedObjectDetectorResult* result, char** error_msg);
 
+// Sends live image data; results delivered via the configured result_callback.
 MP_EXPORT MpStatus MpOrientedObjectDetectorDetectAsync(
     MpOrientedObjectDetectorPtr detector, MpImagePtr image,
     const struct MpImageProcessingOptions* options, int64_t timestamp_ms,
     char** error_msg);
 
+// Frees memory allocated inside a result. Does not free the result pointer.
 MP_EXPORT void MpOrientedObjectDetectorCloseResult(
     MpOrientedObjectDetectorResult* result);
 
+// Frees the detector.
 MP_EXPORT MpStatus MpOrientedObjectDetectorClose(
     MpOrientedObjectDetectorPtr detector, char** error_msg);
 
