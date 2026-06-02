@@ -111,6 +111,9 @@ TEST(TensorCpuPoolTest, DestroyedTensorReturnsBufferToPoolAndIsReused) {
   Tensor t2(Tensor::ElementType::kFloat32, Tensor::Shape{16}, &mm);
   auto view2 = t2.GetCpuWriteView();
   EXPECT_EQ(view2.buffer<float>(), first_ptr);  // same buffer reused
+  // Prove the match came from the pool (a real cache hit), not allocator luck:
+  // the second allocation must have been served from the free-list.
+  EXPECT_EQ(mm.GetCpuBufferPool()->stats().hits, 1);
 }
 
 TEST(TensorCpuPoolTest, NullPoolDisabledIsUnchanged) {
