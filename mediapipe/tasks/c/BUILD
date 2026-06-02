@@ -58,6 +58,7 @@ cc_binary(
         "//mediapipe/tasks/c/vision/image_segmenter:image_segmenter_c_lib",
         "//mediapipe/tasks/c/vision/interactive_segmenter_legacy:interactive_segmenter_legacy_c_lib",
         "//mediapipe/tasks/c/vision/object_detector:object_detector_c_lib",
+        "//mediapipe/tasks/c/vision/yolo_object_detector:yolo_object_detector_c_lib",
         "//mediapipe/tasks/c/vision/pose_landmarker:pose_landmarker_c_lib",
     ] + select({
         "@platforms//os:windows": [],
