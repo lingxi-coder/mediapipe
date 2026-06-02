@@ -91,6 +91,33 @@ py_library(
 )
 
 py_library(
+    name = "oriented_object_detector",
+    srcs = [
+        "oriented_object_detector.py",
+    ],
+    deps = [
+        # NOTE: category names are enriched best-effort via a LAZY import of
+        # //mediapipe/tasks/python/metadata inside _load_label_map (guarded by
+        # try/except). The metadata module pulls in TensorFlow, so it is
+        # deliberately NOT a static dep here — when it is unavailable at runtime
+        # the label lookup degrades to None. This keeps the OBB target lean.
+        "//mediapipe/tasks/python/components/containers:oriented_detections",
+        "//mediapipe/tasks/python/components/containers:oriented_detections_c",
+        "//mediapipe/tasks/python/core:async_result_dispatcher",
+        "//mediapipe/tasks/python/core:base_options",
+        "//mediapipe/tasks/python/core:base_options_c",
+        "//mediapipe/tasks/python/core:mediapipe_c_bindings",
+        "//mediapipe/tasks/python/core:mediapipe_c_utils",
+        "//mediapipe/tasks/python/core:optional_dependencies",
+        "//mediapipe/tasks/python/core:serial_dispatcher",
+        "//mediapipe/tasks/python/vision/core:image",
+        "//mediapipe/tasks/python/vision/core:image_processing_options",
+        "//mediapipe/tasks/python/vision/core:image_processing_options_c",
+        "//mediapipe/tasks/python/vision/core:vision_task_running_mode",
+    ],
+)
+
+py_library(
     name = "image_classifier",
     srcs = [
         "image_classifier.py",
