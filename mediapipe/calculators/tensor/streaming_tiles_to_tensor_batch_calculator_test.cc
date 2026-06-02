@@ -167,5 +167,93 @@ TEST(StreamingTilesTest, GeometryPopulatedAndMatricesRoundTrip) {
   EXPECT_NEAR(out_y, tg.y_center, 2e-2f);
 }
 
+// Verifies that enabling max_cached_tile_matrices produces identical geometry
+// matrices and pixel buffers compared to running with the cache disabled.
+// Feed the same (image, plan) twice through each graph and check that:
+//   (a) tile_to_image_matrices are element-wise equal between cached/uncached
+//   (b) output tensor float buffers are byte-identical between cached/uncached
+TEST(StreamingTilesTest, CacheOnVsCacheOffIdenticalResults) {
+  auto run_graph = [](bool enable_cache) {
+    CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(
+        enable_cache
+            ? R"pb(
+                calculator: "StreamingTilesToTensorBatchCalculator"
+                input_stream: "IMAGE:image"
+                input_stream: "TILE_PLAN:plan"
+                input_side_packet: "METADATA:meta"
+                output_stream: "TENSORS:tensors"
+                output_stream: "BATCH_INFO:info"
+                options {
+                  [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+                    max_cached_tile_matrices: 4
+                  }
+                }
+              )pb"
+            : R"pb(
+                calculator: "StreamingTilesToTensorBatchCalculator"
+                input_stream: "IMAGE:image"
+                input_stream: "TILE_PLAN:plan"
+                input_side_packet: "METADATA:meta"
+                output_stream: "TENSORS:tensors"
+                output_stream: "BATCH_INFO:info"
+              )pb"));
+    runner.MutableSidePackets()->Tag("METADATA") =
+        MakePacket<InferenceMetadata>(Meta(4, 8, 8, 3, /*dynamic=*/false));
+    // Send the same frame + plan twice so a cache hit can occur on the 2nd call.
+    for (int t = 0; t < 2; ++t) {
+      runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+          Adopt(WhiteFrame(16, 16).release()).At(Timestamp(t)));
+      runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+          MakePacket<TilePlan>(TwoTiles()).At(Timestamp(t)));
+    }
+    MP_EXPECT_OK(runner.Run());
+    return std::make_pair(
+        runner.Outputs().Tag("TENSORS").packets,
+        runner.Outputs().Tag("BATCH_INFO").packets);
+  };
+
+  auto [cached_tensors, cached_infos] = run_graph(/*enable_cache=*/true);
+  auto [uncached_tensors, uncached_infos] = run_graph(/*enable_cache=*/false);
+
+  ASSERT_EQ(cached_tensors.size(), 2u);
+  ASSERT_EQ(uncached_tensors.size(), 2u);
+
+  for (int t = 0; t < 2; ++t) {
+    const auto& ct = cached_tensors[t].Get<std::vector<Tensor>>();
+    const auto& ut = uncached_tensors[t].Get<std::vector<Tensor>>();
+    ASSERT_EQ(ct.size(), 1u);
+    ASSERT_EQ(ut.size(), 1u);
+
+    // Compare geometry matrices element-wise.
+    const auto& ci = cached_infos[t].Get<TensorBatchInfo>();
+    const auto& ui = uncached_infos[t].Get<TensorBatchInfo>();
+    ASSERT_NE(ci.geometry, nullptr);
+    ASSERT_NE(ui.geometry, nullptr);
+    ASSERT_EQ(ci.geometry->tile_to_image_matrices.size(),
+              ui.geometry->tile_to_image_matrices.size());
+    for (size_t m = 0; m < ci.geometry->tile_to_image_matrices.size(); ++m) {
+      for (int e = 0; e < 16; ++e) {
+        EXPECT_FLOAT_EQ(ci.geometry->tile_to_image_matrices[m][e],
+                        ui.geometry->tile_to_image_matrices[m][e])
+            << "mismatch at frame=" << t << " matrix=" << m << " elem=" << e;
+      }
+    }
+
+    // Compare output tensor float buffers byte-for-byte.
+    const Tensor& cached_t = ct[0];
+    const Tensor& uncached_t = ut[0];
+    ASSERT_EQ(cached_t.shape().dims, uncached_t.shape().dims);
+    auto cr = cached_t.GetCpuReadView();
+    auto ur = uncached_t.GetCpuReadView();
+    const float* cbuf = cr.buffer<float>();
+    const float* ubuf = ur.buffer<float>();
+    const int elems = cached_t.shape().num_elements();
+    for (int e = 0; e < elems; ++e) {
+      EXPECT_EQ(cbuf[e], ubuf[e])
+          << "tensor mismatch at frame=" << t << " elem=" << e;
+    }
+  }
+}
+
 }  // namespace
 }  // namespace mediapipe

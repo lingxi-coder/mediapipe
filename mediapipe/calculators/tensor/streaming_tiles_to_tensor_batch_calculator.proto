@@ -26,4 +26,11 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // padding). If false (fixed batch), emit N = batch_capacity with padding.
   // METADATA.is_dynamic_batch overrides this when set.
   optional bool dynamic_batch = 1 [default = false];
+
+  // Maximum number of distinct tile-set geometries (matrices + ROIs) to cache,
+  // keyed by frame size + tile set. 0 = disabled (default). N > 0 caches the
+  // last N distinct (frame width, frame height, tile geometry list) inputs.
+  // Pixels are NEVER cached; the crop/resize/normalize loop always runs every
+  // frame. Only the matrix and ROI computation is skipped on a cache hit.
+  optional int32 max_cached_tile_matrices = 2 [default = 0];
 }

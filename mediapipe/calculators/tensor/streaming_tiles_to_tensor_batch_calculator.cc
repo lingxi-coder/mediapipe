@@ -14,12 +14,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_cache_utils.h"
 #include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
@@ -55,6 +57,9 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     RET_CHECK_GT(meta_.input_channels(), 0);
     RET_CHECK_GT(meta_.batch_capacity(), 0);
     dynamic_batch_ = meta_.is_dynamic_batch() || options_.dynamic_batch();
+    RET_CHECK_GE(options_.max_cached_tile_matrices(), 0);
+    matrix_cache_ = BoundedLruCache<std::shared_ptr<const TileBatchGeometry>>(
+        static_cast<size_t>(options_.max_cached_tile_matrices()));
     return absl::OkStatus();
   }
 
@@ -93,6 +98,26 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       float* buf = write.buffer<float>();
       std::memset(buf, 0, sizeof(float) * N * H * W * C);
 
+      // Geometry (matrices + ROIs) depends only on frame size + tile set, not
+      // pixels. Cache it; the pixel crop/resize below always runs.
+      std::shared_ptr<const TileBatchGeometry> geom;
+      StableCacheKey key;
+      if (matrix_cache_.enabled()) {
+        StableKeyBuilder kb;
+        kb.AddInt(fw).AddInt(fh).AddInt(W).AddInt(H).AddInt(C);
+        for (int r = 0; r < rows; ++r) {
+          const TileGeometry& g = plan.tiles[start + r];
+          kb.AddInt(g.tile_index).AddFloat(g.x_center).AddFloat(g.y_center)
+            .AddFloat(g.width).AddFloat(g.height);
+        }
+        key = kb.Build();
+        if (auto* hit = matrix_cache_.Get(key)) geom = *hit;
+      }
+      if (geom == nullptr) {
+        geom = BuildBatchGeometry(plan, start, rows, fw, fh);
+        if (matrix_cache_.enabled()) matrix_cache_.Put(key, geom);
+      }
+
       TensorBatchInfo info;
       info.source_frame_timestamp = ts;
       info.batch_timestamp = ts;  // single-batch: emit at input ts (a later task changes this)
@@ -101,41 +126,20 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       info.batch_capacity = N;
       info.batch_size = N;
       info.valid_count = rows;
-      auto geom = std::make_shared<TileBatchGeometry>();
-      geom->tile_indices.reserve(rows);
-      geom->tile_geometries.reserve(rows);
-      geom->effective_pixel_rois.reserve(rows);
-      geom->tile_to_image_matrices.reserve(rows);
-      geom->image_to_tile_matrices.reserve(rows);
+      info.tile_indices = geom->tile_indices;  // back-compat mirror
+      info.geometry = geom;
 
+      // Pixel crop/resize/normalize loop — ALWAYS runs; uses cached ROIs.
       for (int r = 0; r < rows; ++r) {
-        const TileGeometry& g = plan.tiles[start + r];
-        int rx = static_cast<int>(std::lround(g.x0() * fw));
-        int ry = static_cast<int>(std::lround(g.y0() * fh));
-        int rw = static_cast<int>(std::lround(g.width * fw));
-        int rh = static_cast<int>(std::lround(g.height * fh));
-        rx = std::clamp(rx, 0, fw - 1);
-        ry = std::clamp(ry, 0, fh - 1);
-        rw = std::clamp(rw, 1, fw - rx);
-        rh = std::clamp(rh, 1, fh - ry);
-        cv::Mat roi = src(cv::Rect(rx, ry, rw, rh));
+        const TilePixelRoi& proi = geom->effective_pixel_rois[r];
+        cv::Mat roi = src(cv::Rect(proi.x, proi.y, proi.width, proi.height));
         cv::Mat resized;
         cv::resize(roi, resized, cv::Size(W, H));
         cv::Mat f32;
         resized.convertTo(f32, CV_32FC(C), 1.0 / 255.0);
         std::memcpy(buf + static_cast<size_t>(r) * H * W * C,
                     f32.ptr<float>(0), sizeof(float) * H * W * C);
-        info.tile_indices.push_back(g.tile_index);
-
-        TilePixelRoi proi{rx, ry, rw, rh};
-        const std::array<float, 16> t2i = TileToImageMatrix(proi, fw, fh);
-        geom->tile_indices.push_back(g.tile_index);
-        geom->tile_geometries.push_back(g);
-        geom->effective_pixel_rois.push_back(proi);
-        geom->tile_to_image_matrices.push_back(t2i);
-        geom->image_to_tile_matrices.push_back(InvertAffine2d(t2i));
       }
-      info.geometry = std::move(geom);
 
       std::vector<Tensor> tensors;
       tensors.push_back(std::move(tensor));
@@ -147,9 +151,39 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   }
 
  private:
+  static std::shared_ptr<const TileBatchGeometry> BuildBatchGeometry(
+      const TilePlan& plan, int start, int rows, int fw, int fh) {
+    auto geom = std::make_shared<TileBatchGeometry>();
+    geom->tile_indices.reserve(rows);
+    geom->tile_geometries.reserve(rows);
+    geom->effective_pixel_rois.reserve(rows);
+    geom->tile_to_image_matrices.reserve(rows);
+    geom->image_to_tile_matrices.reserve(rows);
+    for (int r = 0; r < rows; ++r) {
+      const TileGeometry& g = plan.tiles[start + r];
+      int rx = static_cast<int>(std::lround(g.x0() * fw));
+      int ry = static_cast<int>(std::lround(g.y0() * fh));
+      int rw = static_cast<int>(std::lround(g.width * fw));
+      int rh = static_cast<int>(std::lround(g.height * fh));
+      rx = std::clamp(rx, 0, fw - 1);
+      ry = std::clamp(ry, 0, fh - 1);
+      rw = std::clamp(rw, 1, fw - rx);
+      rh = std::clamp(rh, 1, fh - ry);
+      TilePixelRoi proi{rx, ry, rw, rh};
+      const std::array<float, 16> t2i = TileToImageMatrix(proi, fw, fh);
+      geom->tile_indices.push_back(g.tile_index);
+      geom->tile_geometries.push_back(g);
+      geom->effective_pixel_rois.push_back(proi);
+      geom->tile_to_image_matrices.push_back(t2i);
+      geom->image_to_tile_matrices.push_back(InvertAffine2d(t2i));
+    }
+    return geom;
+  }
+
   mediapipe::StreamingTilesToTensorBatchCalculatorOptions options_;
   InferenceMetadata meta_;
   bool dynamic_batch_ = false;
+  BoundedLruCache<std::shared_ptr<const TileBatchGeometry>> matrix_cache_{0};
 };
 
 MEDIAPIPE_REGISTER_NODE(StreamingTilesToTensorBatchCalculator);

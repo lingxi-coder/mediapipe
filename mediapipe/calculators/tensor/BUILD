@@ -2577,6 +2577,7 @@ cc_library(
     srcs = ["streaming_tiles_to_tensor_batch_calculator.cc"],
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+        ":tiling_cache_utils",
         ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
