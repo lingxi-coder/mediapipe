@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <vector>
 
+#include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/calculator_runner.h"
 #include "mediapipe/framework/formats/image_frame.h"
@@ -120,6 +122,49 @@ TEST(StreamingTilesTest, DynamicBatchNoPadding) {
   const auto& info =
       runner.Outputs().Tag("BATCH_INFO").packets[0].Get<TensorBatchInfo>();
   EXPECT_EQ(info.valid_count, 2);
+}
+
+// Checks that geometry is populated and that applying tile_to_image_matrices[0]
+// to the tile-center (0.5, 0.5) in tile-normalized space yields the tile's
+// frame center within 2e-2.  We use a 16x16 frame; integer pixel rounding on a
+// small frame loosens the tolerance slightly compared to a large frame.
+TEST(StreamingTilesTest, GeometryPopulatedAndMatricesRoundTrip) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(4, 8, 8, 3, /*dynamic=*/false));
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(16, 16).release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(TwoTiles()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+
+  const auto& ipk = runner.Outputs().Tag("BATCH_INFO").packets;
+  ASSERT_EQ(ipk.size(), 1);
+  const auto& info = ipk[0].Get<TensorBatchInfo>();
+
+  // geometry must be non-null and correctly sized
+  ASSERT_NE(info.geometry, nullptr);
+  ASSERT_EQ(static_cast<int>(info.geometry->tile_to_image_matrices.size()),
+            info.valid_count);
+  ASSERT_EQ(static_cast<int>(info.geometry->tile_geometries.size()),
+            info.valid_count);
+
+  // Apply tile_to_image_matrices[0] to the tile-center (0.5, 0.5) in
+  // tile-normalized space and check it lands at the tile's frame center.
+  // Tolerance is 2e-2 due to integer pixel rounding on a 16x16 frame.
+  const TileGeometry& tg = info.geometry->tile_geometries[0];
+  float out_x = 0.0f, out_y = 0.0f;
+  ApplyMatrix(info.geometry->tile_to_image_matrices[0], 0.5f, 0.5f,
+              &out_x, &out_y);
+  EXPECT_NEAR(out_x, tg.x_center, 2e-2f);
+  EXPECT_NEAR(out_y, tg.y_center, 2e-2f);
 }
 
 }  // namespace

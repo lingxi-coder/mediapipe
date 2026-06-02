@@ -2577,6 +2577,7 @@ cc_library(
     srcs = ["streaming_tiles_to_tensor_batch_calculator.cc"],
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+        ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
@@ -2598,6 +2599,7 @@ cc_test(
     size = "small",
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator",
+        ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_runner",
         "//mediapipe/framework/formats:image_frame",

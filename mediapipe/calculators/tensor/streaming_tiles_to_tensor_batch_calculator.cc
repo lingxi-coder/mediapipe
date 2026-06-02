@@ -13,11 +13,14 @@
 // limitations under the License.
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
 #include "mediapipe/framework/calculator_framework.h"
@@ -92,10 +95,18 @@ class StreamingTilesToTensorBatchCalculator : public Node {
 
       TensorBatchInfo info;
       info.source_frame_timestamp = ts;
+      info.batch_timestamp = ts;  // single-batch: emit at input ts (a later task changes this)
       info.batch_index = emitted;
       info.total_batches = total_batches;
       info.batch_capacity = N;
+      info.batch_size = N;
       info.valid_count = rows;
+      auto geom = std::make_shared<TileBatchGeometry>();
+      geom->tile_indices.reserve(rows);
+      geom->tile_geometries.reserve(rows);
+      geom->effective_pixel_rois.reserve(rows);
+      geom->tile_to_image_matrices.reserve(rows);
+      geom->image_to_tile_matrices.reserve(rows);
 
       for (int r = 0; r < rows; ++r) {
         const TileGeometry& g = plan.tiles[start + r];
@@ -115,7 +126,16 @@ class StreamingTilesToTensorBatchCalculator : public Node {
         std::memcpy(buf + static_cast<size_t>(r) * H * W * C,
                     f32.ptr<float>(0), sizeof(float) * H * W * C);
         info.tile_indices.push_back(g.tile_index);
+
+        TilePixelRoi proi{rx, ry, rw, rh};
+        const std::array<float, 16> t2i = TileToImageMatrix(proi, fw, fh);
+        geom->tile_indices.push_back(g.tile_index);
+        geom->tile_geometries.push_back(g);
+        geom->effective_pixel_rois.push_back(proi);
+        geom->tile_to_image_matrices.push_back(t2i);
+        geom->image_to_tile_matrices.push_back(InvertAffine2d(t2i));
       }
+      info.geometry = std::move(geom);
 
       std::vector<Tensor> tensors;
       tensors.push_back(std::move(tensor));
