@@ -2666,7 +2666,6 @@ cc_test(
     srcs = ["tiling_cache_utils_test.cc"],
     deps = [
         ":tiling_cache_utils",
-        "//mediapipe/framework/port:gtest",
-        "@com_google_googletest//:gtest_main",
+        "//mediapipe/framework/port:gtest_main",
     ],
 )
