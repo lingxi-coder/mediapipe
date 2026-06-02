@@ -2649,3 +2649,22 @@ cc_test(
         "//mediapipe/framework/port:status_matchers",
     ],
 )
+
+cc_library(
+    name = "tiling_cache_utils",
+    hdrs = ["tiling_cache_utils.h"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "tiling_cache_utils_test",
+    srcs = ["tiling_cache_utils_test.cc"],
+    deps = [
+        ":tiling_cache_utils",
+        "//mediapipe/framework/port:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
