@@ -12,6 +12,7 @@ VERS_1.0 {
     MpInteractiveSegmenterLegacy*;
     MpLanguageDetector*;
     MpObjectDetector*;
+    MpOrientedObjectDetector*;
     MpPoseLandmarker*;
     MpStringList*;
     MpTextClassifier*;
