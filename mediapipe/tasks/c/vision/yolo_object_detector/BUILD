@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])
 
@@ -43,6 +44,32 @@ cc_library(
     hdrs = ["yolo_object_detector.h"],
     visibility = ["//visibility:public"],
     deps = YOLO_OBJECT_DETECTOR_DEPS,
+)
+
+cc_test(
+    name = "yolo_object_detector_test",
+    srcs = ["yolo_object_detector_test.cc"],
+    data = [
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/port:opencv_core",
+        "//mediapipe/framework/port:opencv_imgproc",
+        "//mediapipe/tasks/testdata/vision:test_images",
+        # Uncomment when yolov8n.tflite is added to testdata/vision/BUILD:
+        # "//mediapipe/tasks/testdata/vision:yolo_test_models",
+    ],
+    linkstatic = 1,
+    deps = [
+        ":yolo_object_detector_lib",
+        "//mediapipe/framework/deps:file_helpers",
+        "//mediapipe/framework/deps:file_path",
+        "//mediapipe/framework/port:gtest",
+        "//mediapipe/tasks/c/components/containers:category",
+        "//mediapipe/tasks/c/core:common",
+        "//mediapipe/tasks/c/core:mp_status",
+        "//mediapipe/tasks/c/vision/core:image",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
 )
 
 cc_library(
