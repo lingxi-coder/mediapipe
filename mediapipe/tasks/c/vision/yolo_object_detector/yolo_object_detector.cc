@@ -1,5 +1,17 @@
-/* Copyright 2026 The MediaPipe Authors. Licensed under the Apache License,
-Version 2.0. See object_detector.cc for the full header. */
+/* Copyright 2026 The MediaPipe Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
 
 #include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
 
@@ -26,13 +38,15 @@ Version 2.0. See object_detector.cc for the full header. */
 #include "mediapipe/tasks/cc/vision/core/running_mode.h"
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/yolo_object_detector.h"
 
-namespace YoloNs = ::mediapipe::tasks::vision::yolo_object_detector;
-
 struct MpYoloObjectDetectorInternal {
-  std::unique_ptr<YoloNs::YoloObjectDetector> instance;
+  std::unique_ptr<
+      ::mediapipe::tasks::vision::yolo_object_detector::YoloObjectDetector>
+      instance;
 };
 
 namespace mediapipe::tasks::c::vision::yolo_object_detector {
+
+namespace YoloNs = ::mediapipe::tasks::vision::yolo_object_detector;
 
 namespace {
 
