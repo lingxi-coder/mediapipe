@@ -69,7 +69,11 @@ py_library(
         "yolo_object_detector.py",
     ],
     deps = [
-        "//mediapipe/tasks/python/components/containers:category",
+        # NOTE: category names are enriched best-effort via a LAZY import of
+        # //mediapipe/tasks/python/metadata inside _load_label_map (guarded by
+        # try/except). The metadata module pulls in TensorFlow, so it is
+        # deliberately NOT a static dep here — when it is unavailable at runtime
+        # the label lookup degrades to None. This keeps the YOLO target lean.
         "//mediapipe/tasks/python/components/containers:detections",
         "//mediapipe/tasks/python/components/containers:detections_c",
         "//mediapipe/tasks/python/core:async_result_dispatcher",
@@ -79,7 +83,6 @@ py_library(
         "//mediapipe/tasks/python/core:mediapipe_c_utils",
         "//mediapipe/tasks/python/core:optional_dependencies",
         "//mediapipe/tasks/python/core:serial_dispatcher",
-        "//mediapipe/tasks/python/metadata:metadata",
         "//mediapipe/tasks/python/vision/core:image",
         "//mediapipe/tasks/python/vision/core:image_processing_options",
         "//mediapipe/tasks/python/vision/core:image_processing_options_c",
