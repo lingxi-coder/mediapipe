@@ -217,6 +217,24 @@ cc_test(
 )
 
 cc_library(
+    name = "oriented_detection_result",
+    hdrs = ["oriented_detection_result.h"],
+    deps = [":category"],
+)
+
+cc_library(
+    name = "oriented_detection_result_converter",
+    srcs = ["oriented_detection_result_converter.cc"],
+    hdrs = ["oriented_detection_result_converter.h"],
+    deps = [
+        ":category",
+        ":category_converter",
+        ":oriented_detection_result",
+        "//mediapipe/tasks/cc/components/containers:oriented_object_detection_result",
+    ],
+)
+
+cc_library(
     name = "embedding_result",
     hdrs = ["embedding_result.h"],
 )
