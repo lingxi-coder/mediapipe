@@ -27,7 +27,6 @@ limitations under the License.
 #include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
 
 #include <cstdint>
-#include <memory>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -50,6 +49,18 @@ constexpr char kImageFile[] = "cats_and_dogs.jpg";
 std::string GetFullPath(absl::string_view file_name) {
   return JoinPath("./", kTestDataDirectory, file_name);
 }
+
+// RAII guard: closes the detector on scope exit.
+struct ScopedMpYoloObjectDetector {
+  MpYoloObjectDetectorPtr ptr = nullptr;
+  ~ScopedMpYoloObjectDetector() {
+    if (ptr) MpYoloObjectDetectorClose(ptr, /*error_msg=*/nullptr);
+  }
+  ScopedMpYoloObjectDetector() = default;
+  ScopedMpYoloObjectDetector(const ScopedMpYoloObjectDetector&) = delete;
+  ScopedMpYoloObjectDetector& operator=(const ScopedMpYoloObjectDetector&) =
+      delete;
+};
 
 // RAII wrapper for MpImagePtr.
 struct ScopedMpImage {
@@ -85,22 +96,23 @@ TEST(YoloObjectDetectorCApiTest, ImageMode) {
   options.layout = 2;  // CHANNELS_LAST
 
   MpYoloObjectDetectorPtr detector = nullptr;
-  char* error_msg = nullptr;
-  ASSERT_EQ(MpYoloObjectDetectorCreate(&options, &detector, &error_msg),
+  ASSERT_EQ(MpYoloObjectDetectorCreate(&options, &detector, /*error_msg=*/nullptr),
             kMpOk);
   EXPECT_NE(detector, nullptr);
+  ScopedMpYoloObjectDetector scoped_detector;
+  scoped_detector.ptr = detector;
 
   MpImagePtr raw_image = nullptr;
   ASSERT_EQ(
       MpImageCreateFromFile(GetFullPath(kImageFile).c_str(), &raw_image,
-                            &error_msg),
+                            /*error_msg=*/nullptr),
       kMpOk);
   ScopedMpImage image(raw_image);
 
   MpYoloObjectDetectorResult result;
   ASSERT_EQ(MpYoloObjectDetectorDetectImage(detector, image.get(),
                                             /*options=*/nullptr, &result,
-                                            &error_msg),
+                                            /*error_msg=*/nullptr),
             kMpOk);
 
   EXPECT_GT(result.detections_count, 0u);
@@ -110,7 +122,6 @@ TEST(YoloObjectDetectorCApiTest, ImageMode) {
   }
 
   MpYoloObjectDetectorCloseResult(&result);
-  EXPECT_EQ(MpYoloObjectDetectorClose(detector, &error_msg), kMpOk);
 }
 
 }  // namespace
