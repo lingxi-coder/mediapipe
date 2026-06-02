@@ -48,8 +48,17 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
     const auto& batch = *kInDets(cc);
     const TensorBatchInfo& info = *kInInfo(cc);
     RET_CHECK(info.geometry != nullptr || info.valid_count == 0);
-    auto& acc = pending_[info.source_frame_timestamp];
     const auto& geom = info.geometry;
+    if (info.valid_count > 0) {
+      // The geometry's per-row vectors must cover every valid row; otherwise
+      // the row-indexed access below would read out of bounds. The trusted
+      // producer upholds this, but guard against a malformed BATCH_INFO.
+      RET_CHECK_LE(info.valid_count,
+                   static_cast<int>(geom->tile_geometries.size()));
+      RET_CHECK_LE(info.valid_count,
+                   static_cast<int>(geom->tile_to_image_matrices.size()));
+    }
+    auto& acc = pending_[info.source_frame_timestamp];
     for (int r = 0; r < info.valid_count; ++r) {
       if (r >= static_cast<int>(batch.size())) continue;
       const TileGeometry& g = geom->tile_geometries[r];
