@@ -2536,10 +2536,12 @@ cc_library(
     srcs = ["tile_spec_to_tile_plan_calculator.cc"],
     deps = [
         ":tile_spec_to_tile_plan_calculator_cc_proto",
+        ":tiling_cache_stats",
         ":tiling_cache_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/api2:packet",
         "//mediapipe/framework/formats:rect_cc_proto",
         "//mediapipe/framework/port:ret_check",
         "@com_google_absl//absl/status",
@@ -2553,6 +2555,7 @@ cc_test(
     size = "small",
     deps = [
         ":tile_spec_to_tile_plan_calculator",
+        ":tiling_cache_stats",
         ":tiling_types",
         "//mediapipe/framework:calculator_runner",
         "//mediapipe/framework/formats:rect_cc_proto",

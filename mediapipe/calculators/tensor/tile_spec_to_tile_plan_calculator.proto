@@ -29,4 +29,7 @@ message TileSpecToTilePlanCalculatorOptions {
   // identical tile lists (stable video tiling) reuse the validated plan instead
   // of re-validating and rebuilding it.
   optional int32 max_cached_tile_plans = 2 [default = 0];
+  // When true AND a CACHE_STATS output is connected, emit cumulative TilePlan-
+  // cache stats at the input timestamp. Allocation-free when false/disconnected.
+  optional bool emit_cache_stats = 3 [default = false];
 }

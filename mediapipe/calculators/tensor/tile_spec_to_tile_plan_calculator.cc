@@ -18,9 +18,11 @@
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/tile_spec_to_tile_plan_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_cache_stats.h"
 #include "mediapipe/calculators/tensor/tiling_cache_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
+#include "mediapipe/framework/api2/packet.h"
 #include "mediapipe/framework/calculator_framework.h"
 #include "mediapipe/framework/formats/rect.pb.h"
 #include "mediapipe/framework/port/ret_check.h"
@@ -33,7 +35,8 @@ class TileSpecToTilePlanCalculator : public Node {
  public:
   static constexpr Input<std::vector<NormalizedRect>> kInTiles{"TILES"};
   static constexpr Output<TilePlan> kOutPlan{"TILE_PLAN"};
-  MEDIAPIPE_NODE_CONTRACT(kInTiles, kOutPlan);
+  static constexpr Output<TilingCacheStats>::Optional kOutStats{"CACHE_STATS"};
+  MEDIAPIPE_NODE_CONTRACT(kInTiles, kOutPlan, kOutStats);
 
   absl::Status Open(CalculatorContext* cc) override {
     options_ = cc->Options<mediapipe::TileSpecToTilePlanCalculatorOptions>();
@@ -61,6 +64,7 @@ class TileSpecToTilePlanCalculator : public Node {
       key = kb.Build();
       if (const TilePlan* hit = plan_cache_.Get(key)) {
         kOutPlan(cc).Send(std::make_unique<TilePlan>(*hit));
+        MaybeEmitStats(cc);
         return absl::OkStatus();
       }
     }
@@ -98,10 +102,19 @@ class TileSpecToTilePlanCalculator : public Node {
       plan_cache_.Put(key, plan);  // store a copy; key already built above
     }
     kOutPlan(cc).Send(std::make_unique<TilePlan>(std::move(plan)));
+    MaybeEmitStats(cc);
     return absl::OkStatus();
   }
 
  private:
+  void MaybeEmitStats(CalculatorContext* cc) {
+    if (options_.emit_cache_stats() && kOutStats(cc).IsConnected()) {
+      TilingCacheStats stats;
+      stats.tile_plan = plan_cache_.stats();
+      kOutStats(cc).Send(stats);
+    }
+  }
+
   mediapipe::TileSpecToTilePlanCalculatorOptions options_;
   BoundedLruCache<TilePlan> plan_cache_{0};
 };

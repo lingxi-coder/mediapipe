@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "absl/strings/str_format.h"
+#include "mediapipe/calculators/tensor/tiling_cache_stats.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/calculator_runner.h"
 #include "mediapipe/framework/formats/rect.pb.h"
@@ -130,6 +131,39 @@ TEST(TileSpecToTilePlanCalculatorTest, EmptyTilesEmitsEmptyPlan) {
       Adopt(new std::vector<NormalizedRect>()).At(Timestamp(0)));
   MP_ASSERT_OK(runner.Run());
   EXPECT_TRUE(runner.Outputs().Tag("TILE_PLAN").packets[0].Get<TilePlan>().tiles.empty());
+}
+
+TEST(TileSpecToTilePlanCalculatorTest, CacheStatsReportsTilePlanHits) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TileSpecToTilePlanCalculator"
+    input_stream: "TILES:tiles"
+    output_stream: "TILE_PLAN:plan"
+    output_stream: "CACHE_STATS:stats"
+    options {
+      [mediapipe.TileSpecToTilePlanCalculatorOptions.ext] {
+        max_cached_tile_plans: 4
+        emit_cache_stats: true
+      }
+    }
+  )pb"));
+
+  // Feed the same tile list twice (timestamps 0 and 1).
+  // Frame 0 is a cache miss; frame 1 is a cache hit.
+  const std::vector<NormalizedRect> tiles = {Rect(0.25f, 0.25f, 0.5f, 0.5f)};
+  for (int t = 0; t < 2; ++t) {
+    auto input = std::make_unique<std::vector<NormalizedRect>>(tiles);
+    runner.MutableInputs()->Tag("TILES").packets.push_back(
+        Adopt(input.release()).At(Timestamp(t)));
+  }
+
+  MP_ASSERT_OK(runner.Run());
+
+  const auto& stats_packets = runner.Outputs().Tag("CACHE_STATS").packets;
+  ASSERT_EQ(stats_packets.size(), 2);
+
+  const TilingCacheStats& last = stats_packets[1].Get<TilingCacheStats>();
+  EXPECT_GE(last.tile_plan.hits, 1);    // second frame hit
+  EXPECT_GE(last.tile_plan.misses, 1);  // first frame miss
 }
 
 }  // namespace
