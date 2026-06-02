@@ -238,6 +238,27 @@ cc_library(
 )
 
 cc_library(
+    name = "cpu_buffer_pool",
+    srcs = ["cpu_buffer_pool.cc"],
+    hdrs = ["cpu_buffer_pool.h"],
+    deps = [
+        "//mediapipe/framework/port:aligned_malloc_and_free",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_test(
+    name = "cpu_buffer_pool_test",
+    srcs = ["cpu_buffer_pool_test.cc"],
+    deps = [
+        ":cpu_buffer_pool",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
+cc_library(
     name = "image_frame",
     srcs = ["image_frame.cc"],
     hdrs = ["image_frame.h"],
