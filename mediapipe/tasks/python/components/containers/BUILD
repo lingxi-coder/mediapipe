@@ -132,6 +132,25 @@ py_library(
 )
 
 py_library(
+    name = "oriented_detections_c",
+    srcs = ["oriented_detections_c.py"],
+    deps = [
+        ":category_c",
+    ],
+)
+
+py_library(
+    name = "oriented_detections",
+    srcs = ["oriented_detections.py"],
+    deps = [
+        ":category",
+        ":category_c",
+        ":oriented_detections_c",
+        "//mediapipe/tasks/python/core:optional_dependencies",
+    ],
+)
+
+py_library(
     name = "classification_result",
     srcs = ["classification_result.py"],
     deps = [
