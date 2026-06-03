@@ -2677,6 +2677,28 @@ cc_test(
 )
 
 cc_test(
+    name = "video_tile_scheduler_pipeline_test",
+    srcs = ["video_tile_scheduler_pipeline_test.cc"],
+    size = "small",
+    deps = [
+        ":streaming_tiles_to_tensor_batch_calculator",
+        ":tile_spec_to_tile_plan_calculator",
+        ":tiling_cache_stats",
+        ":tiling_types",
+        ":video_tile_scheduler_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:inference_metadata_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/formats:tensor",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_test(
     name = "vector_to_tensor_calculator_test",
     srcs = ["vector_to_tensor_calculator_test.cc"],
     deps = [
