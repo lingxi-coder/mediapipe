@@ -12,12 +12,14 @@ zero-copy path is Metal + CVPixelBuffer).
 ## Goal
 
 When the streaming tiled-detection path runs on **GPU-backed input on macOS**, do
-crop/resize/normalize **in Metal** and write the result directly into a
-**Metal-backed `Tensor`** batch, so downstream inference reads the same `MTLBuffer`
-— no GPU→CPU→GPU round-trip. Default-off; the shipped CPU path is byte-identical
-when disabled. This is the MediaPipe TFLite tiled-inference pipeline's GPU path
-(`StreamingTilesToTensorBatchCalculator`); it is unrelated to the torch `.pt`
-demo (which preprocesses in Python, not MediaPipe).
+crop/resize/normalize **in Metal** and write the result directly into the
+**same `MTLBuffer` that the TFLite Metal delegate consumes as its input**. This
+means no GPU→CPU→GPU round-trip and no intermediate BHWC→BPHWC4 input conversion
+inside `InferenceCalculatorMetal`. Default-off; the shipped CPU path is
+byte-identical when disabled. This is the MediaPipe TFLite tiled-inference
+pipeline's GPU path (`StreamingTilesToTensorBatchCalculator` +
+`InferenceCalculatorMetal`); it is unrelated to the torch `.pt` demo (which
+preprocesses in Python, not MediaPipe).
 
 ## Prerequisite (done)
 
@@ -53,8 +55,22 @@ task of this work is a Metal runtime smoke (below).
 - `image_to_tensor_converter_metal.cc` — reference Metal preprocessing: builds the
   sub-rect transform via `GetRotatedSubRectToRectTransformMatrix`, gets the input
   `MTLTexture` from the `GpuBuffer`, encodes a Metal command buffer that samples
-  the sub-rect into the output `Tensor` Metal buffer, normalizes. Adapt this to
-  write **one tile per batch row**.
+  the sub-rect into the output `Tensor` Metal buffer, normalizes. The reference
+  supports only `dims[3]==4` and `tensor_buffer_offset==0`; adapt this to write
+  one tile per batch row into delegate input storage.
+- TFLite Metal delegate external input:
+  `TFLGpuDelegateBindMetalBufferToTensor(delegate, tensor_index, buffer)` binds a
+  user-prepared `MTLBuffer` after `Interpreter::ModifyGraphWithDelegate()`. In the
+  delegate implementation, a bound input is marked external and the delegate skips
+  its normal BHWC→BPHWC4 converter. The current `InferenceCalculatorMetal` binds
+  an internal input buffer and copies/converts packet tensors into it, so it is not
+  true zero-copy until direct packet-buffer binding is added.
+- TFLite GPU PHWC4/BPHWC4 storage groups channels by 4. For logical model input
+  `[N,H,W,C]`, the direct Metal input buffer size is
+  `N*H*W*RoundUp(C,4)` elements. For common detector inputs (`C=3`), physical
+  storage is `[N,H,W,4]` with the padded channel zeroed; for `C=4`, physical
+  storage matches logical BHWC. `C>4` requires multi-plane PHWC4 writes and is
+  deferred until a compute-shader path covers it.
 - `StreamingTilesToTensorBatchCalculator` (Plans 2–3, CPU): inputs `IMAGE`
   (`ImageFrame`) + `TILE_PLAN` + side `METADATA` (`InferenceMetadata`,
   `batch_capacity`/H/W/C); outputs `TENSORS` (`std::vector<Tensor>`) + `BATCH_INFO`
@@ -72,19 +88,25 @@ In scope:
    a trivial Metal kernel, read back, verify — proving the macOS Metal runtime +
    `MtlBufferView` execute on this machine.
 2. `StreamingTilesToTensorBatchMetalConverter` (ObjC++ `.mm`): Metal shader + per
-   tile dispatch writing crop/resize/normalize into a Metal-backed `Tensor` batch
-   at each tile's row offset, from a GPU input texture.
+   tile dispatch writing crop/resize/normalize into the Metal delegate input
+   buffer layout at each tile's row offset, from a GPU input texture.
 3. `StreamingTilesToTensorBatchCalculator` GPU path: add `IMAGE_GPU` (`GpuBuffer`)
    input + `enable_gpu_zero_copy` option; when enabled and GPU input present, run
-   the Metal converter and emit a Metal-backed `Tensor` with no CPU readback.
-4. Tests: runtime smoke; GPU-vs-CPU parity (Metal output read back equals the CPU
-   pixel-loop output within tolerance); no-CPU-readback assertion; single-batch
-   then `T > batch_capacity` multi-batch.
+   the Metal converter and emit a physical `[N,H,W,RoundUp(C,4)]` Metal tensor for
+   logical model input `[N,H,W,C]`.
+4. `InferenceCalculatorMetal` direct external-input mode: bind each packet's
+   `MTLBuffer` to the Metal delegate input and skip the input `TFLBufferConvert`.
+5. Tests: runtime smoke; delegate external-buffer smoke; GPU-vs-CPU parity after
+   CPU output is converted to PHWC4; no-readback/no-input-converter assertion;
+   single-batch and `T > batch_capacity` multi-batch.
 
 Out of scope (deferred / YAGNI):
 - Metal-backed-`Tensor` pooling + in-flight ownership (Plan 4 "Cache 5"): allocate
   per batch first; pooling is a follow-up.
 - Rotated tiles (axis-aligned only, matching the shipped geometry).
+- Model inputs with `C>4` (requires true multi-plane PHWC4 writes).
+- Direct Metal output zero-copy; this milestone only requires delegate direct
+  consumption of the tiled input buffer.
 - GLES/AHWB/Vulkan backends (not viable on macOS — see above).
 - The torch `.pt` pipeline (separate; preprocesses in Python).
 
@@ -92,11 +114,15 @@ Out of scope (deferred / YAGNI):
 
 - **Default-off:** `enable_gpu_zero_copy=false` (default) ⇒ the shipped CPU path,
   byte-identical. GPU path only when the option is set AND a GPU input is wired.
-- **No CPU readback in the GPU path:** the input `GpuBuffer`/texture and the output
-  Metal-backed `Tensor` must not be CPU-materialized (`GetCpuReadView`/
-  `GetCpuWriteView`/`MatView`) on the zero-copy path. A test asserts this.
+- **True zero-copy:** the `MTLBuffer` emitted by tiled preprocessing is the same
+  `MTLBuffer` bound to the TFLite Metal delegate input. A Metal-ready logical
+  `[N,H,W,C]` tensor that `InferenceCalculatorMetal` later copies/converts into
+  its internal BPHWC4 buffer is not zero-copy.
+- **No CPU readback in the GPU path:** the input `GpuBuffer`/texture and the
+  delegate-layout Metal-backed input tensor must not be CPU-materialized
+  (`GetCpuReadView`/`GetCpuWriteView`/`MatView`) before explicit test readback.
 - **Correctness parity:** GPU output equals the CPU path within tolerance for the
-  same input + tiles (same `GetRotatedSubRectToRectTransformMatrix` geometry).
+  same input + tiles after the CPU result is converted to PHWC4/BPHWC4.
 - **Padding/valid-count + multi-batch semantics** match the CPU path
   (`valid_count`, `batch_size`, padded rows, synthetic batch timestamps).
 - macOS-gated: the Metal `.mm` + GPU path compile under `MEDIAPIPE_METAL_ENABLED`
@@ -113,29 +139,40 @@ StreamingTilesToTensorBatchMetalConverter  [NEW .mm]
    │  for each valid tile row r in the batch:
    │    transform = GetRotatedSubRectToRectTransformMatrix(effective_pixel_roi[r], fw, fh)
    │    encode Metal shader: sample src sub-rect (linear filter → crop+resize),
-   │      normalize (×1/255), write H*W*C floats at row offset r in the batch buffer
-   │  output Tensor batch [N,H,W,C], Metal-backed via MtlBufferView::GetWriteView
+   │      normalize (×1/255), write H*W*C4 floats at row offset r in the delegate buffer
+   │  output physical Tensor batch [N,H,W,C4], Metal-backed via MtlBufferView::GetWriteView
    ▼
 StreamingTilesToTensorBatchCalculator (GPU branch)  [MODIFIED]
-   │  emits TENSORS (Metal-backed) + BATCH_INFO (same as CPU path)
+   │  emits TENSORS (delegate-layout Metal-backed) + BATCH_INFO (same as CPU path)
    ▼
-downstream inference reads the MTLBuffer directly (no CPU readback)
+InferenceCalculatorMetal direct-input mode  [MODIFIED]
+   │  TFLGpuDelegateBindMetalBufferToTensor(packet.MTLBuffer)
+   │  skips BHWC→BPHWC4 input TFLBufferConvert
+   ▼
+TFLite Metal delegate consumes the same MTLBuffer
 ```
 
 Decision logic: if `enable_gpu_zero_copy` AND `IMAGE_GPU` is connected and present
 → Metal path; else the existing CPU path (`IMAGE` ImageFrame). The geometry
 (`TileBatchGeometry`, ROIs, matrices) is computed/cached exactly as today and
-reused to drive the per-tile Metal transforms.
+reused to drive the per-tile Metal transforms. Metal inference must also opt into
+direct external input; otherwise the graph is a GPU-preprocessing path with an
+input conversion copy, not zero-copy.
 
 ## Testing (macOS, Metal GpuResources)
 
 - **Runtime smoke** (gate, runs first): Metal-backed `Tensor` write+read via
   `MtlBufferView` + a trivial kernel → proves the runtime.
+- **Delegate binding smoke**: bind a user `MTLBuffer` to a small TFLite Metal
+  model input with `TFLGpuDelegateBindMetalBufferToTensor()` and invoke.
 - **Converter parity**: feed a known input as both `ImageFrame` (CPU path) and
-  `GpuBuffer` (Metal path) with the same `TilePlan`; assert the emitted tensors are
-  equal within tolerance (small, due to GPU sampler interpolation rounding).
-- **No-readback**: assert the GPU path produced a Metal-ready (not CPU) tensor and
-  never CPU-materialized the input.
+  `GpuBuffer` (Metal path) with the same `TilePlan`; convert CPU output to PHWC4
+  and assert the emitted Metal physical tensor is equal within tolerance.
+- **No-readback/no-input-copy**: assert the GPU path produced a Metal-ready (not
+  CPU) tensor, never CPU-materialized the input, and `InferenceCalculatorMetal`
+  direct mode skipped input `TFLBufferConvert`.
+- **Buffer identity**: assert the exact `id<MTLBuffer>` produced by the
+  preprocessor is the one bound to the delegate input for every batch.
 - **Tile-count cases**: single tile, `T<cap`, `T==cap`, `T>cap` (multi-batch);
   fixed-batch padding rows zeroed on GPU; dynamic batch `N==valid_count`.
 - All under a Metal `GpuResources` context (the runtime smoke confirms it works
@@ -144,8 +181,10 @@ reused to drive the per-tile Metal transforms.
 ## Done criteria
 
 - Metal runtime smoke passes on this Mac (runtime proven, not just compile).
-- GPU-backed input → Metal tiled crop/resize/normalize → Metal-backed `Tensor`,
-  no CPU readback, parity with the CPU path within tolerance.
+- GPU-backed input → Metal tiled crop/resize/normalize → delegate-layout
+  Metal-backed input tensor → TFLite Metal delegate consumes the same `MTLBuffer`,
+  no CPU readback and no input conversion copy, parity with the CPU path within
+  tolerance after PHWC4 conversion.
 - `enable_gpu_zero_copy` default-off; CPU path unchanged; CPU build excludes the
   Metal code.
 - Single-batch and `T>cap` multi-batch covered; Metal-Tensor pooling explicitly
