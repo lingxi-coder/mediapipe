@@ -180,6 +180,17 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
           << " size mismatch: packet " << tensor_span[i].bytes()
           << " vs delegate input " << gpu_buffers_in_[i]->bytes()
           << " (input must be physical PHWC4 float32 [N,H,W,RoundUp(C,4)])";
+      // The TFLite Metal delegate's input buffer is SHWBC4 (batch-INNERMOST:
+      // index ((S*H+Y)*W+X)*B + b), whereas a directly-bound zero-copy packet
+      // is contiguous [N,H,W,C4] (batch-OUTERMOST). These layouts coincide ONLY
+      // at batch 1; for N>1 a contiguous buffer would feed the delegate
+      // scrambled data, so reject it loudly here rather than corrupt silently.
+      RET_CHECK_EQ(tensor_span[i].shape().dims[0], 1)
+          << "metal_external_input_zero_copy supports batch size 1 only; got "
+          << tensor_span[i].shape().dims[0]
+          << ". The delegate input is SHWBC4 (batch-innermost) but the zero-copy "
+             "packet is contiguous batch-outermost PHWC4; they match only at "
+             "N=1. Use the non-zero-copy path for batched models.";
       RET_CHECK_EQ(TFLGpuDelegateBindMetalBufferToTensor(
                        delegate_.get(), interpreter_->inputs()[i],
                        input_view.buffer()),

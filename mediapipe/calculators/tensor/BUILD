@@ -2887,6 +2887,38 @@ cc_test(
     }),
 )
 
+# Metal env required. End-to-end: Metal tiled zero-copy preprocessing ->
+# InferenceCalculatorMetal direct external-input, at batch N=1. On non-apple:
+# empty TU.
+cc_test(
+    name = "streaming_to_inference_metal_zero_copy_test",
+    srcs = ["streaming_to_inference_metal_zero_copy_test.cc"],
+    data = select({
+        "//mediapipe:apple": [":testdata/1x256x256x3_softmax.tflite"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//mediapipe/framework:port",
+        "//mediapipe/framework/port:gtest_main",
+    ] + select({
+        "//mediapipe:apple": [
+            ":inference_calculator",
+            ":streaming_tiles_to_tensor_batch_calculator",
+            ":tiling_types",
+            "//mediapipe/framework:calculator_framework",
+            "//mediapipe/framework/formats:inference_metadata_cc_proto",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:parse_text_proto",
+            "//mediapipe/framework/port:status_matchers",
+            "//mediapipe/gpu:gpu_buffer",
+            "//mediapipe/gpu:gpu_shared_data_internal",
+            "//mediapipe/util:image_test_utils",
+            "@com_google_absl//absl/status",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
 # Metal env required. Verifies InferenceCalculatorMetal direct external-input
 # (zero-copy) mode matches the normal path. On non-apple: empty TU.
 cc_test(

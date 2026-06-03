@@ -407,6 +407,12 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   // semantics; the emitted tensor is physical PHWC4 (C4=RoundUp(C,4)) for the
   // Metal delegate's direct input layout (Task 4), while TensorBatchInfo stays
   // logical.
+  //
+  // NOTE: the written layout is contiguous [N,H,W,C4] (batch-outermost). The
+  // TFLite Metal delegate's batched input is SHWBC4 (batch-innermost), so a
+  // directly-bound (InferenceCalculatorMetal metal_external_input_zero_copy)
+  // consumer is correct ONLY at N==1; that consumer RET_CHECKs it. N>1 would
+  // need a strided SHWBC4 write the render-to-texture path can't do (deferred).
   absl::Status ProcessMetal(CalculatorContext* cc) {
     const mediapipe::GpuBuffer& gpu = *kInImageGpu(cc);
     const TilePlan& plan = *kInPlan(cc);
