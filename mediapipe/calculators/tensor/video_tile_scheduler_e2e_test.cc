@@ -125,6 +125,7 @@ REGISTER_CALCULATOR(GatedDetectionEmitterCalculator);
 Detection MakeDet(float score, float xmin, float ymin, float w, float h) {
   Detection d;
   d.add_score(score);
+  d.add_label_id(0);  // GreedyDetectionNms reads label_id(0) on the per-class path
   auto* ld = d.mutable_location_data();
   ld->set_format(LocationData::RELATIVE_BOUNDING_BOX);
   auto* rbb = ld->mutable_relative_bounding_box();
