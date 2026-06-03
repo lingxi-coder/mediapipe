@@ -30,8 +30,8 @@ namespace mediapipe {
 namespace api2 {
 
 // Per-frame video-mode tile scheduler. Tracking-driven DETECT/SKIP decision
-// based on FlowPackager TrackingData signals. Tile prioritization arrives in
-// later tasks. See
+// based on FlowPackager TrackingData signals. On DETECT, applies motion-based
+// tile prioritization with max_scheduled_tiles cap. See
 // docs/superpowers/specs/2026-06-03-video-tile-scheduler-design.md.
 class VideoTileSchedulerCalculator : public Node {
  public:
@@ -55,12 +55,50 @@ class VideoTileSchedulerCalculator : public Node {
     const std::vector<NormalizedRect>& base = *kInTiles(cc);
     const bool priors_empty =
         kInPriorDets(cc).IsEmpty() || kInPriorDets(cc)->empty();
+    const std::vector<Detection>& priors =
+        priors_empty ? kEmptyDetections_ : *kInPriorDets(cc);
+
+    // Decode MotionVectorFrame ONCE; derive both TrackingSignals and
+    // FeaturePoints from the same decoded frame — no double decode.
     TrackingSignals signals;
+    std::vector<FeaturePoint> features;
+    float aspect = 1.0f;
+
     if (kInTracking(cc).IsConnected() && !kInTracking(cc).IsEmpty()) {
-      signals = DecodeTrackingSignals(*kInTracking(cc));
+      MotionVectorFrame mvf;
+      MotionVectorFrameFromTrackingData(*kInTracking(cc), &mvf);
+
+      signals.present = true;
+      signals.valid_background_model = mvf.valid_background_model;
+      signals.is_duplicated = mvf.is_duplicated;
+      signals.is_chunk_boundary = mvf.is_chunk_boundary;
+      const TrackingData& td = *kInTracking(cc);
+      signals.feature_count =
+          td.has_global_feature_count()
+              ? static_cast<int>(td.global_feature_count())
+              : static_cast<int>(mvf.motion_vectors.size());
+      float sum = 0.0f;
+      for (const auto& m : mvf.motion_vectors) {
+        sum += std::hypot(m.object.x(), m.object.y());
+      }
+      signals.mean_foreground_motion =
+          mvf.motion_vectors.empty() ? 0.0f
+                                     : sum / mvf.motion_vectors.size();
+
+      aspect = mvf.aspect_ratio > 0.0f ? mvf.aspect_ratio : 1.0f;
+      features.reserve(mvf.motion_vectors.size());
+      for (const auto& m : mvf.motion_vectors) {
+        FeaturePoint fp;
+        fp.x = m.pos.x();
+        fp.y = m.pos.y();
+        fp.motion = std::hypot(m.object.x(), m.object.y());
+        features.push_back(fp);
+      }
     }
+
     if (ShouldRefreshFrame(options_, priors_empty, signals)) {
-      kOutTiles(cc).Send(std::vector<NormalizedRect>(base));  // full list (Task 3 adds cap)
+      kOutTiles(cc).Send(ScheduleTiles(base, options_.max_scheduled_tiles(),
+                                       features, aspect, priors));
       kOutRefresh(cc).Send(true);
     } else {
       kOutTiles(cc).Send(std::vector<NormalizedRect>{});  // SKIP: no inference
@@ -70,34 +108,13 @@ class VideoTileSchedulerCalculator : public Node {
   }
 
  private:
-  // Decodes TrackingData into plain TrackingSignals for the decision function.
-  // Booleans (valid_background_model, is_duplicated, is_chunk_boundary) are
-  // read via MotionVectorFrameFromTrackingData, which maps frame_flags — the
-  // same source as direct flag reads. domain_width/domain_height/frame_aspect
-  // must be set on the TrackingData for MotionVectorFrameFromTrackingData to
-  // produce correct motion vectors (division by domain_*).
-  static TrackingSignals DecodeTrackingSignals(const TrackingData& td) {
-    MotionVectorFrame mvf;
-    MotionVectorFrameFromTrackingData(td, &mvf);
-    TrackingSignals s;
-    s.present = true;
-    s.valid_background_model = mvf.valid_background_model;
-    s.is_duplicated = mvf.is_duplicated;
-    s.is_chunk_boundary = mvf.is_chunk_boundary;
-    s.feature_count = td.has_global_feature_count()
-                          ? static_cast<int>(td.global_feature_count())
-                          : static_cast<int>(mvf.motion_vectors.size());
-    float sum = 0.0f;
-    for (const auto& m : mvf.motion_vectors) {
-      sum += std::hypot(m.object.x(), m.object.y());
-    }
-    s.mean_foreground_motion =
-        mvf.motion_vectors.empty() ? 0.0f : sum / mvf.motion_vectors.size();
-    return s;
-  }
-
   mediapipe::VideoTileSchedulerCalculatorOptions options_;
+  // Empty detection list used when PRIOR_DETECTIONS is absent or empty,
+  // so ScheduleTiles has a valid reference to iterate over.
+  static const std::vector<Detection> kEmptyDetections_;
 };
+
+const std::vector<Detection> VideoTileSchedulerCalculator::kEmptyDetections_;
 
 MEDIAPIPE_REGISTER_NODE(VideoTileSchedulerCalculator);
 

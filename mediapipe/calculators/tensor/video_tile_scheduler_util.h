@@ -15,7 +15,11 @@
 #ifndef MEDIAPIPE_CALCULATORS_TENSOR_VIDEO_TILE_SCHEDULER_UTIL_H_
 #define MEDIAPIPE_CALCULATORS_TENSOR_VIDEO_TILE_SCHEDULER_UTIL_H_
 
+#include <vector>
+
 #include "mediapipe/calculators/tensor/video_tile_scheduler_calculator.pb.h"
+#include "mediapipe/framework/formats/detection.pb.h"
+#include "mediapipe/framework/formats/rect.pb.h"
 
 namespace mediapipe {
 
@@ -52,6 +56,44 @@ inline bool ShouldRefreshFrame(
     return false;
   return options.refresh_on_uncertain_tracking();
 }
+
+// A decoded motion feature in the longest-side-normalized tracking domain
+// (the domain MotionVectorFrame positions live in).
+struct FeaturePoint {
+  float x = 0.0f;       // longest-side-normalized position
+  float y = 0.0f;
+  float motion = 0.0f;  // foreground motion magnitude at this feature
+};
+
+// Maps a longest-side-normalized position to frame-normalized [0,1]^2.
+// aspect = w/h; the longest dimension is normalized to 1 in the source domain.
+inline void FeatureFramePos(float x, float y, float aspect, float* fx,
+                            float* fy) {
+  if (aspect >= 1.0f) {
+    *fx = x;
+    *fy = y * aspect;
+  } else {
+    *fx = x / aspect;
+    *fy = y;
+  }
+}
+
+// True if frame-normalized point (x,y) lies in the tile's axis-aligned rect.
+inline bool PointInTile(float x, float y, const NormalizedRect& t) {
+  const float x0 = t.x_center() - t.width() / 2.0f;
+  const float y0 = t.y_center() - t.height() / 2.0f;
+  return x >= x0 && x <= x0 + t.width() && y >= y0 && y <= y0 + t.height();
+}
+
+// Selects up to max_scheduled_tiles from `base`, prioritizing tiles by summed
+// foreground motion of features inside them (features mapped via aspect). A
+// tile with zero in-tile motion falls back to the count of prior-detection
+// centers inside it. Returns selected tiles in ORIGINAL input order.
+// max_scheduled_tiles <= 0, or base.size() <= max, returns all of `base`.
+std::vector<NormalizedRect> ScheduleTiles(
+    const std::vector<NormalizedRect>& base, int max_scheduled_tiles,
+    const std::vector<FeaturePoint>& features, float aspect,
+    const std::vector<Detection>& priors);
 
 }  // namespace mediapipe
 #endif  // MEDIAPIPE_CALCULATORS_TENSOR_VIDEO_TILE_SCHEDULER_UTIL_H_

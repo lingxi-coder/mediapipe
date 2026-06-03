@@ -281,5 +281,167 @@ TEST(VideoTileSchedulerTest, BackgroundUnstableThroughCalculator) {
   EXPECT_EQ(sched[0].Get<std::vector<NormalizedRect>>().size(), 2);
 }
 
+// ---------------------------------------------------------------------------
+// (c) Direct unit tests of ScheduleTiles pure function
+// ---------------------------------------------------------------------------
+
+TEST(ScheduleTilesTest, NoCapEmitsAllTiles) {
+  std::vector<NormalizedRect> base = {
+      Rect(0.125f, 0.5f, 0.25f, 1.0f),
+      Rect(0.375f, 0.5f, 0.25f, 1.0f),
+      Rect(0.625f, 0.5f, 0.25f, 1.0f),
+      Rect(0.875f, 0.5f, 0.25f, 1.0f),
+  };
+  std::vector<FeaturePoint> features;
+  std::vector<Detection> priors;
+
+  // max_scheduled_tiles=0 means no cap → all tiles returned.
+  auto result = ScheduleTiles(base, /*max_scheduled_tiles=*/0, features,
+                              /*aspect=*/1.0f, priors);
+  ASSERT_EQ(result.size(), 4u);
+
+  // base.size() <= max → all tiles returned.
+  result = ScheduleTiles(base, /*max_scheduled_tiles=*/4, features,
+                         /*aspect=*/1.0f, priors);
+  ASSERT_EQ(result.size(), 4u);
+
+  // base.size() <= max (larger cap) → all tiles returned.
+  result = ScheduleTiles(base, /*max_scheduled_tiles=*/10, features,
+                         /*aspect=*/1.0f, priors);
+  ASSERT_EQ(result.size(), 4u);
+}
+
+TEST(ScheduleTilesTest, CapKeepsTopMotionTilesInStableOrder) {
+  // 4 tiles along x axis, each width=0.25, centered at 0.125, 0.375, 0.625,
+  // 0.875. Features with motion only inside tiles 0 and 2.
+  std::vector<NormalizedRect> base = {
+      Rect(0.125f, 0.5f, 0.25f, 1.0f),   // tile 0: x in [0, 0.25]
+      Rect(0.375f, 0.5f, 0.25f, 1.0f),   // tile 1: x in [0.25, 0.5]
+      Rect(0.625f, 0.5f, 0.25f, 1.0f),   // tile 2: x in [0.5, 0.75]
+      Rect(0.875f, 0.5f, 0.25f, 1.0f),   // tile 3: x in [0.75, 1.0]
+  };
+  // aspect=1: FeatureFramePos is identity.
+  std::vector<FeaturePoint> features = {
+      {0.1f, 0.5f, 2.0f},   // inside tile 0, motion=2
+      {0.6f, 0.5f, 3.0f},   // inside tile 2, motion=3
+  };
+  std::vector<Detection> priors;
+
+  auto result = ScheduleTiles(base, /*max_scheduled_tiles=*/2, features,
+                              /*aspect=*/1.0f, priors);
+  // Top 2 by motion: tile 2 (score=3) and tile 0 (score=2); tiles 1,3 (0).
+  // Returned in ORIGINAL input order → {tile 0, tile 2}.
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_NEAR(result[0].x_center(), 0.125f, 1e-5f);  // original tile 0
+  EXPECT_NEAR(result[1].x_center(), 0.625f, 1e-5f);  // original tile 2
+}
+
+TEST(ScheduleTilesTest, PerTilePriorFallbackCanSelectZeroMotionTile) {
+  // 3 tiles; motion only in tile 0; prior-detection center in tile 2.
+  // max=2 → keep tiles 0 (motion) and 2 (prior fallback), NOT tile 1 (nothing).
+  std::vector<NormalizedRect> base = {
+      Rect(0.125f, 0.5f, 0.25f, 1.0f),   // tile 0: x in [0, 0.25]
+      Rect(0.375f, 0.5f, 0.25f, 1.0f),   // tile 1: x in [0.25, 0.5]
+      Rect(0.625f, 0.5f, 0.25f, 1.0f),   // tile 2: x in [0.5, 0.75]
+  };
+  std::vector<FeaturePoint> features = {
+      {0.1f, 0.5f, 5.0f},   // inside tile 0, motion=5
+  };
+  // Prior center at (0.625, 0.5) → inside tile 2.
+  // Det bbox: xmin=0.55, ymin=0.4, w=0.15, h=0.2 → center=(0.625, 0.5).
+  std::vector<Detection> priors = {Det(0.9f, 0.55f, 0.4f, 0.15f, 0.2f)};
+
+  auto result = ScheduleTiles(base, /*max_scheduled_tiles=*/2, features,
+                              /*aspect=*/1.0f, priors);
+  // tile 0: motion score=5, tile 1: score=0, tile 2: prior-fallback score=1.
+  // Top 2: tile 0 and tile 2. Returned in original order.
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_NEAR(result[0].x_center(), 0.125f, 1e-5f);  // tile 0
+  EXPECT_NEAR(result[1].x_center(), 0.625f, 1e-5f);  // tile 2 (prior fallback)
+}
+
+TEST(ScheduleTilesTest, AllZeroPriorityFallsBackToOriginalOrder) {
+  // No features, no priors → all scores=0. Stable sort preserves index order.
+  // max=2 → first 2 tiles by original order.
+  std::vector<NormalizedRect> base = {
+      Rect(0.125f, 0.5f, 0.25f, 1.0f),
+      Rect(0.375f, 0.5f, 0.25f, 1.0f),
+      Rect(0.625f, 0.5f, 0.25f, 1.0f),
+      Rect(0.875f, 0.5f, 0.25f, 1.0f),
+  };
+  std::vector<FeaturePoint> features;
+  std::vector<Detection> priors;
+
+  auto result = ScheduleTiles(base, /*max_scheduled_tiles=*/2, features,
+                              /*aspect=*/1.0f, priors);
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_NEAR(result[0].x_center(), 0.125f, 1e-5f);  // tile 0
+  EXPECT_NEAR(result[1].x_center(), 0.375f, 1e-5f);  // tile 1
+}
+
+TEST(ScheduleTilesTest, AspectMappingMatchesTrackingDomain) {
+  // Landscape: aspect=16/9. Center of tracking domain is at (0.5, 0.5/aspect).
+  // FeatureFramePos should map that back to frame-center (0.5, 0.5).
+  {
+    const float aspect = 16.0f / 9.0f;
+    // In tracking domain, x∈[0,1], y∈[0,1/aspect]. Center=(0.5, 0.5/aspect).
+    float fx, fy;
+    FeatureFramePos(0.5f, 0.5f / aspect, aspect, &fx, &fy);
+    EXPECT_NEAR(fx, 0.5f, 1e-4f);
+    EXPECT_NEAR(fy, 0.5f, 1e-4f);
+  }
+  // Portrait: aspect=9/16. Center of tracking domain is at (0.5*aspect, 0.5).
+  // FeatureFramePos should map that back to frame-center (0.5, 0.5).
+  {
+    const float aspect = 9.0f / 16.0f;
+    // In tracking domain, x∈[0,aspect], y∈[0,1]. Center=(0.5*aspect, 0.5).
+    float fx, fy;
+    FeatureFramePos(0.5f * aspect, 0.5f, aspect, &fx, &fy);
+    EXPECT_NEAR(fx, 0.5f, 1e-4f);
+    EXPECT_NEAR(fy, 0.5f, 1e-4f);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// (d) Through-calculator: DETECT with max_scheduled_tiles=1, no tracking.
+// ---------------------------------------------------------------------------
+
+TEST(VideoTileSchedulerTest, DetectWithMaxScheduledTilesCapsTileCount) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "VideoTileSchedulerCalculator"
+    input_stream: "TILES:tiles"
+    input_stream: "PRIOR_DETECTIONS:priors"
+    output_stream: "TILES:sched"
+    output_stream: "REFRESH:refresh"
+    options {
+      [mediapipe.VideoTileSchedulerCalculatorOptions.ext] {
+        max_scheduled_tiles: 1
+      }
+    }
+  )pb"));
+
+  auto tiles = std::make_unique<std::vector<NormalizedRect>>();
+  tiles->push_back(Rect(0.25f, 0.5f, 0.5f, 1.0f));
+  tiles->push_back(Rect(0.75f, 0.5f, 0.5f, 1.0f));
+  runner.MutableInputs()->Tag("TILES").packets.push_back(
+      Adopt(tiles.release()).At(Timestamp(0)));
+
+  // Priors exist so priors_empty=false; no tracking → detect_without_tracking
+  // is true by default → DETECT path.
+  auto priors = std::make_unique<std::vector<Detection>>();
+  priors->push_back(Det(0.9f, 0.1f, 0.1f, 0.2f, 0.2f));
+  runner.MutableInputs()->Tag("PRIOR_DETECTIONS").packets.push_back(
+      Adopt(priors.release()).At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& sched = runner.Outputs().Tag("TILES").packets;
+  const auto& refresh = runner.Outputs().Tag("REFRESH").packets;
+  ASSERT_EQ(sched.size(), 1u);
+  ASSERT_EQ(refresh.size(), 1u);
+  EXPECT_TRUE(refresh[0].Get<bool>());
+  // max_scheduled_tiles=1 caps from 2 tiles to 1.
+  EXPECT_EQ(sched[0].Get<std::vector<NormalizedRect>>().size(), 1u);
+}
+
 }  // namespace
 }  // namespace mediapipe

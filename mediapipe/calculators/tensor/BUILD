@@ -2629,9 +2629,12 @@ mediapipe_proto_library(
 
 cc_library(
     name = "video_tile_scheduler_util",
+    srcs = ["video_tile_scheduler_util.cc"],
     hdrs = ["video_tile_scheduler_util.h"],
     deps = [
         ":video_tile_scheduler_calculator_cc_proto",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
     ],
 )
 
