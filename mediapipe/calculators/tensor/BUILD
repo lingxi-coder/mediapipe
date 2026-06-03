@@ -2659,6 +2659,32 @@ cc_test(
     ],
 )
 
+# Metal runtime feasibility gate (Phase 5 Task 1). Apple-only ObjC++ test
+# proving a Metal-backed Tensor + MtlBufferView execute on this machine. On
+# non-apple the source compiles to an ordinary (empty-of-Metal) TU.
+cc_test(
+    name = "metal_tensor_smoke_test",
+    srcs = ["metal_tensor_smoke_test.cc"],
+    copts = select({
+        "//mediapipe:apple": [
+            "-x objective-c++",
+            "-fobjc-arc",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "//mediapipe:apple": [
+            "-framework Metal",
+            "-framework Foundation",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//mediapipe/framework/formats:tensor",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
 # GLES 3.1 tiled-batch SSBO writer (Plan 4 Task 2). Adapts
 # image_to_tensor_converter_gl_buffer to write each tile into its batch row.
 # Gated exactly like image_to_tensor_converter_gl_buffer so the CPU build
