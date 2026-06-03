@@ -27,6 +27,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/yolo_object_detector.h"
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include "mediapipe/framework/deps/file_path.h"
@@ -92,35 +93,85 @@ TEST(YoloObjectDetectorTest, DetectOnImage) {
   auto options = std::make_unique<YoloObjectDetectorOptions>();
   options->base_options.model_asset_path = model_path;
   options->running_mode = core::RunningMode::IMAGE;
-  options->max_results = 10;
-  // Standard COCO 80-class model; adjust num_classes if a different variant is
-  // used as the fixture.
-  options->num_classes = 80;
+  options->num_classes = 80;  // COCO — REQUIRED by the graph (RET_CHECK_GT).
   options->score_threshold = 0.25f;
   options->iou_threshold = 0.45f;
-  // YOLOv8n exported to TFLite typically uses CHANNELS_LAST layout.
-  options->layout = YoloObjectDetectorOptions::kChannelsLast;
+  options->max_results = 10;
+  // NOTE: leave layout at its default (kChannelsFirst). yolov8n.tflite emits a
+  // CHANNELS_FIRST [1,84,8400] tensor; setting kChannelsLast would misread it.
 
   MP_ASSERT_OK_AND_ASSIGN(auto detector,
-                           YoloObjectDetector::Create(std::move(options)));
-
-  // Decode the test image (cats and dogs: a well-known object-detection scene).
+                          YoloObjectDetector::Create(std::move(options)));
   MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
-
   MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
-                           detector->Detect(image));
+                          detector->Detect(image));
 
-  // Verify that at least one detection was returned.
-  EXPECT_FALSE(result.detections.empty())
-      << "Expected at least one detection on cats_and_dogs.jpg.";
-
-  // Each detection must have exactly one category and a positive score.
+  ASSERT_FALSE(result.detections.empty())
+      << "expected detections on " << kTestImage;
+  EXPECT_LE(result.detections.size(), 10u);  // max_results respected
+  const int w = image.width(), h = image.height();
+  std::set<int> labels;
   for (const auto& det : result.detections) {
     ASSERT_EQ(det.categories.size(), 1u);
-    EXPECT_GT(det.categories[0].score, 0.0f);
+    const auto& cat = det.categories[0];
+    EXPECT_GE(cat.score, 0.25f);
+    EXPECT_GE(cat.index, 0);
+    EXPECT_LT(cat.index, 80);
+    labels.insert(cat.index);
+    const auto& bb = det.bounding_box;  // Rect{left,top,right,bottom} in pixels
+    EXPECT_GE(bb.left, 0);
+    EXPECT_GE(bb.top, 0);
+    EXPECT_LE(bb.right, w + 1);
+    EXPECT_LE(bb.bottom, h + 1);
+    EXPECT_GT(bb.right, bb.left);
+    EXPECT_GT(bb.bottom, bb.top);
   }
-
+  // cats_and_dogs.jpg: model detects a cat (15) and/or dog (16) (Step 1 oracle
+  // reports 4x cat + 1x dog at conf>=0.25 on this 1200x600 image).
+  EXPECT_TRUE(labels.count(15) || labels.count(16)) << "expected a cat or dog";
   MP_ASSERT_OK(detector->Close());
+}
+
+// ---------------------------------------------------------------------------
+// Filtering test: score_threshold and max_results must shrink the result set.
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTest, ScoreThresholdAndMaxResultsFilter) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path;
+  }
+  auto base = [&]() {
+    auto o = std::make_unique<YoloObjectDetectorOptions>();
+    o->base_options.model_asset_path = model_path;
+    o->running_mode = core::RunningMode::IMAGE;
+    o->num_classes = 80;
+    o->iou_threshold = 0.45f;
+    return o;
+  };
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+
+  auto lo = base();
+  lo->score_threshold = 0.25f;
+  MP_ASSERT_OK_AND_ASSIGN(auto det_lo, YoloObjectDetector::Create(std::move(lo)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_lo, det_lo->Detect(image));
+  MP_ASSERT_OK(det_lo->Close());
+
+  auto hi = base();
+  hi->score_threshold = 0.9f;
+  MP_ASSERT_OK_AND_ASSIGN(auto det_hi, YoloObjectDetector::Create(std::move(hi)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_hi, det_hi->Detect(image));
+  MP_ASSERT_OK(det_hi->Close());
+  EXPECT_LE(r_hi.detections.size(), r_lo.detections.size());
+  for (const auto& d : r_hi.detections) EXPECT_GE(d.categories[0].score, 0.9f);
+
+  auto cap = base();
+  cap->score_threshold = 0.25f;
+  cap->max_results = 1;
+  MP_ASSERT_OK_AND_ASSIGN(auto det_cap,
+                          YoloObjectDetector::Create(std::move(cap)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_cap, det_cap->Detect(image));
+  MP_ASSERT_OK(det_cap->Close());
+  EXPECT_LE(r_cap.detections.size(), 1u);
 }
 
 // ---------------------------------------------------------------------------
@@ -141,10 +192,10 @@ TEST(YoloObjectDetectorTest, DetectForVideo) {
   options->base_options.model_asset_path = model_path;
   options->running_mode = core::RunningMode::VIDEO;
   options->max_results = 10;
-  options->num_classes = 80;
+  options->num_classes = 80;  // COCO — REQUIRED by the graph (RET_CHECK_GT).
   options->score_threshold = 0.25f;
   options->iou_threshold = 0.45f;
-  options->layout = YoloObjectDetectorOptions::kChannelsLast;
+  // Leave layout at its CHANNELS_FIRST default (matches yolov8n.tflite).
 
   MP_ASSERT_OK_AND_ASSIGN(auto detector,
                            YoloObjectDetector::Create(std::move(options)));
