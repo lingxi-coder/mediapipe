@@ -18,4 +18,9 @@ __pycache__/
 
 # Locally-exported YOLO Tasks test fixtures (regenerate via export_yolov8n_tflite.py)
 /mediapipe/tasks/testdata/vision/yolov8n.tflite
+
+# Intermediate YOLO export artifacts (regenerate via export_yolov8n_tflite.py)
+/yolov8n.onnx
+/yolov8n_saved_model/
+/calibration_image_sample_data_*.npy
 /mediapipe/tasks/testdata/vision/yolov8n_labels.txt

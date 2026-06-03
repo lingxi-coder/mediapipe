@@ -79,23 +79,10 @@ class YoloTensorsToDetectionsCalculator : public Node {
     auto view = t.GetCpuReadView();
     const float* data = view.buffer<float>();
 
-    // Decide ONCE per tensor whether the detect head emits pixel-space boxes
-    // (coords in [0, input_dim], which need normalizing by input_width/height)
-    // or boxes already normalized to [0,1]. Ultralytics TFLite exports differ:
-    // some emit pixel-space xywh, others (e.g. the default yolov8n export) emit
-    // normalized xywh. Dividing already-normalized boxes by ~640 collapses every
-    // box to the origin, so we only normalize when the data is actually pixel-
-    // space. Detection is by magnitude: a normalized box never exceeds ~1.0 (+
-    // tiny overflow), whereas pixel-space coords reach into the tens/hundreds.
-    // This keeps the input_width/height contract for pixel-space models while
-    // being robust to normalized ones.
-    const bool normalize = inv_w_ > 0.0f && BoxesArePixelSpace(
-                                                data, N, channels, A);
-
     auto out = std::make_unique<std::vector<std::vector<Detection>>>();
     out->resize(N);
     for (int n = 0; n < N; ++n) {
-      DecodeRow(data, n, channels, A, num_classes, normalize, &(*out)[n]);
+      DecodeRow(data, n, channels, A, num_classes, &(*out)[n]);
     }
 
     kOutDetections(cc).Send(std::move(out));
@@ -103,35 +90,9 @@ class YoloTensorsToDetectionsCalculator : public Node {
   }
 
  private:
-  // Box coordinates above this magnitude are treated as pixel-space (and thus
-  // normalized by input_width/height). A normalized xywh box stays within
-  // [0,1] up to small numerical overflow, so 1.5 cleanly separates the two
-  // export conventions while tolerating slight edge-box overshoot.
-  static constexpr float kPixelSpaceBoxThreshold = 1.5f;
-
-  // Scans the box channels (cx,cy,w,h) across all anchors/rows and returns true
-  // when any coordinate magnitude exceeds kPixelSpaceBoxThreshold, i.e. the
-  // detect head emits pixel-space boxes rather than normalized ones.
-  bool BoxesArePixelSpace(const float* data, int N, int channels, int A) const {
-    const bool channels_last =
-        options_.layout() ==
-        mediapipe::YoloTensorsToDetectionsCalculatorOptions::CHANNELS_LAST;
-    for (int n = 0; n < N; ++n) {
-      for (int a = 0; a < A; ++a) {
-        for (int c = 0; c < 4; ++c) {
-          const float v = channels_last ? data[(n * A + a) * channels + c]
-                                         : data[(n * channels + c) * A + a];
-          if (std::fabs(v) > kPixelSpaceBoxThreshold) return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  // Decodes batch row `n` into `dets`. When `normalize` is true the box
-  // coordinates are scaled by 1/input_width and 1/input_height.
+  // Decodes batch row `n` into `dets`.
   void DecodeRow(const float* data, int n, int channels, int A, int num_classes,
-                 bool normalize, std::vector<Detection>* dets) {
+                 std::vector<Detection>* dets) {
     const bool channels_last =
         options_.layout() ==
         mediapipe::YoloTensorsToDetectionsCalculatorOptions::CHANNELS_LAST;
@@ -141,7 +102,7 @@ class YoloTensorsToDetectionsCalculator : public Node {
                              : data[(n * channels + c) * A + a];
       };
       float cx = at(0), cy = at(1), w = at(2), h = at(3);
-      if (normalize) {  // model emits pixel-space boxes -> normalize to [0,1]
+      if (inv_w_ > 0.0f) {  // model emits pixel-space boxes -> normalize to [0,1]
         cx *= inv_w_;
         w *= inv_w_;
         cy *= inv_h_;

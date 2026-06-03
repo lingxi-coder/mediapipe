@@ -72,7 +72,6 @@ cc_library(
         "//mediapipe/tasks/cc/core:model_resources",
         "//mediapipe/tasks/cc/core:model_task_graph",
         "//mediapipe/tasks/cc/core/proto:inference_subgraph_cc_proto",
-        "//mediapipe/tasks/cc/vision/utils:image_tensor_specs",
         "//mediapipe/tasks/cc/vision/yolo_object_detector/proto:yolo_object_detector_options_cc_proto",
         "//mediapipe/tasks/metadata:metadata_schema_cc",
         "@com_google_absl//absl/status",
