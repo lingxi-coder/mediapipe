@@ -31,6 +31,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/core/model_resources.h"
 #include "mediapipe/tasks/cc/core/model_task_graph.h"
 #include "mediapipe/tasks/cc/core/proto/inference_subgraph.pb.h"
+#include "mediapipe/tasks/cc/vision/utils/image_tensor_specs.h"
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/proto/yolo_object_detector_options.pb.h"
 #include "mediapipe/tasks/metadata/metadata_schema_generated.h"
 
@@ -224,6 +225,14 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
                     CHANNELS_LAST
               : ::mediapipe::YoloTensorsToDetectionsCalculatorOptions::
                     CHANNELS_FIRST);
+      // The model's detect head emits boxes in input-pixel space; give the
+      // decoder the input dims so it normalizes to [0,1] before projection.
+      MP_ASSIGN_OR_RETURN(
+          auto yolo_input_specs,
+          ::mediapipe::tasks::vision::BuildInputImageTensorSpecs(
+              model_resources));
+      opts.set_input_width(yolo_input_specs.image_width);
+      opts.set_input_height(yolo_input_specs.image_height);
     }
     model_output_tensors >> yolo_decode.In(kTensorTag);
 
