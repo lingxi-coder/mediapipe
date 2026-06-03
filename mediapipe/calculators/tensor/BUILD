@@ -2620,6 +2620,69 @@ cc_test(
     ],
 )
 
+# GLES 3.1 tiled-batch SSBO writer (Plan 4 Task 2). Adapts
+# image_to_tensor_converter_gl_buffer to write each tile into its batch row.
+# Gated exactly like image_to_tensor_converter_gl_buffer so the CPU build
+# (emscripten/apple/disable-gpu) never compiles the GLES translation unit.
+cc_library(
+    name = "streaming_tiles_to_tensor_batch_gl",
+    srcs = ["streaming_tiles_to_tensor_batch_gl.cc"],
+    hdrs = ["streaming_tiles_to_tensor_batch_gl.h"],
+    deps = ["//mediapipe/framework:port"] + selects.with_or({
+        "//mediapipe:emscripten": [],
+        "//mediapipe:apple": [],
+        "//conditions:default": [
+            ":image_to_tensor_converter",
+            ":image_to_tensor_converter_gl_utils",
+            ":image_to_tensor_utils",
+            "@com_google_absl//absl/memory",
+            "@com_google_absl//absl/strings",
+            "//mediapipe/framework/port:ret_check",
+            "//mediapipe/framework/port:status",
+            "//mediapipe/framework/port:statusor",
+            "//mediapipe/gpu:gl_calculator_helper",
+            "//mediapipe/gpu:gl_context",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/common:types",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:command_queue",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_buffer",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_call",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_program",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_shader",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_texture",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl/converters:util",
+        ],
+    }),
+)
+
+# GPU env required (GLES 3.1). On apple/emscripten/disable-gpu the test source
+# compiles to an empty TU; the GPU-only deps are added only on the default
+# config so the CPU build links a trivial (empty) test binary.
+cc_test(
+    name = "streaming_tiles_to_tensor_batch_gl_test",
+    srcs = ["streaming_tiles_to_tensor_batch_gl_test.cc"],
+    deps = [
+        "//mediapipe/framework:port",
+        "//mediapipe/framework/port:gtest_main",
+    ] + selects.with_or({
+        "//mediapipe:emscripten": [],
+        "//mediapipe:apple": [],
+        "//conditions:default": [
+            ":image_to_tensor_converter",
+            ":image_to_tensor_utils",
+            ":streaming_tiles_to_tensor_batch_gl",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:status_matchers",
+            "//mediapipe/gpu:gl_base",
+            "//mediapipe/gpu:gl_context",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/common:types",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:command_queue",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_buffer",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_texture",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:request_gpu_info",
+        ],
+    }),
+)
+
 mediapipe_proto_library(
     name = "video_tile_scheduler_calculator_proto",
     srcs = ["video_tile_scheduler_calculator.proto"],
