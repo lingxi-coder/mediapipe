@@ -15,6 +15,8 @@
 #ifndef MEDIAPIPE_CALCULATORS_TENSOR_TILING_CACHE_STATS_H_
 #define MEDIAPIPE_CALCULATORS_TENSOR_TILING_CACHE_STATS_H_
 
+#include <cstdint>
+
 #include "mediapipe/calculators/tensor/tiling_cache_utils.h"
 #include "mediapipe/framework/formats/cpu_buffer_pool.h"
 
@@ -26,6 +28,12 @@ struct TilingCacheStats {
   CacheStats tile_plan;
   CacheStats tile_matrix;
   CpuBufferPoolStats cpu_tensor_pool;
+  // GPU zero-copy path (Plan 4). These stay zero under MEDIAPIPE_DISABLE_GPU=1
+  // and whenever enable_gpu_zero_copy is false.
+  CacheStats gpu_tensor_buffer;  // Cache 5: GPU/AHWB tensor-buffer pool
+  CacheStats tile_surface;       // Cache 4: GL program/tile-surface cache
+  int64_t in_flight_gpu_batches = 0;
+  int64_t gpu_to_cpu_fallbacks = 0;
 };
 
 }  // namespace mediapipe

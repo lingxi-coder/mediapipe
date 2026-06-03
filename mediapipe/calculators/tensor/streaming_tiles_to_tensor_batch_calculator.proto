@@ -43,4 +43,33 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // once per source frame at the source timestamp. Must not allocate on the
   // hot path when false or when CACHE_STATS is unconnected.
   optional bool emit_cache_stats = 4 [default = false];
+
+  // ---- GPU zero-copy path (Plan 4). All default off; the CPU path above is
+  // byte-identical when enable_gpu_zero_copy is false. ----
+
+  // Cache 5: max GPU/AHWB-backed batch tensor buffers to pool, keyed by GL
+  // context scope. 0 = no pooling (per-batch alloc).
+  optional int32 max_gpu_tensor_buffers = 5 [default = 0];
+
+  // Cache 4: max compiled GL programs / tile surfaces to cache. 0 = no cache.
+  optional int32 max_tile_surfaces = 6 [default = 0];
+
+  // When true AND a GPU input (IMAGE_GPU) is connected, run tiled
+  // crop/resize/normalize on the GPU, writing each tile into its row of a
+  // GPU/AHWB-backed [N,H,W,C] tensor with no CPU readback. Default off => CPU
+  // path exactly.
+  optional bool enable_gpu_zero_copy = 7 [default = false];
+
+  // If a GPU input is not present while enable_gpu_zero_copy is set, fall back
+  // to the CPU path (true) or fail with an actionable error (false).
+  optional bool allow_cpu_input_fallback = 8 [default = true];
+
+  // Bound on GPU batch tensors simultaneously in flight downstream. 0 =
+  // governed solely by max_gpu_tensor_buffers.
+  optional int32 max_in_flight_gpu_batches = 9 [default = 0];
+
+  // If the GPU buffer pool is exhausted in zero-copy mode, allow a CPU-readback
+  // fallback (true) or fail with ResourceExhausted (false). Perf/zero-copy
+  // tests set this false so any readback is a failure.
+  optional bool allow_gpu_readback_fallback = 10 [default = false];
 }

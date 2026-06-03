@@ -72,6 +72,21 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       memory_manager_ = std::make_shared<MemoryManager>(
           static_cast<size_t>(options_.max_cpu_tensor_workspaces()));
     }
+    // GPU zero-copy option validation (Plan 4). The GPU path itself is added in
+    // later tasks; here we only reject invalid capacities up front so a bad
+    // config fails at Open() rather than mid-stream.
+    RET_CHECK_GE(options_.max_gpu_tensor_buffers(), 0);
+    RET_CHECK_GE(options_.max_tile_surfaces(), 0);
+    RET_CHECK_GE(options_.max_in_flight_gpu_batches(), 0);
+    // Zero-copy with no finite buffer/in-flight capacity is a config error: an
+    // unbounded GPU buffer pool defeats the in-flight ownership model.
+    if (options_.enable_gpu_zero_copy() &&
+        options_.max_in_flight_gpu_batches() == 0) {
+      RET_CHECK_GT(options_.max_gpu_tensor_buffers(), 0)
+          << "enable_gpu_zero_copy requires a finite GPU buffer/in-flight "
+             "capacity (set max_gpu_tensor_buffers or max_in_flight_gpu_batches "
+             "> 0)";
+    }
     return absl::OkStatus();
   }
 

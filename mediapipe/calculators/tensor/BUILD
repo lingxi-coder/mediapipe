@@ -2583,6 +2583,7 @@ cc_library(
         ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
         ":tiling_cache_stats",
         ":tiling_cache_utils",
+        ":tiling_gpu_resource",
         ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
@@ -2773,6 +2774,14 @@ cc_library(
         ":tiling_cache_utils",
         "//mediapipe/framework/formats:cpu_buffer_pool",
     ],
+)
+
+# GPU zero-copy scaffolding types (Plan 4). Pure types, no GL includes, so this
+# compiles under MEDIAPIPE_DISABLE_GPU=1; the GLES converter/calculator paths
+# consume these only inside GLES-guarded code.
+cc_library(
+    name = "tiling_gpu_resource",
+    hdrs = ["tiling_gpu_resource.h"],
 )
 
 cc_library(
