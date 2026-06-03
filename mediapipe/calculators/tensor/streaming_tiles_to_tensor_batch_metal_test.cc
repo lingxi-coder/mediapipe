@@ -79,30 +79,30 @@ TEST(StreamingTilesToTensorBatchMetalTest, WritesEachTileIntoItsBatchRow) {
   id<MTLCommandQueue> queue = [device newCommandQueue];
 
   constexpr int kSrcW = 16, kSrcH = 16;
-  constexpr int kOutW = 8, kOutH = 8;  // 8*8*4*4 = 1024 B/row (256-aligned)
+  constexpr int kOutW = 8, kOutH = 8;
   constexpr int kBatch = 2;
-  constexpr int kC4 = 4;
+  constexpr int kC = 3;  // logical BHWC, tight RGB
   constexpr uint8_t kR = 30, kG = 120, kB = 210;
 
   std::vector<float> cpu;
   @autoreleasepool {
     id<MTLTexture> input = MakeUniformTexture(device, kSrcW, kSrcH, kR, kG, kB);
     auto writer_or = TiledBatchMetalWriter::Create(device, kOutW, kOutH,
-                                                   /*channels=*/3,
+                                                   /*channels=*/kC,
                                                    BorderMode::kReplicate);
     MP_ASSERT_OK(writer_or);
     auto writer = std::move(writer_or).value();
 
-    // Physical PHWC4 batch tensor: [N, H, W, 4].
+    // Logical BHWC batch tensor: [N, H, W, 3] (tight, batch-outermost).
     Tensor tensor(Tensor::ElementType::kFloat32,
-                  Tensor::Shape{kBatch, kOutH, kOutW, kC4});
+                  Tensor::Shape{kBatch, kOutH, kOutW, kC});
     id<MTLCommandBuffer> cb = [queue commandBuffer];
     {
       auto wv = MtlBufferView::GetWriteView(tensor, cb);
-      MP_ASSERT_OK(writer->RenderTileRow(
+      MP_ASSERT_OK(writer->WriteTileRow(
           input, PixelRoiRect(0, 0, kSrcW, kSrcH), /*tile_row=*/0,
           /*alpha=*/1.0f, /*beta=*/0.0f, cb, wv.buffer()));
-      MP_ASSERT_OK(writer->RenderTileRow(
+      MP_ASSERT_OK(writer->WriteTileRow(
           input, PixelRoiRect(4, 2, 8, 8), /*tile_row=*/1,
           /*alpha=*/1.0f, /*beta=*/0.0f, cb, wv.buffer()));
     }
@@ -114,15 +114,14 @@ TEST(StreamingTilesToTensorBatchMetalTest, WritesEachTileIntoItsBatchRow) {
     cpu.assign(buf, buf + tensor.shape().num_elements());
   }
 
-  ASSERT_EQ(cpu.size(), static_cast<size_t>(kBatch * kOutH * kOutW * kC4));
+  ASSERT_EQ(cpu.size(), static_cast<size_t>(kBatch * kOutH * kOutW * kC));
   const float er = kR / 255.0f, eg = kG / 255.0f, eb = kB / 255.0f;
   for (int row = 0; row < kBatch; ++row) {
     for (int p = 0; p < kOutH * kOutW; ++p) {
-      const int base = (row * kOutH * kOutW + p) * kC4;
+      const int base = (row * kOutH * kOutW + p) * kC;
       EXPECT_NEAR(cpu[base + 0], er, 2e-3) << "row " << row << " px " << p;
       EXPECT_NEAR(cpu[base + 1], eg, 2e-3) << "row " << row << " px " << p;
       EXPECT_NEAR(cpu[base + 2], eb, 2e-3) << "row " << row << " px " << p;
-      EXPECT_NEAR(cpu[base + 3], 0.0f, 2e-3) << "padded chan row " << row;
     }
   }
 }

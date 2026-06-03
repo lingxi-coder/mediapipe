@@ -108,9 +108,6 @@ class InferenceCalculatorMetalImpl
   std::unique_ptr<tflite::Interpreter> interpreter_;
   TfLiteDelegatePtr delegate_;
   bool allow_precision_loss_ = false;
-  // Fork (Phase 5): bind input packet MTLBuffers directly to the delegate and
-  // skip the BHWC->BPHWC4 input conversion (true zero-copy delegate input).
-  bool external_input_zero_copy_ = false;
 
 #if MEDIAPIPE_TFLITE_METAL_INFERENCE
   MPPMetalHelper* gpu_helper_ = nullptr;
@@ -143,15 +140,6 @@ absl::Status InferenceCalculatorMetalImpl::UpdateContract(
 absl::Status InferenceCalculatorMetalImpl::Open(CalculatorContext* cc) {
   const auto& options = cc->Options<::mediapipe::InferenceCalculatorOptions>();
   allow_precision_loss_ = options.delegate().gpu().allow_precision_loss();
-  external_input_zero_copy_ =
-      options.delegate().gpu().metal_external_input_zero_copy();
-  if (external_input_zero_copy_) {
-    // The packet PHWC4 buffers produced upstream are float32; the delegate
-    // input layout must match, so half precision is incompatible here.
-    RET_CHECK(!allow_precision_loss_)
-        << "metal_external_input_zero_copy requires allow_precision_loss=false "
-           "(float32 PHWC4 input)";
-  }
 
   gpu_helper_ = [[MPPMetalHelper alloc] initWithCalculatorContext:cc];
   RET_CHECK(gpu_helper_);
@@ -170,33 +158,6 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
   for (int i = 0; i < tensor_span.size(); ++i) {
     auto input_view =
         MtlBufferView::GetReadView(tensor_span[i], command_buffer);
-    if (external_input_zero_copy_) {
-      // Zero-copy: bind the packet's PHWC4 MTLBuffer directly as the delegate
-      // input and skip the BHWC->BPHWC4 conversion entirely. The packet must
-      // already be physical PHWC4 float32 with the same byte size as the
-      // delegate's input buffer (same layout bound in CreateConverters).
-      RET_CHECK_EQ(tensor_span[i].bytes(), gpu_buffers_in_[i]->bytes())
-          << "metal_external_input_zero_copy input #" << i
-          << " size mismatch: packet " << tensor_span[i].bytes()
-          << " vs delegate input " << gpu_buffers_in_[i]->bytes()
-          << " (input must be physical PHWC4 float32 [N,H,W,RoundUp(C,4)])";
-      // The TFLite Metal delegate's input buffer is SHWBC4 (batch-INNERMOST:
-      // index ((S*H+Y)*W+X)*B + b), whereas a directly-bound zero-copy packet
-      // is contiguous [N,H,W,C4] (batch-OUTERMOST). These layouts coincide ONLY
-      // at batch 1; for N>1 a contiguous buffer would feed the delegate
-      // scrambled data, so reject it loudly here rather than corrupt silently.
-      RET_CHECK_EQ(tensor_span[i].shape().dims[0], 1)
-          << "metal_external_input_zero_copy supports batch size 1 only; got "
-          << tensor_span[i].shape().dims[0]
-          << ". The delegate input is SHWBC4 (batch-innermost) but the zero-copy "
-             "packet is contiguous batch-outermost PHWC4; they match only at "
-             "N=1. Use the non-zero-copy path for batched models.";
-      RET_CHECK_EQ(TFLGpuDelegateBindMetalBufferToTensor(
-                       delegate_.get(), interpreter_->inputs()[i],
-                       input_view.buffer()),
-                   true);
-      continue;
-    }
     // Reshape tensor.
     tflite::gpu::BHWC shape = BhwcFromTensorShape(tensor_span[i].shape());
     auto gpu_buffer_view =

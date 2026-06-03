@@ -401,25 +401,21 @@ class StreamingTilesToTensorBatchCalculator : public Node {
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
 
 #if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
-  // Metal zero-copy path (Apple): crop/resize/normalize each tile into its
-  // PHWC4 row of a Metal-backed physical [N,H,W,C4] tensor via the Metal render
-  // writer, no CPU readback. Mirrors ProcessCpu's batch/timestamp/INFO
-  // semantics; the emitted tensor is physical PHWC4 (C4=RoundUp(C,4)) for the
-  // Metal delegate's direct input layout (Task 4), while TensorBatchInfo stays
-  // logical.
-  //
-  // NOTE: the written layout is contiguous [N,H,W,C4] (batch-outermost). The
-  // TFLite Metal delegate's batched input is SHWBC4 (batch-innermost), so a
-  // directly-bound (InferenceCalculatorMetal metal_external_input_zero_copy)
-  // consumer is correct ONLY at N==1; that consumer RET_CHECKs it. N>1 would
-  // need a strided SHWBC4 write the render-to-texture path can't do (deferred).
+  // Metal zero-copy path (Apple): crop/resize/normalize each tile into its row
+  // of a Metal-backed LOGICAL [N,H,W,C] tensor via a Metal compute writer, no
+  // CPU readback. Mirrors ProcessCpu's batch/timestamp/INFO semantics. The
+  // emitted tensor is the logical model input (contiguous BHWC); downstream
+  // InferenceCalculatorMetal runs its normal BHWC->BPHWC4 conversion, which
+  // handles batch correctly for any N. (Earlier this emitted physical PHWC4 and
+  // bound it directly to the delegate, but that contiguous layout only matches
+  // the delegate's batch-innermost SHWBC4 input at N=1; the logical-tensor
+  // approach here works for all N at the cost of one cheap on-GPU conversion.)
   absl::Status ProcessMetal(CalculatorContext* cc) {
     const mediapipe::GpuBuffer& gpu = *kInImageGpu(cc);
     const TilePlan& plan = *kInPlan(cc);
     const int H = meta_.input_height();
     const int W = meta_.input_width();
     const int C = meta_.input_channels();
-    const int C4 = ((C + 3) / 4) * 4;  // PHWC4 physical channels
     const int cap = meta_.batch_capacity();
     const int fw = gpu.width();
     const int fh = gpu.height();
@@ -433,7 +429,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     for (int start = 0; start < T; start += cap) {
       const int rows = std::min(cap, T - start);
       const int N = dynamic_batch_ ? rows : cap;
-      Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{N, H, W, C4},
+      Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{N, H, W, C},
                     gpu_memory_manager_.get());
 
       std::shared_ptr<const TileBatchGeometry> geom =
@@ -449,14 +445,14 @@ class StreamingTilesToTensorBatchCalculator : public Node {
         // alpha=1 (NOT 1/255) matches the CPU uint8/255 normalization.
         for (int r = 0; r < rows; ++r) {
           const RotatedRect rr = RoiToRotatedRect(geom->effective_pixel_rois[r]);
-          MP_RETURN_IF_ERROR(metal_writer_->RenderTileRow(
+          MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
               texture, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f, command_buffer,
               write_view.buffer()));
         }
-        // Clear padding rows [rows, N): alpha=0,beta=0 writes (0,0,0,0).
+        // Clear padding rows [rows, N): alpha=0,beta=0 writes zeros.
         const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
         for (int r = rows; r < N; ++r) {
-          MP_RETURN_IF_ERROR(metal_writer_->RenderTileRow(
+          MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
               texture, full, r, /*alpha=*/0.0f, /*beta=*/0.0f, command_buffer,
               write_view.buffer()));
         }

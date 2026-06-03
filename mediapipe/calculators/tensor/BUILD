@@ -2919,33 +2919,6 @@ cc_test(
     }),
 )
 
-# Metal env required. Verifies InferenceCalculatorMetal direct external-input
-# (zero-copy) mode matches the normal path. On non-apple: empty TU.
-cc_test(
-    name = "inference_calculator_metal_zero_copy_test",
-    srcs = ["inference_calculator_metal_zero_copy_test.cc"],
-    data = select({
-        "//mediapipe:apple": [":testdata/1x256x256x3_softmax.tflite"],
-        "//conditions:default": [],
-    }),
-    deps = [
-        "//mediapipe/framework:port",
-        "//mediapipe/framework/port:gtest_main",
-    ] + select({
-        "//mediapipe:apple": [
-            ":inference_calculator",
-            "//mediapipe/framework:calculator_framework",
-            "//mediapipe/framework/formats:tensor",
-            "//mediapipe/framework/port:parse_text_proto",
-            "//mediapipe/framework/port:status_matchers",
-            "//mediapipe/gpu:gpu_shared_data_internal",
-            "@com_google_absl//absl/status",
-            "@com_google_absl//absl/strings",
-        ],
-        "//conditions:default": [],
-    }),
-)
-
 mediapipe_proto_library(
     name = "video_tile_scheduler_calculator_proto",
     srcs = ["video_tile_scheduler_calculator.proto"],

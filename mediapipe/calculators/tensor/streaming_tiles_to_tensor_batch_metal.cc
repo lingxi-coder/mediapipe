@@ -32,131 +32,60 @@
 namespace mediapipe {
 namespace {
 
-// clang-format off
-// A square formed by 2 triangles (same as image_to_tensor_converter_metal).
-const float kBasicSquareVertices[] = {
-    -1, 1,  0, 1,
-    1,  1,  0, 1,
-    1,  -1, 0, 1,
-    -1, 1,  0, 1,
-    1,  -1, 0, 1,
-    -1, -1, 0, 1,
-};
-const float kBasicTextureVertices[] = {
-    0, 0, 0, 1,
-    1, 0, 0, 1,
-    1, 1, 0, 1,
-    0, 0, 0, 1,
-    1, 1, 0, 1,
-    0, 1, 0, 1,
-};
-// clang-format on
-
-constexpr char kShaderLibHeader[] = R"(
+// Compute shader: per output pixel, transform the normalized output coord
+// through the sub-rect matrix, sample the input texture, normalize, and write 3
+// packed floats at this tile's batch-row offset. Mirrors the GLES 3.1 SSBO
+// writer's shader. The transform is uploaded as the raw row-major
+// GetRotatedSubRectToRectTransformMatrix bytes and applied as (rowvec * matrix),
+// exactly matching image_to_tensor_converter_metal's vertex transform.
+constexpr char kComputeShader[] = R"(
   #include <metal_stdlib>
   using namespace metal;
-  struct TextureVertex {
-    float4 position [[position]];
-    float2 uv;
+
+  struct Uniforms {
+    int out_w;
+    int out_h;
+    int row_base;   // tile_row * out_h * out_w
+    float alpha;
+    float beta;
   };
-)";
 
-constexpr char kVertexShader[] = R"(
-  vertex TextureVertex vertexShader(
-      constant float4 *position [[buffer(0)]],
-      device float4* tex_coords [[buffer(1)]],
+  kernel void tileWriter(
+      texture2d<float, access::sample> input_texture [[texture(0)]],
+      device float* output_data [[buffer(0)]],
+      constant Uniforms& u [[buffer(1)]],
       constant float4x4& transform_matrix [[buffer(2)]],
-      uint vid [[vertex_id]]) {
-    TextureVertex vert;
-    vert.position = position[vid];
-    vert.uv = (tex_coords[vid] * transform_matrix).xy;
-    return vert;
-  }
-)";
-
-// Physical output is always RGBA32Float (PHWC4, C4=4); the padded 4th channel
-// is written 0.
-constexpr char kFragmentShader[] = R"(
-  fragment float4 fragmentShader(TextureVertex vertex_output [[stage_in]],
-                                 texture2d<float> texture [[texture(0)]],
-                                 constant float* parameters [[buffer(1)]]) {
-    const float alpha = parameters[0];
-    const float beta = parameters[1];
+      uint2 gid [[thread_position_in_grid]]) {
+    if (int(gid.x) >= u.out_w || int(gid.y) >= u.out_h) {
+      return;
+    }
+    float nx = (float(gid.x) + 0.5) / float(u.out_w);
+    float ny = (float(gid.y) + 0.5) / float(u.out_h);
+    float4 tc = float4(nx, ny, 0.0, 1.0) * transform_matrix;
     #ifdef CLAMP_TO_ZERO
     constexpr sampler linear_sampler(address::clamp_to_zero, min_filter::linear,
-      mag_filter::linear);
-    #endif
-    #ifdef CLAMP_TO_EDGE
+                                     mag_filter::linear);
+    #else
     constexpr sampler linear_sampler(address::clamp_to_edge, min_filter::linear,
-      mag_filter::linear);
+                                     mag_filter::linear);
     #endif
-    float4 texture_pixel = texture.sample(linear_sampler, vertex_output.uv);
-    return float4(alpha * texture_pixel.rgb + beta, 0);
+    float4 px = input_texture.sample(linear_sampler, tc.xy) * u.alpha + u.beta;
+    int linear_index = u.row_base + int(gid.y) * u.out_w + int(gid.x);
+    output_data[3 * linear_index + 0] = px.r;
+    output_data[3 * linear_index + 1] = px.g;
+    output_data[3 * linear_index + 2] = px.b;
   }
 )";
 
-constexpr int kNumPhysicalChannels = 4;
-
-absl::Status MakePipelineState(id<MTLDevice> device, BorderMode border_mode,
-                               id<MTLRenderPipelineState>* pipeline_state) {
-  std::string clamp_def;
-  switch (border_mode) {
-    case BorderMode::kReplicate:
-      clamp_def = "\n#define CLAMP_TO_EDGE\n";
-      break;
-    case BorderMode::kZero:
-      clamp_def = "\n#define CLAMP_TO_ZERO\n";
-      break;
-  }
-  const std::string shader_lib =
-      absl::StrCat(kShaderLibHeader, clamp_def, kVertexShader, kFragmentShader);
-  NSError* error = nil;
-  id<MTLLibrary> library = [device
-      newLibraryWithSource:[NSString stringWithUTF8String:shader_lib.c_str()]
-                   options:nil
-                     error:&error];
-  RET_CHECK(library != nil) << "Couldn't create shader library: "
-                            << [[error localizedDescription] UTF8String];
-  id<MTLFunction> vertex_function = [library newFunctionWithName:@"vertexShader"];
-  RET_CHECK(vertex_function != nil) << "no vertexShader";
-  id<MTLFunction> fragment_function =
-      [library newFunctionWithName:@"fragmentShader"];
-  RET_CHECK(fragment_function != nil) << "no fragmentShader";
-
-  MTLRenderPipelineDescriptor* desc = [MTLRenderPipelineDescriptor new];
-  desc.vertexFunction = vertex_function;
-  desc.fragmentFunction = fragment_function;
-  desc.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA32Float;
-  *pipeline_state = [device newRenderPipelineStateWithDescriptor:desc
-                                                           error:&error];
-  RET_CHECK(error == nil) << "Couldn't create pipeline state: "
-                          << [[error localizedDescription] UTF8String];
-  return absl::OkStatus();
-}
+struct Uniforms {
+  int out_w;
+  int out_h;
+  int row_base;
+  float alpha;
+  float beta;
+};
 
 }  // namespace
-
-TiledBatchMetalWriter::TiledBatchMetalWriter(
-    id<MTLDevice> device, id<MTLRenderPipelineState> pipeline_state, int out_w,
-    int out_h, size_t texture_offset_alignment)
-    : device_(device),
-      pipeline_state_(pipeline_state),
-      out_w_(out_w),
-      out_h_(out_h),
-      bytes_per_pixel_row_(static_cast<size_t>(out_w) * kNumPhysicalChannels *
-                           sizeof(float)),
-      row_bytes_(static_cast<size_t>(out_h) * out_w * kNumPhysicalChannels *
-                 sizeof(float)),
-      texture_offset_alignment_(texture_offset_alignment) {
-  positions_buffer_ =
-      [device_ newBufferWithBytes:kBasicSquareVertices
-                           length:sizeof(kBasicSquareVertices)
-                          options:MTLResourceOptionCPUCacheModeDefault];
-  tex_coords_buffer_ =
-      [device_ newBufferWithBytes:kBasicTextureVertices
-                           length:sizeof(kBasicTextureVertices)
-                          options:MTLResourceOptionCPUCacheModeDefault];
-}
 
 absl::StatusOr<std::unique_ptr<TiledBatchMetalWriter>>
 TiledBatchMetalWriter::Create(id<MTLDevice> device, int out_w, int out_h,
@@ -165,80 +94,63 @@ TiledBatchMetalWriter::Create(id<MTLDevice> device, int out_w, int out_h,
   RET_CHECK_GT(out_w, 0);
   RET_CHECK_GT(out_h, 0);
   RET_CHECK_EQ(channels, 3)
-      << "TiledBatchMetalWriter v1 supports logical RGB (channels == 3) only; "
-         "got "
+      << "TiledBatchMetalWriter v1 supports RGB (channels == 3) only; got "
       << channels;
-  id<MTLRenderPipelineState> pipeline_state = nil;
-  MP_RETURN_IF_ERROR(MakePipelineState(device, border_mode, &pipeline_state));
-  const size_t alignment = [device
-      minimumLinearTextureAlignmentForPixelFormat:MTLPixelFormatRGBA32Float];
-  return absl::WrapUnique(new TiledBatchMetalWriter(
-      device, pipeline_state, out_w, out_h, alignment == 0 ? 1 : alignment));
+
+  std::string clamp_def;
+  if (border_mode == BorderMode::kZero) {
+    clamp_def = "\n#define CLAMP_TO_ZERO\n";
+  }
+  const std::string source = absl::StrCat(clamp_def, kComputeShader);
+
+  NSError* error = nil;
+  id<MTLLibrary> library =
+      [device newLibraryWithSource:[NSString stringWithUTF8String:source.c_str()]
+                           options:nil
+                             error:&error];
+  RET_CHECK(library != nil) << "Couldn't create compute library: "
+                            << [[error localizedDescription] UTF8String];
+  id<MTLFunction> function = [library newFunctionWithName:@"tileWriter"];
+  RET_CHECK(function != nil) << "no tileWriter function";
+  id<MTLComputePipelineState> pipeline =
+      [device newComputePipelineStateWithFunction:function error:&error];
+  RET_CHECK(pipeline != nil) << "Couldn't create compute pipeline: "
+                             << [[error localizedDescription] UTF8String];
+
+  return absl::WrapUnique(
+      new TiledBatchMetalWriter(device, pipeline, out_w, out_h));
 }
 
-absl::Status TiledBatchMetalWriter::RenderTileRow(
+absl::Status TiledBatchMetalWriter::WriteTileRow(
     id<MTLTexture> input_texture, const RotatedRect& sub_rect, int tile_row,
     float alpha, float beta, id<MTLCommandBuffer> command_buffer,
     id<MTLBuffer> dest) {
   RET_CHECK(command_buffer != nil);
   RET_CHECK(dest != nil);
+  RET_CHECK(input_texture != nil);
   RET_CHECK_GE(tile_row, 0);
-
-  const size_t offset = static_cast<size_t>(tile_row) * row_bytes_;
-  // newTextureWithDescriptor:offset: requires the offset to be a multiple of the
-  // device's minimum linear texture alignment for the pixel format. With
-  // contiguous PHWC4 rows this holds for typical H*W; assert so a bad config
-  // fails loudly instead of returning a nil texture.
-  RET_CHECK_EQ(offset % texture_offset_alignment_, 0u)
-      << "row byte offset " << offset << " is not a multiple of the Metal "
-      << "linear-texture alignment " << texture_offset_alignment_
-      << " for out_w=" << out_w_ << " out_h=" << out_h_
-      << "; pad rows to alignment (deferred) for these dimensions";
-
-  MTLTextureDescriptor* texture_desc = [MTLTextureDescriptor
-      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Float
-                                   width:out_w_
-                                  height:out_h_
-                               mipmapped:NO];
-  texture_desc.usage = MTLTextureUsageRenderTarget;
-  id<MTLTexture> output_texture =
-      [dest newTextureWithDescriptor:texture_desc
-                              offset:offset
-                         bytesPerRow:bytes_per_pixel_row_];
-  RET_CHECK(output_texture != nil)
-      << "failed aliasing output texture over dest buffer at offset " << offset;
 
   std::array<float, 16> transform_mat;
   GetRotatedSubRectToRectTransformMatrix(sub_rect, input_texture.width,
                                          input_texture.height,
                                          /*flip_horizontally=*/false,
                                          &transform_mat);
-  id<MTLBuffer> transform_mat_buffer =
-      [device_ newBufferWithBytes:&transform_mat
-                           length:sizeof(transform_mat)
-                          options:MTLResourceOptionCPUCacheModeDefault];
-  float parameters[] = {alpha, beta};
+  Uniforms u{out_w_, out_h_, tile_row * out_h_ * out_w_, alpha, beta};
 
-  MTLRenderPassDescriptor* render_pass_desc =
-      [MTLRenderPassDescriptor renderPassDescriptor];
-  render_pass_desc.colorAttachments[0].texture = output_texture;
-  render_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-  render_pass_desc.colorAttachments[0].loadAction = MTLLoadActionClear;
-
-  id<MTLRenderCommandEncoder> command_encoder =
-      [command_buffer renderCommandEncoderWithDescriptor:render_pass_desc];
-  [command_encoder setRenderPipelineState:pipeline_state_];
-  [command_encoder setVertexBuffer:positions_buffer_ offset:0 atIndex:0];
-  [command_encoder setVertexBuffer:tex_coords_buffer_ offset:0 atIndex:1];
-  [command_encoder setVertexBuffer:transform_mat_buffer offset:0 atIndex:2];
-  [command_encoder setFragmentTexture:input_texture atIndex:0];
-  [command_encoder setFragmentBytes:&parameters
-                             length:sizeof(parameters)
-                            atIndex:1];
-  [command_encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                      vertexStart:0
-                      vertexCount:6];
-  [command_encoder endEncoding];
+  id<MTLComputeCommandEncoder> encoder =
+      [command_buffer computeCommandEncoder];
+  [encoder setComputePipelineState:pipeline_];
+  [encoder setTexture:input_texture atIndex:0];
+  [encoder setBuffer:dest offset:0 atIndex:0];
+  [encoder setBytes:&u length:sizeof(u) atIndex:1];
+  [encoder setBytes:transform_mat.data()
+             length:sizeof(transform_mat)
+            atIndex:2];
+  const NSUInteger tg = 8;
+  MTLSize threadgroup = MTLSizeMake(tg, tg, 1);
+  MTLSize grid = MTLSizeMake((out_w_ + tg - 1) / tg, (out_h_ + tg - 1) / tg, 1);
+  [encoder dispatchThreadgroups:grid threadsPerThreadgroup:threadgroup];
+  [encoder endEncoding];
   return absl::OkStatus();
 }
 

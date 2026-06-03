@@ -154,22 +154,6 @@ message InferenceCalculatorOptions {
 
       // Experimental support for WebNN delegate for GPU/NPU mode.
       optional WebNn webnn = 13;
-
-      // Fork extension (Phase 5, Apple/Metal only). When true, the Metal
-      // delegate binds each input packet's MTLBuffer directly as its external
-      // input and SKIPS the built-in BHWC->BPHWC4 input conversion — true
-      // zero-copy delegate input. The input packet tensor must already be
-      // physical PHWC4 float32 ([N,H,W,RoundUp(C,4)]), e.g. produced by
-      // StreamingTilesToTensorBatchCalculator's Metal zero-copy path. Requires
-      // allow_precision_loss=false (F32). Default off => behavior unchanged.
-      //
-      // LIMITATION: batch size N must be 1. The delegate's batched input layout
-      // is SHWBC4 (batch-innermost) while a contiguous directly-bound packet is
-      // batch-outermost; they coincide only at N=1. Batched zero-copy would need
-      // the producer to emit SHWBC4 (a strided/scatter write the render-to-
-      // texture path cannot do) and is not yet supported — the calculator
-      // RET_CHECKs N==1.
-      optional bool metal_external_input_zero_copy = 14 [default = false];
     }
 
     // Android only.

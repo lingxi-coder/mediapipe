@@ -14,7 +14,7 @@
 //
 // Runs on this Mac (Metal). Drives StreamingTilesToTensorBatchCalculator's Metal
 // zero-copy path through a real CalculatorGraph with GpuResources: GPU buffer +
-// tile plan -> physical PHWC4 batch tensor, asserting shape, padded channel,
+// tile plan -> logical [N,H,W,C] batch tensor, asserting shape,
 // no-CPU-readback, and multi-batch semantics. On non-Metal configs the whole TU
 // compiles to nothing.
 
@@ -123,7 +123,7 @@ class StreamingTilesMetalTest : public testing::Test {
   std::shared_ptr<GpuResources> gpu_resources_ = gpu_shared_.gpu_resources;
 };
 
-TEST_F(StreamingTilesMetalTest, ZeroCopyEmitsPhwc4BatchNoReadback) {
+TEST_F(StreamingTilesMetalTest, ZeroCopyEmitsLogicalBatchNoReadback) {
   RunResult r;
   MP_ASSERT_OK(RunZeroCopy(
       gpu_resources_,
@@ -139,20 +139,19 @@ TEST_F(StreamingTilesMetalTest, ZeroCopyEmitsPhwc4BatchNoReadback) {
   EXPECT_EQ(shape.dims[0], 2);  // dynamic batch: N == valid tiles
   EXPECT_EQ(shape.dims[1], 8);
   EXPECT_EQ(shape.dims[2], 8);
-  EXPECT_EQ(shape.dims[3], 4);  // physical PHWC4 (C4 = RoundUp(3,4))
+  EXPECT_EQ(shape.dims[3], 3);  // logical BHWC (model input channels)
 
   // No-readback: GPU-resident, not CPU-materialized, before any explicit read.
   EXPECT_TRUE(t.ready_on_gpu());
   EXPECT_FALSE(t.ready_on_cpu());
 
-  // Explicit test-side readback: normalized [0,1], padded 4th channel zeroed.
+  // Explicit test-side readback: normalized [0,1].
   auto view = t.GetCpuReadView();
   const float* buf = view.buffer<float>();
   const int n = shape.num_elements();
   for (int i = 0; i < n; ++i) {
     EXPECT_GE(buf[i], 0.0f) << "elem " << i;
     EXPECT_LE(buf[i], 1.0001f) << "elem " << i;
-    if (i % 4 == 3) EXPECT_NEAR(buf[i], 0.0f, 2e-3) << "padded chan " << i;
   }
 }
 

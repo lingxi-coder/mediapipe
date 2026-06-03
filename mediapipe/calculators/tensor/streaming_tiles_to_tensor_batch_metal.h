@@ -30,22 +30,22 @@
 
 namespace mediapipe {
 
-// Metal render-pipeline writer that crops/resizes/normalizes one tile of an
-// input texture directly into row `tile_row` of a destination MTLBuffer laid out
-// as the TFLite Metal delegate's PHWC4 input: physical [N, out_h, out_w, 4]
-// float32, contiguous. Adapted from ImageToTensorMetalConverter
-// (image_to_tensor_converter_metal.cc): the one structural change is that the
-// render target MTLTexture is aliased over the destination buffer at this tile's
-// row BYTE OFFSET (= tile_row * out_h * out_w * 4 * sizeof(float)) instead of
-// offset 0, so each tile fills its own batch row. The caller renders every valid
-// tile into the SAME buffer (one buffer per batch) before reading it.
+// Metal COMPUTE writer that crops/resizes/normalizes one tile of an input
+// texture directly into row `tile_row` of a destination MTLBuffer laid out as a
+// logical BHWC tensor: contiguous float32 [N, out_h, out_w, 3], writing 3 floats
+// per pixel at 3*(row_base + y*out_w + x) where row_base = tile_row*out_h*out_w.
 //
-// Logical model input is RGB (channels == 3); physical storage is RGBA32Float
-// (C4 == 4) with the padded 4th channel written 0, matching PHWC4 for C <= 4.
+// This is the Metal analogue of the GLES 3.1 SSBO writer
+// (streaming_tiles_to_tensor_batch_gl): a compute shader samples the input
+// texture through the GetRotatedSubRectToRectTransformMatrix sub-rect transform
+// and writes packed RGB. The emitted tensor is the LOGICAL model input
+// [N,H,W,C]; downstream InferenceCalculatorMetal performs its normal
+// BHWC->BPHWC4 conversion (which handles batch correctly for any N). This avoids
+// the batch-1-only restriction of writing the delegate's physical PHWC4/SHWBC4
+// layout directly. RGB (channels == 3) only for v1.
 class TiledBatchMetalWriter {
  public:
-  // out_w/out_h: per-tile (= per-row) width/height. channels is the LOGICAL
-  // channel count (must be 3); the physical row is always RGBA (4) F32.
+  // out_w/out_h: per-tile (= per-row) width/height. channels must be 3.
   static absl::StatusOr<std::unique_ptr<TiledBatchMetalWriter>> Create(
       id<MTLDevice> device, int out_w, int out_h, int channels,
       BorderMode border_mode);
@@ -56,33 +56,30 @@ class TiledBatchMetalWriter {
   // alpha/beta: value-range normalization (alpha=1, beta=0 for [0,1]; Metal
   //   samples uint8 textures as [0,1]).
   // command_buffer: the command buffer to encode into (caller commits).
-  // dest: the whole-batch physical [N,out_h,out_w,4] F32 MTLBuffer (e.g. the
+  // dest: the whole-batch logical [N,out_h,out_w,3] float32 MTLBuffer (e.g. the
   //   output Tensor's MtlBufferView buffer).
-  absl::Status RenderTileRow(id<MTLTexture> input_texture,
-                             const RotatedRect& sub_rect, int tile_row,
-                             float alpha, float beta,
-                             id<MTLCommandBuffer> command_buffer,
-                             id<MTLBuffer> dest);
+  absl::Status WriteTileRow(id<MTLTexture> input_texture,
+                            const RotatedRect& sub_rect, int tile_row,
+                            float alpha, float beta,
+                            id<MTLCommandBuffer> command_buffer,
+                            id<MTLBuffer> dest);
 
   int out_w() const { return out_w_; }
   int out_h() const { return out_h_; }
-  // Bytes per physical batch row = out_h * out_w * 4 * sizeof(float).
-  size_t row_bytes() const { return row_bytes_; }
 
  private:
   TiledBatchMetalWriter(id<MTLDevice> device,
-                        id<MTLRenderPipelineState> pipeline_state, int out_w,
-                        int out_h, size_t texture_offset_alignment);
+                        id<MTLComputePipelineState> pipeline, int out_w,
+                        int out_h)
+      : device_(device),
+        pipeline_(pipeline),
+        out_w_(out_w),
+        out_h_(out_h) {}
 
   id<MTLDevice> device_;
-  id<MTLRenderPipelineState> pipeline_state_;
-  id<MTLBuffer> positions_buffer_;
-  id<MTLBuffer> tex_coords_buffer_;
+  id<MTLComputePipelineState> pipeline_;
   int out_w_ = 0;
   int out_h_ = 0;
-  size_t bytes_per_pixel_row_ = 0;  // out_w * 4 * sizeof(float)
-  size_t row_bytes_ = 0;            // out_h * bytes_per_pixel_row_
-  size_t texture_offset_alignment_ = 0;
 };
 
 }  // namespace mediapipe

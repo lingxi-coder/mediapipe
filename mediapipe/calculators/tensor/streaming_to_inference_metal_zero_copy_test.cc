@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Review probe (runs on this Mac): chains StreamingTilesToTensorBatch's Metal
-// zero-copy preprocessing -> InferenceCalculatorMetal direct external-input, end
-// to end, at batch N=1 (the only batch size for which the contiguous [N,H,W,4]
-// preprocessing layout matches the delegate's SHWBC4 input layout). Validates
-// the cross-calculator GPU fence handoff for the supported case.
+// Runs on this Mac: chains StreamingTilesToTensorBatch's Metal zero-copy
+// preprocessing (logical [N,H,W,C] tensor, no CPU readback) -> a normal
+// InferenceCalculatorMetal, end to end. Validates the cross-calculator GPU
+// handoff: the Metal-backed preprocessing tensor is consumed on-GPU by
+// inference's BHWC->BPHWC4 conversion with no CPU round-trip.
 
 #include "mediapipe/framework/port.h"
 
@@ -47,9 +47,9 @@ class StreamingToInferenceMetalTest : public testing::Test {
   std::shared_ptr<GpuResources> gpu_resources_ = gpu_shared_.gpu_resources;
 };
 
-// One full-frame tile, batch_capacity=1 -> the preprocessing emits [1,256,256,4]
-// and inference binds it directly. End to end, all on the GPU.
-TEST_F(StreamingToInferenceMetalTest, ChainProducesOutputAtBatch1) {
+// One full-frame tile, batch_capacity=1 -> the preprocessing emits a logical
+// [1,256,256,3] Metal tensor that inference converts and runs. End to end on GPU.
+TEST_F(StreamingToInferenceMetalTest, ChainProducesOutput) {
   InferenceMetadata meta;
   meta.set_input_height(256);
   meta.set_input_width(256);
@@ -82,12 +82,7 @@ TEST_F(StreamingToInferenceMetalTest, ChainProducesOutputAtBatch1) {
       options {
         [mediapipe.InferenceCalculatorOptions.ext] {
           model_path: "mediapipe/calculators/tensor/testdata/1x256x256x3_softmax.tflite"
-          delegate {
-            gpu {
-              allow_precision_loss: false
-              metal_external_input_zero_copy: true
-            }
-          }
+          delegate { gpu { allow_precision_loss: false } }
         }
       }
     }
