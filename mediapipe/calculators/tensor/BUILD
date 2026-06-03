@@ -2384,6 +2384,7 @@ cc_library(
     name = "yolo_tensors_to_detections_calculator",
     srcs = ["yolo_tensors_to_detections_calculator.cc"],
     deps = [
+        ":detection_nms_util",
         ":yolo_tensors_to_detections_calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",

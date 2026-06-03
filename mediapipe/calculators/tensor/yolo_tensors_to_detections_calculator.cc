@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "absl/status/status.h"
+#include "mediapipe/calculators/tensor/detection_nms_util.h"
 #include "mediapipe/calculators/tensor/yolo_tensors_to_detections_calculator.pb.h"
 #include "mediapipe/framework/api2/node.h"
 #include "mediapipe/framework/calculator_framework.h"
@@ -139,45 +140,14 @@ class YoloTensorsToDetectionsCalculator : public Node {
     }
   }
 
-  static float RelativeIoU(const Detection& a, const Detection& b) {
-    const auto& ba = a.location_data().relative_bounding_box();
-    const auto& bb = b.location_data().relative_bounding_box();
-    const float ax2 = ba.xmin() + ba.width(), ay2 = ba.ymin() + ba.height();
-    const float bx2 = bb.xmin() + bb.width(), by2 = bb.ymin() + bb.height();
-    const float ix = std::max(0.0f, std::min(ax2, bx2) - std::max(ba.xmin(), bb.xmin()));
-    const float iy = std::max(0.0f, std::min(ay2, by2) - std::max(ba.ymin(), bb.ymin()));
-    const float inter = ix * iy;
-    const float area_a = ba.width() * ba.height();
-    const float area_b = bb.width() * bb.height();
-    const float uni = area_a + area_b - inter;
-    return uni > 0.0f ? inter / uni : 0.0f;
-  }
-
-  // Greedy axis-aligned NMS within one row (tile). Keeps higher-scoring boxes;
-  // suppresses lower-scoring boxes with IoU > threshold. Per-class unless
-  // class_agnostic. Preserves descending-score order in the result.
+  // Greedy axis-aligned NMS within one row (tile), via the shared util. Per-row
+  // only (DecodeRow is called once per row); never compares across rows.
+  // Disabled when threshold <= 0. Result is in descending-score order.
   void TileLocalNms(std::vector<Detection>* dets) const {
     const float thr = options_.tile_local_nms_iou_threshold();
     if (thr <= 0.0f || dets->size() < 2) return;
-    std::stable_sort(dets->begin(), dets->end(),
-                     [](const Detection& l, const Detection& r) {
-                       return l.score(0) > r.score(0);
-                     });
-    const bool agnostic = options_.tile_local_nms_class_agnostic();
-    std::vector<bool> suppressed(dets->size(), false);
-    std::vector<Detection> kept;
-    for (size_t i = 0; i < dets->size(); ++i) {
-      if (suppressed[i]) continue;
-      kept.push_back((*dets)[i]);
-      for (size_t j = i + 1; j < dets->size(); ++j) {
-        if (suppressed[j]) continue;
-        if (!agnostic && (*dets)[j].label_id(0) != (*dets)[i].label_id(0)) {
-          continue;
-        }
-        if (RelativeIoU((*dets)[i], (*dets)[j]) > thr) suppressed[j] = true;
-      }
-    }
-    *dets = std::move(kept);
+    *dets = GreedyDetectionNms(std::move(*dets), thr,
+                               options_.tile_local_nms_class_agnostic());
   }
 
   mediapipe::YoloTensorsToDetectionsCalculatorOptions options_;
