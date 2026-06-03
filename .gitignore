@@ -15,3 +15,7 @@ MODULE.bazel.lock
 # Local run artifacts (ultralytics weights download + python caches)
 /yolov8n.pt
 __pycache__/
+
+# Locally-exported YOLO Tasks test fixtures (regenerate via export_yolov8n_tflite.py)
+/mediapipe/tasks/testdata/vision/yolov8n.tflite
+/mediapipe/tasks/testdata/vision/yolov8n_labels.txt

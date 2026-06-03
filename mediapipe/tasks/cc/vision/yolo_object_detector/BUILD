@@ -87,8 +87,8 @@ cc_test(
     data = [
         # Image fixture (always present — fetched from GCS via mediapipe_files).
         "//mediapipe/tasks/testdata/vision:test_images",
-        # Model fixture (NOT yet available — add when yolov8n.tflite lands):
-        # "//mediapipe/tasks/testdata/vision:yolov8n.tflite",
+        # Model fixture: empty unless exported locally (see export_yolov8n_tflite.py).
+        "//mediapipe/tasks/testdata/vision:yolo_test_model",
     ],
     deps = [
         ":yolo_object_detector",

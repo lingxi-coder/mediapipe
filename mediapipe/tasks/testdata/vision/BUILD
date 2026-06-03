@@ -184,6 +184,20 @@ filegroup(
     ],
 )
 
+# Locally-exported YOLO fixtures (gitignored; produced by
+# export_yolov8n_tflite.py). glob with allow_empty so the build still works when
+# the blob is absent (CI / fresh clone) — the gated test then GTEST_SKIP()s.
+filegroup(
+    name = "yolo_test_model",
+    srcs = glob(
+        [
+            "yolov8n.tflite",
+            "yolov8n_labels.txt",
+        ],
+        allow_empty = True,
+    ),
+)
+
 # TODO Create individual filegroup for models required for each Tasks.
 filegroup(
     name = "test_models",
