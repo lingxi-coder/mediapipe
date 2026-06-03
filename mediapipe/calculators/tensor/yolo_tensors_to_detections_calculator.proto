@@ -58,4 +58,12 @@ message YoloTensorsToDetectionsCalculatorOptions {
   // If true, tile-local NMS suppresses across classes; if false (default), only
   // boxes with the same label_id suppress each other.
   optional bool tile_local_nms_class_agnostic = 7 [default = false];
+
+  // When BOTH > 0, the model emits box cx,cy,w,h in input-PIXEL space; divide
+  // cx,w by input_width and cy,h by input_height to produce the normalized
+  // [0,1] relative_bounding_box this calculator outputs. 0 (default) = boxes are
+  // already normalized [0,1] (unchanged: the tiled-detection pipeline and prior
+  // callers feed normalized boxes).
+  optional int32 input_width = 8 [default = 0];
+  optional int32 input_height = 9 [default = 0];
 }

@@ -465,5 +465,38 @@ TEST(YoloTensorsToDetectionsCalculatorTest, DisabledTileLocalNmsIsNoOp) {
   EXPECT_NEAR(batch[0][1].score(0), 0.6f, 1e-5);
 }
 
+TEST(YoloTensorsToDetectionsCalculatorTest, PixelSpaceBoxesNormalizedByInputDims) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:dets"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        num_classes: 1
+        conf_threshold: 0.25
+        input_width: 640
+        input_height: 480
+      }
+    }
+  )pb"));
+  // CHANNELS_FIRST [1, 5, 1]: rows = cx,cy,w,h,score0 ; one anchor.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 5, 1},
+                       {320.0f, 240.0f, 64.0f, 48.0f, 0.9f})
+                .release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& out =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(out.size(), 1u);
+  ASSERT_EQ(out[0].size(), 1u);
+  const auto& bb = out[0][0].location_data().relative_bounding_box();
+  // (cx-w/2)/W = (320-32)/640 = 0.45 ; (cy-h/2)/H = (240-24)/480 = 0.45
+  EXPECT_NEAR(bb.xmin(), 0.45f, 1e-5);
+  EXPECT_NEAR(bb.ymin(), 0.45f, 1e-5);
+  EXPECT_NEAR(bb.width(), 64.0f / 640.0f, 1e-5);   // 0.1
+  EXPECT_NEAR(bb.height(), 48.0f / 480.0f, 1e-5);  // 0.1
+}
+
 }  // namespace
 }  // namespace mediapipe

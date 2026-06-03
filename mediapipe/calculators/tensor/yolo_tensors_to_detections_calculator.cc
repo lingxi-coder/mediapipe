@@ -41,6 +41,16 @@ class YoloTensorsToDetectionsCalculator : public Node {
     options_ = cc->Options<mediapipe::YoloTensorsToDetectionsCalculatorOptions>();
     RET_CHECK_GT(options_.num_classes(), 0)
         << "num_classes must be set and > 0";
+    RET_CHECK_GE(options_.input_width(), 0) << "input_width must be >= 0";
+    RET_CHECK_GE(options_.input_height(), 0) << "input_height must be >= 0";
+    RET_CHECK_EQ(options_.input_width() > 0, options_.input_height() > 0)
+        << "input_width and input_height must both be set (>0) or both unset; "
+           "got width=" << options_.input_width()
+        << " height=" << options_.input_height();
+    if (options_.input_width() > 0 && options_.input_height() > 0) {
+      inv_w_ = 1.0f / static_cast<float>(options_.input_width());
+      inv_h_ = 1.0f / static_cast<float>(options_.input_height());
+    }
     return absl::OkStatus();
   }
 
@@ -91,7 +101,13 @@ class YoloTensorsToDetectionsCalculator : public Node {
         return channels_last ? data[(n * A + a) * channels + c]
                              : data[(n * channels + c) * A + a];
       };
-      const float cx = at(0), cy = at(1), w = at(2), h = at(3);
+      float cx = at(0), cy = at(1), w = at(2), h = at(3);
+      if (inv_w_ > 0.0f) {  // model emits pixel-space boxes -> normalize to [0,1]
+        cx *= inv_w_;
+        w *= inv_w_;
+        cy *= inv_h_;
+        h *= inv_h_;
+      }
       int best = 0;
       float best_score = at(4);
       for (int c = 1; c < num_classes; ++c) {
@@ -151,6 +167,8 @@ class YoloTensorsToDetectionsCalculator : public Node {
   }
 
   mediapipe::YoloTensorsToDetectionsCalculatorOptions options_;
+  float inv_w_ = 0.0f;  // 1/input_width when normalizing pixel-space boxes
+  float inv_h_ = 0.0f;  // 1/input_height; 0 => boxes already normalized
 };
 
 MEDIAPIPE_REGISTER_NODE(YoloTensorsToDetectionsCalculator);
