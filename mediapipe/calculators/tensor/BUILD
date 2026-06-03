@@ -2735,11 +2735,13 @@ cc_test(
         "//mediapipe:apple": [],
         "//conditions:default": [
             ":streaming_tiles_to_tensor_batch_calculator",
+            ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
             ":tiling_types",
             "//mediapipe/framework:calculator_framework",
             "//mediapipe/framework/formats:inference_metadata_cc_proto",
             "//mediapipe/framework/formats:tensor",
             "//mediapipe/framework/port:parse_text_proto",
+            "//mediapipe/framework/port:status_macros",
             "//mediapipe/framework/port:status_matchers",
             "//mediapipe/gpu:gpu_buffer",
             "//mediapipe/gpu:gpu_test_base",
@@ -2905,12 +2907,22 @@ cc_library(
     ],
 )
 
-# GPU zero-copy scaffolding types (Plan 4). Pure types, no GL includes, so this
-# compiles under MEDIAPIPE_DISABLE_GPU=1; the GLES converter/calculator paths
-# consume these only inside GLES-guarded code.
+# GPU zero-copy scaffolding types (Plan 4). Pure types + the in-flight ownership
+# ledger; no GL includes, so this compiles under MEDIAPIPE_DISABLE_GPU=1 and the
+# ledger is CPU-unit-tested. The GLES converter/calculator paths consume these
+# only inside GLES-guarded code.
 cc_library(
     name = "tiling_gpu_resource",
     hdrs = ["tiling_gpu_resource.h"],
+)
+
+cc_test(
+    name = "tiling_gpu_resource_test",
+    srcs = ["tiling_gpu_resource_test.cc"],
+    deps = [
+        ":tiling_gpu_resource",
+        "//mediapipe/framework/port:gtest_main",
+    ],
 )
 
 cc_library(

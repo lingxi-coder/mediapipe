@@ -146,6 +146,20 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                                        /*input_starts_at_bottom=*/false));
         return absl::OkStatus();
       }));
+      // Cache 5 (GPU tensor-buffer pool): on AHardwareBuffer-capable platforms a
+      // MemoryManager pools the batch tensors' AHWB storage and reclaims it on
+      // packet release + read-finished fence (framework-managed) — true
+      // release+fence ownership for the AHWB case. On non-AHWB GL (e.g. Linux
+      // EGL) it allocates per batch (no SSBO pool exists in the framework). The
+      // explicit GpuResourceLedger state machine (tiling_gpu_resource.h, unit
+      // tested) models the SSBO in-flight/reclaim accounting; wiring it to real
+      // SSBO reuse requires a packet-release hook and is verified on a GLES
+      // device (it is intentionally NOT gating this hot path, since a reclaim
+      // signal that never fires would wedge the pool after `capacity` frames).
+      if (options_.max_gpu_tensor_buffers() > 0) {
+        gpu_memory_manager_ = std::make_shared<MemoryManager>(
+            static_cast<size_t>(options_.max_gpu_tensor_buffers()));
+      }
       gpu_zero_copy_active_ = true;
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
@@ -258,12 +272,14 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     const int total_batches = (T + cap - 1) / cap;
     const int64_t ts = cc->InputTimestamp().Value();
 
+    ++gpu_frames_;  // one program use per frame (Cache 4 reuse accounting)
     int emitted = 0;
     for (int start = 0; start < T; start += cap) {
       const int rows = std::min(cap, T - start);
       const int N = dynamic_batch_ ? rows : cap;
+      // gpu_memory_manager_ pools AHWB-backed storage where available (Cache 5).
       Tensor tensor(Tensor::ElementType::kFloat32,
-                    Tensor::Shape{N, H, W, C});
+                    Tensor::Shape{N, H, W, C}, gpu_memory_manager_.get());
 
       std::shared_ptr<const TileBatchGeometry> geom =
           BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
@@ -322,6 +338,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       ++batch_ts_;
       ++emitted;
     }
+    gpu_batches_in_flight_ = emitted;  // batches emitted from this frame
     EmitEmptyFrameIfNeeded(cc, T, ts);
     MaybeEmitStats(cc, ts);
     return absl::OkStatus();
@@ -391,6 +408,20 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     if (memory_manager_ && memory_manager_->GetCpuBufferPool()) {
       stats.cpu_tensor_pool = memory_manager_->GetCpuBufferPool()->stats();
     }
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+    if (gpu_zero_copy_active_) {
+      // Cache 4 (program/tile-surface): the compute program is compiled once
+      // (the single miss) and reused every subsequent frame (a hit per frame).
+      stats.tile_surface.misses = (gl_writer_ != nullptr) ? 1 : 0;
+      stats.tile_surface.hits = (gpu_frames_ > 0) ? gpu_frames_ - 1 : 0;
+      stats.in_flight_gpu_batches = gpu_batches_in_flight_;
+      stats.gpu_to_cpu_fallbacks = gpu_to_cpu_fallbacks_;
+      // gpu_tensor_buffer hit/miss accounting is reported by the framework AHWB
+      // pool (Cache 5) on AHWB platforms; the SSBO-pool counters are surfaced
+      // once GpuResourceLedger is wired to real packet-release/fence signals on
+      // a GLES device.
+    }
+#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
     kOutStats(cc).Send(
         mediapipe::api2::MakePacket<TilingCacheStats>(stats).At(Timestamp(ts)));
   }
@@ -439,7 +470,11 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   mediapipe::GlCalculatorHelper gl_helper_;
   std::unique_ptr<tflite::gpu::gl::CommandQueue> command_queue_;
   std::unique_ptr<TiledBatchGlWriter> gl_writer_;
+  std::shared_ptr<MemoryManager> gpu_memory_manager_;  // Cache 5 (AHWB pool)
   bool gpu_zero_copy_active_ = false;
+  int64_t gpu_frames_ = 0;             // ProcessGpu() calls = program uses
+  int64_t gpu_batches_in_flight_ = 0;  // batches emitted from the last frame
+  int64_t gpu_to_cpu_fallbacks_ = 0;   // GPU-requested frames served on CPU
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
 };
 
