@@ -2579,6 +2579,8 @@ mediapipe_proto_library(
 cc_library(
     name = "streaming_tiles_to_tensor_batch_calculator",
     srcs = ["streaming_tiles_to_tensor_batch_calculator.cc"],
+    # Allow depending on the GPU-deps grab-bag below without strict layering.
+    features = ["-layering_check"],
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
         ":tiling_cache_stats",
@@ -2587,6 +2589,7 @@ cc_library(
         ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:port",
         "//mediapipe/framework/api2:node",
         "//mediapipe/framework/formats:image_frame",
         "//mediapipe/framework/formats:image_frame_opencv",
@@ -2597,8 +2600,44 @@ cc_library(
         "//mediapipe/framework/port:opencv_imgproc",
         "//mediapipe/framework/port:ret_check",
         "@com_google_absl//absl/status",
-    ],
+    ] + select({
+        "//mediapipe/gpu:disable_gpu": [],
+        "//conditions:default": [
+            ":streaming_tiles_to_tensor_batch_calculator_gpu_deps",
+        ],
+    }),
     alwayslink = 1,
+)
+
+# GPU dependencies for the calculator's optional zero-copy path. On Apple (Metal
+# only; GLES SSBO compute unavailable) and emscripten the GLES branch is compiled
+# out, so only gpu_buffer (for the IMAGE_GPU port type) is needed; the GLES 3.1
+# converter + tflite GL helpers are pulled only on android/Linux GL.
+cc_library(
+    name = "streaming_tiles_to_tensor_batch_calculator_gpu_deps",
+    visibility = ["//visibility:private"],
+    deps = selects.with_or({
+        "//mediapipe:apple": [
+            "//mediapipe/gpu:gpu_buffer",
+        ],
+        "//mediapipe:emscripten": [
+            "//mediapipe/gpu:gpu_buffer",
+        ],
+        "//conditions:default": [
+            ":image_to_tensor_converter",
+            ":image_to_tensor_utils",
+            ":streaming_tiles_to_tensor_batch_gl",
+            "//mediapipe/framework/port:status",
+            "//mediapipe/gpu:gl_calculator_helper",
+            "//mediapipe/gpu:gpu_buffer",
+            "//mediapipe/gpu:gpu_service",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/common:types",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:command_queue",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_buffer",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_texture",
+            "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:request_gpu_info",
+        ],
+    }),
 )
 
 cc_test(
@@ -2679,6 +2718,33 @@ cc_test(
             "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_buffer",
             "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_texture",
             "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:request_gpu_info",
+        ],
+    }),
+)
+
+# GPU env required (GLES 3.1). Calculator-level zero-copy wiring test. On
+# apple/emscripten/disable-gpu the source compiles to an empty TU.
+cc_test(
+    name = "streaming_tiles_to_tensor_batch_calculator_gpu_test",
+    srcs = ["streaming_tiles_to_tensor_batch_calculator_gpu_test.cc"],
+    deps = [
+        "//mediapipe/framework:port",
+        "//mediapipe/framework/port:gtest_main",
+    ] + selects.with_or({
+        "//mediapipe:emscripten": [],
+        "//mediapipe:apple": [],
+        "//conditions:default": [
+            ":streaming_tiles_to_tensor_batch_calculator",
+            ":tiling_types",
+            "//mediapipe/framework:calculator_framework",
+            "//mediapipe/framework/formats:inference_metadata_cc_proto",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:parse_text_proto",
+            "//mediapipe/framework/port:status_matchers",
+            "//mediapipe/gpu:gpu_buffer",
+            "//mediapipe/gpu:gpu_test_base",
+            "//mediapipe/util:image_test_utils",
+            "@com_google_absl//absl/status",
         ],
     }),
 )

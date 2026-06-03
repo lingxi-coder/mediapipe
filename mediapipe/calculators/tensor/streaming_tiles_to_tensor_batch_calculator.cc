@@ -33,27 +33,65 @@
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/memory_manager.h"
+#include "mediapipe/framework/port.h"
 #include "mediapipe/framework/port/opencv_core_inc.h"
 #include "mediapipe/framework/port/opencv_imgproc_inc.h"
 #include "mediapipe/framework/port/ret_check.h"
 #include "mediapipe/framework/timestamp.h"
 
+// GPU zero-copy path (Plan 4). All GPU code is compiled out under
+// MEDIAPIPE_DISABLE_GPU=1 and on configs without GLES 3.1 (e.g. Apple, where
+// the GLES SSBO compute path is unavailable); the CPU path below is then the
+// only code and stays byte-identical to Plan 3.
+#if !MEDIAPIPE_DISABLE_GPU
+#include "mediapipe/gpu/gpu_buffer.h"
+#if MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31
+#include "mediapipe/calculators/tensor/image_to_tensor_converter.h"  // BorderMode
+#include "mediapipe/calculators/tensor/image_to_tensor_utils.h"      // RotatedRect
+#include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_gl.h"
+#include "mediapipe/framework/port/status_macros.h"
+#include "mediapipe/gpu/gl_calculator_helper.h"
+#include "tensorflow/lite/delegates/gpu/common/types.h"
+#include "tensorflow/lite/delegates/gpu/gl/command_queue.h"
+#include "tensorflow/lite/delegates/gpu/gl/gl_buffer.h"
+#include "tensorflow/lite/delegates/gpu/gl/gl_texture.h"
+#include "tensorflow/lite/delegates/gpu/gl/request_gpu_info.h"
+#endif  // MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31
+#endif  // !MEDIAPIPE_DISABLE_GPU
+
 namespace mediapipe {
 namespace api2 {
 
+#define MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY \
+  (!MEDIAPIPE_DISABLE_GPU &&                     \
+   MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31)
+
 // Streams externally-supplied tiles into batched [N,H,W,C] float32 tensors.
 // CPU: crop -> resize -> normalize into batch rows.
+// GPU (GLES 3.1, optional, default off): crop/resize/normalize each tile in a
+// compute shader directly into its batch row of a GPU-backed tensor, no CPU
+// readback.
 class StreamingTilesToTensorBatchCalculator : public Node {
  public:
-  static constexpr Input<ImageFrame> kInImage{"IMAGE"};
+  // IMAGE is the CPU input. It is optional so a GPU-only graph can wire
+  // IMAGE_GPU instead; exactly one image input must be present per frame.
+  static constexpr Input<ImageFrame>::Optional kInImage{"IMAGE"};
   static constexpr Input<TilePlan> kInPlan{"TILE_PLAN"};
   static constexpr SideInput<InferenceMetadata> kSideMeta{"METADATA"};
   static constexpr Output<std::vector<Tensor>> kOutTensors{"TENSORS"};
   static constexpr Output<TensorBatchInfo> kOutInfo{"BATCH_INFO"};
   static constexpr Output<TilingCacheStats>::Optional kOutStats{"CACHE_STATS"};
+#if !MEDIAPIPE_DISABLE_GPU
+  static constexpr Input<mediapipe::GpuBuffer>::Optional kInImageGpu{
+      "IMAGE_GPU"};
+  MEDIAPIPE_NODE_CONTRACT(kInImage, kInImageGpu, kInPlan, kSideMeta,
+                          kOutTensors, kOutInfo, kOutStats,
+                          ::mediapipe::api2::TimestampChange::Arbitrary());
+#else
   MEDIAPIPE_NODE_CONTRACT(kInImage, kInPlan, kSideMeta, kOutTensors, kOutInfo,
                           kOutStats,
                           ::mediapipe::api2::TimestampChange::Arbitrary());
+#endif  // !MEDIAPIPE_DISABLE_GPU
 
   absl::Status Open(CalculatorContext* cc) override {
     options_ = cc->Options<
@@ -87,10 +125,48 @@ class StreamingTilesToTensorBatchCalculator : public Node {
              "capacity (set max_gpu_tensor_buffers or max_in_flight_gpu_batches "
              "> 0)";
     }
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+    if (options_.enable_gpu_zero_copy() && kInImageGpu(cc).IsConnected()) {
+      RET_CHECK_EQ(meta_.input_channels(), 3)
+          << "GPU zero-copy path supports RGB (input_channels == 3) only";
+      MP_RETURN_IF_ERROR(gl_helper_.Open(cc));
+      const int H = meta_.input_height();
+      const int W = meta_.input_width();
+      const int C = meta_.input_channels();
+      MP_RETURN_IF_ERROR(gl_helper_.RunInGlContext([&]() -> absl::Status {
+        tflite::gpu::GpuInfo gpu_info;
+        MP_RETURN_IF_ERROR(tflite::gpu::gl::RequestGpuInfo(&gpu_info));
+        RET_CHECK(gpu_info.IsApiOpenGl31OrAbove())
+            << "enable_gpu_zero_copy requires OpenGL ES 3.1.";
+        command_queue_ = tflite::gpu::gl::NewCommandQueue(gpu_info);
+        MP_ASSIGN_OR_RETURN(
+            gl_writer_,
+            TiledBatchGlWriter::Create(gl_helper_.GetGlContext(), W, H, C,
+                                       BorderMode::kReplicate,
+                                       /*input_starts_at_bottom=*/false));
+        return absl::OkStatus();
+      }));
+      gpu_zero_copy_active_ = true;
+    }
+#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
     return absl::OkStatus();
   }
 
   absl::Status Process(CalculatorContext* cc) override {
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+    if (gpu_zero_copy_active_ && kInImageGpu(cc).IsConnected() &&
+        !kInImageGpu(cc).IsEmpty()) {
+      return ProcessGpu(cc);
+    }
+#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+    return ProcessCpu(cc);
+  }
+
+ private:
+  absl::Status ProcessCpu(CalculatorContext* cc) {
+    RET_CHECK(kInImage(cc).IsConnected() && !kInImage(cc).IsEmpty())
+        << "no IMAGE (CPU) input present; either wire IMAGE or enable the GPU "
+           "zero-copy path with an IMAGE_GPU input";
     const ImageFrame& frame = *kInImage(cc);
     const TilePlan& plan = *kInPlan(cc);
     const int H = meta_.input_height();
@@ -124,25 +200,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       float* buf = write.buffer<float>();
       std::memset(buf, 0, sizeof(float) * N * H * W * C);
 
-      // Geometry (matrices + ROIs) depends only on frame size + tile set, not
-      // pixels. Cache it; the pixel crop/resize below always runs.
-      std::shared_ptr<const TileBatchGeometry> geom;
-      StableCacheKey key;
-      if (matrix_cache_.enabled()) {
-        StableKeyBuilder kb;
-        kb.AddInt(fw).AddInt(fh).AddInt(W).AddInt(H).AddInt(C);
-        for (int r = 0; r < rows; ++r) {
-          const TileGeometry& g = plan.tiles[start + r];
-          kb.AddInt(g.tile_index).AddFloat(g.x_center).AddFloat(g.y_center)
-            .AddFloat(g.width).AddFloat(g.height);
-        }
-        key = kb.Build();
-        if (auto* hit = matrix_cache_.Get(key)) geom = *hit;
-      }
-      if (geom == nullptr) {
-        geom = BuildBatchGeometry(plan, start, rows, fw, fh);
-        if (matrix_cache_.enabled()) matrix_cache_.Put(key, geom);
-      }
+      std::shared_ptr<const TileBatchGeometry> geom =
+          BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
 
       TensorBatchInfo info;
       info.source_frame_timestamp = ts;
@@ -176,40 +235,166 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       ++batch_ts_;
       ++emitted;
     }
-    // If T == 0, emit one empty BATCH_INFO at batch_ts_ so merge sees the frame.
-    if (T == 0) {
-      TensorBatchInfo info;
-      info.source_frame_timestamp = ts;
-      info.batch_timestamp = batch_ts_.Value();
-      info.total_batches = 0;
-      info.valid_count = 0;
-      kOutInfo(cc).Send(
-          mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
-              .At(batch_ts_));
-      // No TENSORS packet is produced for an empty frame, but the TENSORS
-      // stream must still advance past this timestamp. Otherwise downstream
-      // inference (which only emits detections for TENSORS timestamps) never
-      // advances its output bound, and the synchronized merge — which pairs
-      // BATCH_INFO with detections — would stall instead of emitting the empty
-      // source-frame result. Advancing the bound lets merge run Process() with
-      // empty detections. (EndLoopCalculator uses the same SetNextTimestampBound
-      // pattern to keep a companion stream live.)
-      kOutTensors(cc).SetNextTimestampBound(batch_ts_ + 1);
-      ++batch_ts_;
-    }
-    if (options_.emit_cache_stats() && kOutStats(cc).IsConnected()) {
-      TilingCacheStats stats;
-      stats.tile_matrix = matrix_cache_.stats();
-      if (memory_manager_ && memory_manager_->GetCpuBufferPool()) {
-        stats.cpu_tensor_pool = memory_manager_->GetCpuBufferPool()->stats();
-      }
-      kOutStats(cc).Send(
-          mediapipe::api2::MakePacket<TilingCacheStats>(stats).At(Timestamp(ts)));
-    }
+    EmitEmptyFrameIfNeeded(cc, T, ts);
+    MaybeEmitStats(cc, ts);
     return absl::OkStatus();
   }
 
- private:
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+  // GPU zero-copy path: crop/resize/normalize each tile into its batch row of a
+  // GPU-backed tensor via the GLES 3.1 compute writer, no CPU readback. Mirrors
+  // ProcessCpu's batch/timestamp/INFO semantics exactly.
+  absl::Status ProcessGpu(CalculatorContext* cc) {
+    const mediapipe::GpuBuffer& gpu = *kInImageGpu(cc);
+    const TilePlan& plan = *kInPlan(cc);
+    const int H = meta_.input_height();
+    const int W = meta_.input_width();
+    const int C = meta_.input_channels();
+    const int cap = meta_.batch_capacity();
+    const int fw = gpu.width();
+    const int fh = gpu.height();
+
+    const int T = static_cast<int>(plan.tiles.size());
+    const int total_batches = (T + cap - 1) / cap;
+    const int64_t ts = cc->InputTimestamp().Value();
+
+    int emitted = 0;
+    for (int start = 0; start < T; start += cap) {
+      const int rows = std::min(cap, T - start);
+      const int N = dynamic_batch_ ? rows : cap;
+      Tensor tensor(Tensor::ElementType::kFloat32,
+                    Tensor::Shape{N, H, W, C});
+
+      std::shared_ptr<const TileBatchGeometry> geom =
+          BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
+
+      MP_RETURN_IF_ERROR(gl_helper_.RunInGlContext([&]() -> absl::Status {
+        auto src = gl_helper_.CreateSourceTexture(gpu);
+        // GpuBuffer textures are 4-channel (e.g. BGRA32); GL sampling returns
+        // normalized [0,1], so alpha=1 (NOT 1/255) matches the CPU uint8/255.
+        tflite::gpu::gl::GlTexture input_texture(
+            GL_TEXTURE_2D, src.name(), GL_RGBA,
+            src.width() * src.height() * 4, /*layer=*/0, /*owned=*/false);
+        const tflite::gpu::HW tex_size(src.height(), src.width());
+
+        auto write_view = tensor.GetOpenGlBufferWriteView();
+        tflite::gpu::gl::GlBuffer dest(GL_SHADER_STORAGE_BUFFER,
+                                       write_view.name(), tensor.bytes(),
+                                       /*offset=*/0, /*has_ownership=*/false);
+        for (int r = 0; r < rows; ++r) {
+          const RotatedRect rr = RoiToRotatedRect(geom->effective_pixel_rois[r]);
+          MP_RETURN_IF_ERROR(gl_writer_->WriteTileRow(
+              input_texture, tex_size, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f,
+              command_queue_.get(), &dest));
+        }
+        // Clear padding rows [rows, N) on the GPU: alpha=0,beta=0 writes zeros
+        // via the same shader (no GLES buffer-clear extension needed).
+        const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
+        for (int r = rows; r < N; ++r) {
+          MP_RETURN_IF_ERROR(gl_writer_->WriteTileRow(
+              input_texture, tex_size, full, r, /*alpha=*/0.0f, /*beta=*/0.0f,
+              command_queue_.get(), &dest));
+        }
+        return absl::OkStatus();
+        // write_view destructs here -> GL fence created; downstream inference's
+        // OpenGL read view waits on it on the GPU. No CPU readback.
+      }));
+
+      TensorBatchInfo info;
+      info.source_frame_timestamp = ts;
+      info.batch_timestamp = batch_ts_.Value();
+      info.batch_index = emitted;
+      info.total_batches = total_batches;
+      info.batch_capacity = N;
+      info.batch_size = N;
+      info.valid_count = rows;
+      info.tile_indices = geom->tile_indices;
+      info.geometry = geom;
+
+      std::vector<Tensor> tensors;
+      tensors.push_back(std::move(tensor));
+      kOutTensors(cc).Send(
+          mediapipe::api2::MakePacket<std::vector<Tensor>>(std::move(tensors))
+              .At(batch_ts_));
+      kOutInfo(cc).Send(
+          mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+              .At(batch_ts_));
+      ++batch_ts_;
+      ++emitted;
+    }
+    EmitEmptyFrameIfNeeded(cc, T, ts);
+    MaybeEmitStats(cc, ts);
+    return absl::OkStatus();
+  }
+
+  static RotatedRect RoiToRotatedRect(const TilePixelRoi& roi) {
+    RotatedRect rect;
+    rect.center_x = roi.x + roi.width / 2.0f;
+    rect.center_y = roi.y + roi.height / 2.0f;
+    rect.width = roi.width;
+    rect.height = roi.height;
+    rect.rotation = 0.0f;
+    return rect;
+  }
+#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+
+  // Geometry (matrices + ROIs) depends only on frame size + tile set, not
+  // pixels. Cache it; the pixel crop/resize always runs every frame.
+  std::shared_ptr<const TileBatchGeometry> BuildOrGetGeometry(
+      const TilePlan& plan, int start, int rows, int fw, int fh, int W, int H,
+      int C) {
+    std::shared_ptr<const TileBatchGeometry> geom;
+    StableCacheKey key;
+    if (matrix_cache_.enabled()) {
+      StableKeyBuilder kb;
+      kb.AddInt(fw).AddInt(fh).AddInt(W).AddInt(H).AddInt(C);
+      for (int r = 0; r < rows; ++r) {
+        const TileGeometry& g = plan.tiles[start + r];
+        kb.AddInt(g.tile_index).AddFloat(g.x_center).AddFloat(g.y_center)
+          .AddFloat(g.width).AddFloat(g.height);
+      }
+      key = kb.Build();
+      if (auto* hit = matrix_cache_.Get(key)) geom = *hit;
+    }
+    if (geom == nullptr) {
+      geom = BuildBatchGeometry(plan, start, rows, fw, fh);
+      if (matrix_cache_.enabled()) matrix_cache_.Put(key, geom);
+    }
+    return geom;
+  }
+
+  // If T == 0, emit one empty BATCH_INFO at batch_ts_ so merge sees the frame.
+  void EmitEmptyFrameIfNeeded(CalculatorContext* cc, int T, int64_t ts) {
+    if (T != 0) return;
+    TensorBatchInfo info;
+    info.source_frame_timestamp = ts;
+    info.batch_timestamp = batch_ts_.Value();
+    info.total_batches = 0;
+    info.valid_count = 0;
+    kOutInfo(cc).Send(
+        mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+            .At(batch_ts_));
+    // No TENSORS packet is produced for an empty frame, but the TENSORS stream
+    // must still advance past this timestamp. Otherwise downstream inference
+    // (which only emits detections for TENSORS timestamps) never advances its
+    // output bound, and the synchronized merge — which pairs BATCH_INFO with
+    // detections — would stall instead of emitting the empty source-frame
+    // result. (EndLoopCalculator uses the same SetNextTimestampBound pattern.)
+    kOutTensors(cc).SetNextTimestampBound(batch_ts_ + 1);
+    ++batch_ts_;
+  }
+
+  void MaybeEmitStats(CalculatorContext* cc, int64_t ts) {
+    if (!options_.emit_cache_stats() || !kOutStats(cc).IsConnected()) return;
+    TilingCacheStats stats;
+    stats.tile_matrix = matrix_cache_.stats();
+    if (memory_manager_ && memory_manager_->GetCpuBufferPool()) {
+      stats.cpu_tensor_pool = memory_manager_->GetCpuBufferPool()->stats();
+    }
+    kOutStats(cc).Send(
+        mediapipe::api2::MakePacket<TilingCacheStats>(stats).At(Timestamp(ts)));
+  }
+
   static std::shared_ptr<const TileBatchGeometry> BuildBatchGeometry(
       const TilePlan& plan, int start, int rows, int fw, int fh) {
     auto geom = std::make_shared<TileBatchGeometry>();
@@ -250,6 +435,12 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   std::shared_ptr<MemoryManager> memory_manager_;  // null unless pooling enabled
   cv::Mat resized_workspace_;  // reused across rows/batches when shape matches
   cv::Mat f32_workspace_;
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+  mediapipe::GlCalculatorHelper gl_helper_;
+  std::unique_ptr<tflite::gpu::gl::CommandQueue> command_queue_;
+  std::unique_ptr<TiledBatchGlWriter> gl_writer_;
+  bool gpu_zero_copy_active_ = false;
+#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
 };
 
 MEDIAPIPE_REGISTER_NODE(StreamingTilesToTensorBatchCalculator);

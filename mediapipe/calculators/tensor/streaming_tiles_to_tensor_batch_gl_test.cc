@@ -113,15 +113,17 @@ TEST(StreamingTilesToTensorBatchGlTest, WritesEachTileIntoItsBatchRow) {
                                      tensor.bytes(), /*offset=*/0,
                                      /*has_ownership=*/false);
       // Row 0: full-frame sub-rect. Row 1: a sub-region. Both sample the same
-      // uniform color, so both rows must equal color/255.
+      // uniform color. GL samples an unsigned-normalized RGBA8 texture as
+      // [0,1] already, so alpha=1 (NOT 1/255) yields color/255 — matching the
+      // CPU path's uint8 -> *(1/255) -> [0,1].
       MP_ASSERT_OK(writer->WriteTileRow(
           input_texture, tflite::gpu::HW(kSrcH, kSrcW),
           PixelRoiRect(0, 0, kSrcW, kSrcH), /*tile_row=*/0,
-          /*alpha=*/1.0f / 255.0f, /*beta=*/0.0f, command_queue.get(), &dest));
+          /*alpha=*/1.0f, /*beta=*/0.0f, command_queue.get(), &dest));
       MP_ASSERT_OK(writer->WriteTileRow(
           input_texture, tflite::gpu::HW(kSrcH, kSrcW),
           PixelRoiRect(2, 1, 4, 4), /*tile_row=*/1,
-          /*alpha=*/1.0f / 255.0f, /*beta=*/0.0f, command_queue.get(), &dest));
+          /*alpha=*/1.0f, /*beta=*/0.0f, command_queue.get(), &dest));
       MP_ASSERT_OK(command_queue->WaitForCompletion());
     }  // write view destroyed -> GL fence created
 
