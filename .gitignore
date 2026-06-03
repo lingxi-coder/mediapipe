@@ -11,3 +11,7 @@ node_modules/
 .omx/
 .gradle/
 MODULE.bazel.lock
+
+# Local run artifacts (ultralytics weights download + python caches)
+/yolov8n.pt
+__pycache__/
