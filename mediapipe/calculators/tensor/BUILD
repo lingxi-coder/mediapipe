@@ -2777,6 +2777,74 @@ cc_test(
     }),
 )
 
+# Metal tiled-batch writer (Phase 5 Task 2). ObjC++ (.cc compiled via copts),
+# apple-gated; renders each tile into its PHWC4 row of the delegate-input buffer.
+# Mirrors the image_to_tensor_converter_metal target's copts/linkopts/select.
+cc_library(
+    name = "streaming_tiles_to_tensor_batch_metal",
+    srcs = ["streaming_tiles_to_tensor_batch_metal.cc"],
+    hdrs = ["streaming_tiles_to_tensor_batch_metal.h"],
+    copts = select({
+        "//mediapipe:apple": [
+            "-x objective-c++",
+            "-fobjc-arc",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "//mediapipe:apple": [
+            "-framework Metal",
+            "-framework Foundation",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = ["//mediapipe/framework:port"] + select({
+        "//mediapipe:apple": [
+            ":image_to_tensor_converter",
+            ":image_to_tensor_utils",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:ret_check",
+            "//mediapipe/framework/port:status",
+            "//mediapipe/framework/port:statusor",
+            "@com_google_absl//absl/memory",
+            "@com_google_absl//absl/strings",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_test(
+    name = "streaming_tiles_to_tensor_batch_metal_test",
+    srcs = ["streaming_tiles_to_tensor_batch_metal_test.cc"],
+    copts = select({
+        "//mediapipe:apple": [
+            "-x objective-c++",
+            "-fobjc-arc",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "//mediapipe:apple": [
+            "-framework Metal",
+            "-framework Foundation",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//mediapipe/framework:port",
+        "//mediapipe/framework/port:gtest_main",
+    ] + select({
+        "//mediapipe:apple": [
+            ":image_to_tensor_converter",
+            ":image_to_tensor_utils",
+            ":streaming_tiles_to_tensor_batch_metal",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:status_matchers",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
 mediapipe_proto_library(
     name = "video_tile_scheduler_calculator_proto",
     srcs = ["video_tile_scheduler_calculator.proto"],
