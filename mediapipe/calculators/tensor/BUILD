@@ -2791,3 +2791,68 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
     ],
 )
+
+# ---------------------------------------------------------------------------
+# detection_nms_util: shared axis-aligned NMS utility for frame-level
+# suppression.
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "detection_nms_util",
+    srcs = ["detection_nms_util.cc"],
+    hdrs = ["detection_nms_util.h"],
+    deps = [
+        "//mediapipe/framework/formats:detection_cc_proto",
+    ],
+)
+
+cc_test(
+    name = "detection_nms_util_test",
+    srcs = ["detection_nms_util_test.cc"],
+    deps = [
+        ":detection_nms_util",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# tiled_frame_suppression_calculator: frame-level NMS with single-tile bypass.
+# ---------------------------------------------------------------------------
+
+mediapipe_proto_library(
+    name = "tiled_frame_suppression_calculator_proto",
+    srcs = ["tiled_frame_suppression_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "tiled_frame_suppression_calculator",
+    srcs = ["tiled_frame_suppression_calculator.cc"],
+    deps = [
+        ":detection_nms_util",
+        ":tiled_frame_suppression_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "tiled_frame_suppression_calculator_test",
+    srcs = ["tiled_frame_suppression_calculator_test.cc"],
+    deps = [
+        ":tiled_frame_suppression_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
