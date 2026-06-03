@@ -1,56 +1,128 @@
 # Video Tile Scheduler (Phase 4 / M9) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `VideoTileSchedulerCalculator` — a CPU, per-frame video-mode scheduler that uses `FlowPackagerCalculator`'s `TrackingData` (motion) plus the previous frame's final detections to decide DETECT vs SKIP, prioritize/cap the tile list, and on SKIP propagate the prior axis-aligned `Detection`s through the single global NMS.
+**Goal:** Build `VideoTileSchedulerCalculator`, a CPU, per-frame video scheduler
+whose refresh policy is driven directly by `FlowPackagerCalculator`'s
+`TrackingData` and decoded tracking flags. The scheduler emits scheduled tile
+rects for DETECT frames and empty tile rects for SKIP frames. It does not copy
+prior detections on SKIP.
 
-**Architecture:** A new api2 calculator emits scheduled tile **rects** (consumed by the shipped `TileSpecToTilePlanCalculator`) plus a `PROPAGATED_DETECTIONS` stream. Decisions follow a deterministic 4-rule precedence; `TrackingData` is decoded with the existing `MotionVectorFrameFromTrackingData` and is optional (cadence/confidence fallback). The decision logic is built up incrementally: image-mode parity first, then cadence/confidence/propagation, then prioritization, then motion. A final integration test wires `PreviousLoopbackCalculator` + `ConcatenateDetectionVectorCalculator` + one NMS.
-
-**Tech Stack:** C++20, MediaPipe api2, `mediapipe/util/tracking` (`MotionVectorFrameFromTrackingData`), `Detection`/`NormalizedRect` protos, `PreviousLoopbackCalculator`, `ConcatenateDetectionVectorCalculator`, `NonMaxSuppressionCalculator`, Bazel (`--define MEDIAPIPE_DISABLE_GPU=1`), GoogleTest.
+**Architecture:** The graph keeps the mature MediaPipe video pattern:
+`MotionAnalysisCalculator -> FlowPackagerCalculator -> BoxTrackerCalculator ->
+TrackedDetectionManagerCalculator`. Fresh tiled detections and tracker-updated
+detections are concatenated and sent through a frame-level suppression stage.
+That stage invokes global NMS unless the safe single-tile/no-tracker bypass
+applies. The tiled detect branch may use `FlowLimiterCalculator` for
+backpressure, but the motion/tracker path remains per-frame.
 
 **Spec:** `docs/superpowers/specs/2026-06-03-video-tile-scheduler-design.md`.
 
 ---
 
-## Reference facts (verified against the codebase)
+## Integration stance
 
-- New calculator lives in `mediapipe/calculators/tensor/` with the tiling family (it feeds `TileSpecToTilePlanCalculator`). It depends on `//mediapipe/util/tracking:tracking` for decoding.
-- `MotionVectorFrameFromTrackingData(const TrackingData&, MotionVectorFrame*)` — `mediapipe/util/tracking/tracking.h:233`, lib `//mediapipe/util/tracking:tracking`. Yields `MotionVectorFrame`:
-  - `std::vector<MotionVector> motion_vectors` — each `MotionVector` has `Vector2_f pos` (normalized, longest-side-normalized domain), `Vector2_f object` (foreground motion), `Vector2_f background` (camera motion), `int track_id`; helpers `Location()`, `Motion()`.
-  - `bool valid_background_model`, `bool is_duplicated`, `bool is_chunk_boundary`, `float aspect_ratio` (w/h).
-  - `Vector2_f` has `.x()`, `.y()`; magnitude via `.Norm()` (if `.Norm()` is unavailable, use `std::hypot(v.x(), v.y())` — confirm during Task 4).
-- `TrackingData` proto: `//mediapipe/util/tracking:flow_packager_cc_proto`, header `mediapipe/util/tracking/flow_packager.pb.h`.
-- `NormalizedRect` (`mediapipe/framework/formats/rect.proto`, `//mediapipe/framework/formats:rect_cc_proto`): float `x_center`, `y_center`, `width`, `height`, `rotation`. Tile bounds: `x0 = x_center - width/2`, `y0 = y_center - height/2`.
-- `Detection` (`mediapipe/framework/formats/detection.proto`, `//mediapipe/framework/formats:detection_cc_proto`): `repeated float score`, `optional LocationData location_data`. `location_data().relative_bounding_box()` → `xmin`, `ymin`, `width`, `height` (normalized). Prior-detection center: `cx = xmin + width/2`, `cy = ymin + height/2`. "Prior max score" = `max over priors of (score_size()>0 ? score(0) : 0)`.
-- `PreviousLoopbackCalculator` (`mediapipe/calculators/core/`): tags `MAIN`, `LOOP`, `PREV_LOOP`; on the first MAIN packet, `PREV_LOOP` is an empty/timestamp-bound packet ⇒ the scheduler must treat an empty `PRIOR_DETECTIONS` as a cache miss.
-- `ConcatenateDetectionVectorCalculator` = `ConcatenateVectorCalculator<::mediapipe::Detection>` (`mediapipe/calculators/core/concatenate_detection_vector_calculator.cc`): N input streams of `std::vector<Detection>` → one concatenated `std::vector<Detection>`.
-- `NonMaxSuppressionCalculator` (`mediapipe/calculators/util/non_max_suppression_calculator.cc`): consumes `std::vector<Detection>`, emits a `std::vector<Detection>`. `typedef std::vector<Detection> Detections;`.
-- Calculator-options extension id `471230006` is unused (verified). Tiling protos use `471230004`/`471230005`.
-- BUILD pattern: see the shipped `tile_spec_to_tile_plan_calculator_proto` / `_calculator` / `_calculator_test` targets in `mediapipe/calculators/tensor/BUILD` (~lines 2506–2545) — mirror them.
+This plan intentionally keeps the coupled video graph in one milestone. Do not
+split the scheduler, frame-local batching, cache behavior, tile-local candidate
+reduction, tracker-updated SKIP results, and frame-level suppression into
+independent follow-up plans. These nodes share timestamps, cache keys, coordinate
+systems, and candidate lifetimes; implementing them piecemeal risks incompatible
+contracts between adjacent calculators.
 
-## Cross-cutting conventions
-- Build/test: `bazel {build,test} -c opt --define MEDIAPIPE_DISABLE_GPU=1 <target> --test_output=errors`.
-- In-editor clang errors are FALSE POSITIVES; only bazel is authoritative.
-- All options default so that **defaults + no TRACKING = image mode** (every frame DETECT, all tiles, empty propagation).
-- Calculator is api2, `namespace mediapipe::api2`, default timestamp offset (NO `TimestampChange::Arbitrary`) — both outputs emitted every frame at the input timestamp.
-- Each task commits separately; co-author trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. Branch `dev` (commit on `dev`, do NOT branch).
+The implementation should still be staged for reviewability, but every stage
+must preserve the end-to-end graph contract defined here. A task is not complete
+just because its local calculator works if it breaks downstream batching,
+tracker concat, or final frame-level suppression semantics.
+
+## Reference facts to preserve
+
+- `FlowPackagerCalculator` emits `TRACKING:TrackingData` at the flow packet
+  timestamp. Its internal `frame_idx_` is chunk metadata only.
+- `TrackingData` exposes `FLAG_BACKGROUND_UNSTABLE`, `FLAG_DUPLICATED`,
+  `FLAG_CHUNK_BOUNDARY`, `global_feature_count`, and
+  `average_motion_magnitude`.
+- `MotionVectorFrameFromTrackingData()` decodes to `MotionVectorFrame` with
+  `valid_background_model`, `is_duplicated`, `is_chunk_boundary`,
+  `aspect_ratio`, and foreground/object motion vectors.
+- `TrackedDetectionManagerCalculator` consumes/outputs `Detection` with
+  `LocationData::RELATIVE_BOUNDING_BOX`.
+- `NonMaxSuppressionCalculator` without `IMAGE` must receive relative boxes;
+  weighted NMS also reads/writes `relative_bounding_box`.
+- `PreviousLoopbackCalculator` requires `input_stream_info { tag_index: "LOOP"
+  back_edge: true }`.
+- `PassThroughOrEmptyDetectionVectorCalculator` materializes empty detection
+  vectors for skipped detector frames.
+- `object_detection_mobile_gpu.pbtxt` uses `FlowLimiterCalculator` to bound
+  expensive detection work; borrow this only for the detect branch, not for the
+  per-frame motion/tracker branch.
+- `StreamingTilesToTensorBatchCalculator` emits frame-local multi-batch
+  `TENSORS`/`BATCH_INFO` packets with synthetic batch timestamps and original
+  `source_frame_timestamp` preserved in `TensorBatchInfo`.
+- `MergeTileDetectionsAccumulatorCalculator` waits for all
+  `TensorBatchInfo.total_batches` for a source frame before emitting one merged
+  fresh detection vector at the source frame timestamp.
+- Decoder-side `conf_threshold`/`min_score_thresh` should run before any local
+  candidate reduction. Optional tile-local NMS/top-K may run inside a single tile
+  row, but cross-tile/tracker dedup remains the final global NMS.
+- The final NMS call may be bypassed only when there is exactly one valid tile
+  row, no tracker-updated detections, and that row already ran tile-local NMS or
+  comes from a post-NMS model output.
+
+## Cross-cutting constraints
+
+- No `detect_every_n_frames`.
+- No `frame_index_ % N` refresh logic.
+- No `PROPAGATED_DETECTIONS` output from the scheduler.
+- Defaults plus no `TRACKING` must reproduce image mode: every frame DETECTs and
+  all base tiles are emitted.
+- The scheduler is metadata-only. It must not inspect pixels, copy GPU buffers,
+  or force OpenGL readback.
+- Tile output order must be stable to help `TileSpecToTilePlanCalculator` cache
+  repeated tile plans.
+- A DETECT frame with more scheduled tiles than model batch capacity must stream
+  multiple single-frame inference batches. Example: 5 scheduled tiles with
+  batch capacity 2 means 3 inference calls with valid counts 2, 2, and 1.
+- The first filled tile batch must be sent to inference as soon as it is ready;
+  do not tensorize all tiles for the frame before sending batch 0.
+- Per-tile candidate reduction order is fixed: decode, score/conf threshold,
+  optional top-K, optional tile-local NMS, optional post-local top-K, projection,
+  merge, then frame-level suppression. Tile-local NMS must not compare across
+  tiles. The frame-level NMS call can be skipped only by the safe single-tile
+  bypass.
+- Coordinate system inside this graph segment is relative. Public pixel
+  conversion is after final NMS only.
+- If implementation commits are made, keep the project-requested
+  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+  trailer. No extra commit-message protocol is part of this plan.
 
 ## File Structure
-- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_calculator.proto` — `VideoTileSchedulerCalculatorOptions`.
-- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_calculator.cc` — the calculator: contract, decision precedence, prioritization, propagation, motion decode.
-- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_calculator_test.cc` — unit tests (`CalculatorRunner`).
-- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_pipeline_test.cc` — loopback + concat + single-NMS integration test.
-- **Modify** `mediapipe/calculators/tensor/BUILD` — proto, calculator, two test targets.
+
+- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_calculator.proto`
+  for `VideoTileSchedulerCalculatorOptions`.
+- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_calculator.cc`
+  for the api2 calculator.
+- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_calculator_test.cc`
+  for unit tests.
+- **Create** `mediapipe/calculators/tensor/video_tile_scheduler_pipeline_test.cc`
+  for streaming multi-batch + loopback + tracker-stub + concat + single-NMS
+  integration.
+- **Modify** `mediapipe/calculators/tensor/BUILD`.
 
 ---
 
-### Task 1: Proto + calculator skeleton (image-mode default)
+## Task 1: Proto + calculator skeleton, no frame counter
 
-**Files:** Create the `.proto`, `.cc`, `_test.cc`; modify `BUILD`.
+**Files:** create proto, calculator, unit test; modify BUILD.
 
-Establishes a working calculator that, with default options and no decision logic yet, always DETECTs (emits all base tiles) and emits empty `PROPAGATED_DETECTIONS` — image-mode parity.
+This establishes the contract: required tile/prior streams, optional tracking,
+scheduled tile output, and a `REFRESH` bool output. Default/no-tracking behavior
+is image-mode parity.
 
-- [ ] **Step 1: Write the proto** `video_tile_scheduler_calculator.proto` (full Apache-2.0 header):
+- [ ] **Step 1: Write the proto** `video_tile_scheduler_calculator.proto`.
+
 ```proto
 syntax = "proto2";
 
@@ -62,89 +134,44 @@ message VideoTileSchedulerCalculatorOptions {
   extend mediapipe.CalculatorOptions {
     optional VideoTileSchedulerCalculatorOptions ext = 471230006;
   }
-  // Run a full DETECT at least every N frames (staleness bound). 1 = always
-  // detect (image-mode default). 0 = never on cadence alone.
-  optional int32 detect_every_n_frames = 1 [default = 1];
-  // Force DETECT when the prior frame's strongest score is below this. 0 = off.
-  optional float min_confidence = 2 [default = 0.0];
-  // Cap scheduled tiles on a DETECT frame (keep top-K by priority). 0 = no cap.
-  optional int32 max_scheduled_tiles = 3 [default = 0];
-  // Force DETECT when aggregate foreground motion energy exceeds this. 0 = off.
-  optional float motion_refresh_threshold = 4 [default = 0.0];
-  // Allow SKIP (override cadence) when foreground motion is below this. 0 = off.
-  optional float motion_skip_threshold = 5 [default = 0.0];
-  // Force DETECT when decoded feature count is below this. 0 = off.
-  optional int32 min_features = 6 [default = 0];
+
+  optional int32 max_scheduled_tiles = 1 [default = 0];
+  optional float motion_refresh_threshold = 2 [default = 0.0];
+  optional float motion_skip_threshold = 3 [default = 0.0];
+  optional int32 min_global_features = 4 [default = 0];
+  optional bool refresh_on_background_unstable = 5 [default = true];
+  optional bool refresh_on_chunk_boundary = 6 [default = true];
+  optional bool skip_on_duplicated = 7 [default = true];
+  optional bool detect_without_tracking = 8 [default = true];
+  optional bool refresh_on_uncertain_tracking = 9 [default = true];
 }
 ```
 
-- [ ] **Step 2: Write the failing test** `video_tile_scheduler_calculator_test.cc` (full Apache header) — defaults ⇒ always DETECT all tiles, empty propagation:
-```cpp
-#include <vector>
+Before committing code, verify `471230006` is still unused:
 
-#include "mediapipe/framework/calculator_runner.h"
-#include "mediapipe/framework/formats/detection.pb.h"
-#include "mediapipe/framework/formats/rect.pb.h"
-#include "mediapipe/framework/port/gtest.h"
-#include "mediapipe/framework/port/parse_text_proto.h"
-#include "mediapipe/framework/port/status_matchers.h"
-
-namespace mediapipe {
-namespace {
-
-NormalizedRect Rect(float xc, float yc, float w, float h) {
-  NormalizedRect r;
-  r.set_x_center(xc); r.set_y_center(yc); r.set_width(w); r.set_height(h);
-  return r;
-}
-
-// Default options: every frame is a DETECT of all tiles, no propagation.
-TEST(VideoTileSchedulerTest, DefaultsAlwaysDetectAllTiles) {
-  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
-    calculator: "VideoTileSchedulerCalculator"
-    input_stream: "TILES:tiles"
-    input_stream: "PRIOR_DETECTIONS:priors"
-    output_stream: "TILES:sched"
-    output_stream: "PROPAGATED_DETECTIONS:prop"
-  )pb"));
-  auto tiles = std::make_unique<std::vector<NormalizedRect>>();
-  tiles->push_back(Rect(.25, .5, .5, 1.0));
-  tiles->push_back(Rect(.75, .5, .5, 1.0));
-  runner.MutableInputs()->Tag("TILES").packets.push_back(
-      Adopt(tiles.release()).At(Timestamp(0)));
-  runner.MutableInputs()->Tag("PRIOR_DETECTIONS").packets.push_back(
-      Adopt(new std::vector<Detection>()).At(Timestamp(0)));
-  MP_ASSERT_OK(runner.Run());
-  const auto& sched = runner.Outputs().Tag("TILES").packets[0]
-                          .Get<std::vector<NormalizedRect>>();
-  const auto& prop = runner.Outputs().Tag("PROPAGATED_DETECTIONS").packets[0]
-                         .Get<std::vector<Detection>>();
-  EXPECT_EQ(sched.size(), 2);   // all tiles emitted
-  EXPECT_EQ(prop.size(), 0);    // nothing propagated on a DETECT frame
-}
-
-}  // namespace
-}  // namespace mediapipe
+```bash
+rg -n "471230006|VideoTileSchedulerCalculatorOptions" mediapipe docs
 ```
 
-- [ ] **Step 3: Write the calculator** `video_tile_scheduler_calculator.cc` (full Apache header). Image-mode-only logic for now (always DETECT all tiles):
+- [ ] **Step 2: Add the skeleton unit test.**
+
+Test name: `DefaultsWithoutTrackingDetectEveryFrame`.
+
+Assertions:
+- Feed two timestamps through one `CalculatorRunner`.
+- Provide non-empty `TILES` and `PRIOR_DETECTIONS`.
+- Do not connect `TRACKING`.
+- Each output packet has `REFRESH == true`.
+- Each output `TILES` packet equals the full base tile vector.
+- There is no propagated detection output in the node config.
+
+Use `Detection` helpers that create `LocationData::RELATIVE_BOUNDING_BOX` only.
+
+- [ ] **Step 3: Write the calculator skeleton.**
+
+Contract:
+
 ```cpp
-#include <vector>
-
-#include "absl/status/status.h"
-#include "mediapipe/calculators/tensor/video_tile_scheduler_calculator.pb.h"
-#include "mediapipe/framework/api2/node.h"
-#include "mediapipe/framework/calculator_framework.h"
-#include "mediapipe/framework/formats/detection.pb.h"
-#include "mediapipe/framework/formats/rect.pb.h"
-#include "mediapipe/framework/port/ret_check.h"
-#include "mediapipe/util/tracking/flow_packager.pb.h"
-
-namespace mediapipe {
-namespace api2 {
-
-// Per-frame video-mode tile scheduler. See
-// docs/superpowers/specs/2026-06-03-video-tile-scheduler-design.md.
 class VideoTileSchedulerCalculator : public Node {
  public:
   static constexpr Input<std::vector<NormalizedRect>> kInTiles{"TILES"};
@@ -152,416 +179,448 @@ class VideoTileSchedulerCalculator : public Node {
       "PRIOR_DETECTIONS"};
   static constexpr Input<TrackingData>::Optional kInTracking{"TRACKING"};
   static constexpr Output<std::vector<NormalizedRect>> kOutTiles{"TILES"};
-  static constexpr Output<std::vector<Detection>> kOutProp{
-      "PROPAGATED_DETECTIONS"};
+  static constexpr Output<bool> kOutRefresh{"REFRESH"};
   MEDIAPIPE_NODE_CONTRACT(kInTiles, kInPriorDets, kInTracking, kOutTiles,
-                          kOutProp);
-
-  absl::Status Open(CalculatorContext* cc) override {
-    options_ = cc->Options<mediapipe::VideoTileSchedulerCalculatorOptions>();
-    RET_CHECK_GE(options_.detect_every_n_frames(), 0);
-    RET_CHECK_GE(options_.max_scheduled_tiles(), 0);
-    RET_CHECK_GE(options_.min_features(), 0);
-    return absl::OkStatus();
-  }
-
-  absl::Status Process(CalculatorContext* cc) override {
-    const std::vector<NormalizedRect>& base = *kInTiles(cc);
-    // Image-mode only for now: always DETECT, emit all base tiles, no prop.
-    kOutTiles(cc).Send(std::vector<NormalizedRect>(base));
-    kOutProp(cc).Send(std::vector<Detection>{});
-    ++frame_index_;
-    return absl::OkStatus();
-  }
-
- private:
-  mediapipe::VideoTileSchedulerCalculatorOptions options_;
-  int frame_index_ = 0;
+                          kOutRefresh);
 };
-
-MEDIAPIPE_REGISTER_NODE(VideoTileSchedulerCalculator);
-
-}  // namespace api2
-}  // namespace mediapipe
 ```
 
-- [ ] **Step 4: BUILD** — add to `mediapipe/calculators/tensor/BUILD` (mirror the `tile_spec_to_tile_plan_calculator` targets):
+Skeleton behavior:
+- Validate non-negative numeric options in `Open()`.
+- In `Process()`, if `TRACKING` is absent/unconnected and
+  `detect_without_tracking` is true, emit all base tiles and `REFRESH=true`.
+- Do not add `frame_index_`.
+- Do not add scheduler-owned detection/image/tensor caches.
+
+- [ ] **Step 4: Add BUILD targets.**
+
+Mirror the existing `tile_spec_to_tile_plan_calculator` pattern. Expected deps:
+
 ```python
-mediapipe_proto_library(
-    name = "video_tile_scheduler_calculator_proto",
-    srcs = ["video_tile_scheduler_calculator.proto"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "video_tile_scheduler_calculator",
-    srcs = ["video_tile_scheduler_calculator.cc"],
-    deps = [
-        ":video_tile_scheduler_calculator_cc_proto",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "//mediapipe/util/tracking:tracking",
-        "//mediapipe/util/tracking:flow_packager_cc_proto",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "video_tile_scheduler_calculator_test",
-    srcs = ["video_tile_scheduler_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":video_tile_scheduler_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-        "//mediapipe/util/tracking:flow_packager_cc_proto",
-    ],
-)
+":video_tile_scheduler_calculator_cc_proto",
+"//mediapipe/framework:calculator_framework",
+"//mediapipe/framework/api2:node",
+"//mediapipe/framework/formats:detection_cc_proto",
+"//mediapipe/framework/formats:rect_cc_proto",
+"//mediapipe/framework/port:ret_check",
+"//mediapipe/util/tracking:flow_packager_cc_proto",
+"@com_google_absl//absl/status",
 ```
-> Confirm `//mediapipe/util/tracking:tracking` and `:flow_packager_cc_proto` are the right labels (`grep -n 'name = "tracking"\|flow_packager' mediapipe/util/tracking/BUILD`). The proto's `cc_proto` is named `<proto_name>_cc_proto` by `mediapipe_proto_library`.
 
-- [ ] **Step 5: Build + test, commit**
-Run: `bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test --test_output=all` → PASS.
+The `//mediapipe/util/tracking:tracking` dep is introduced in Task 2 when the
+decode helper is used.
+
+- [ ] **Step 5: Verify.**
+
 ```bash
-git add mediapipe/calculators/tensor/video_tile_scheduler_calculator.proto mediapipe/calculators/tensor/video_tile_scheduler_calculator.cc mediapipe/calculators/tensor/video_tile_scheduler_calculator_test.cc mediapipe/calculators/tensor/BUILD
-git commit -m "$(printf 'feat(video-scheduler): VideoTileSchedulerCalculator skeleton (image-mode default)\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
+bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 \
+  //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test \
+  --test_output=all
 ```
 
 ---
 
-### Task 2: Cadence + cache-miss + confidence-drop + SKIP propagation (no TRACKING)
+## Task 2: FlowPackager/tracking-flag refresh decision
 
-**Files:** Modify `.cc` + `_test.cc`.
+**Files:** modify calculator and unit test.
 
-Implements decision rules 1 (first/cache-miss/confidence), 3 (cadence), 4 (skip), and SKIP-frame propagation. No TRACKING yet (rule-2 motion skip and the motion parts of rule 1 come in Task 4).
+This task implements the whole DETECT/SKIP policy without any cadence fallback.
+The scheduler is conservative: hard refresh flags dominate skip flags, and
+uncertain tracking DETECTs by default.
 
-- [ ] **Step 1: Add failing tests** to `..._test.cc`. Add a helper to set options + a Detection builder:
+- [ ] **Step 1: Refactor decision logic into a testable helper.**
+
+Use a small internal struct so tests can bypass the sparse `TrackingData`
+encoding when needed:
+
 ```cpp
-Detection Det(float score, float xmin, float ymin, float w, float h) {
-  Detection d;
-  d.add_score(score);
-  auto* bb = d.mutable_location_data()->mutable_relative_bounding_box();
-  d.mutable_location_data()->set_format(LocationData::RELATIVE_BOUNDING_BOX);
-  bb->set_xmin(xmin); bb->set_ymin(ymin); bb->set_width(w); bb->set_height(h);
-  return d;
-}
-
-CalculatorRunner MakeRunner(const std::string& options_pb) {
-  return CalculatorRunner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(
-      absl::StrCat(R"pb(
-        calculator: "VideoTileSchedulerCalculator"
-        input_stream: "TILES:tiles"
-        input_stream: "PRIOR_DETECTIONS:priors"
-        output_stream: "TILES:sched"
-        output_stream: "PROPAGATED_DETECTIONS:prop"
-        options { [mediapipe.VideoTileSchedulerCalculatorOptions.ext] { )pb",
-        options_pb, " } }")));
-}
+struct TrackingSignals {
+  bool present = false;
+  bool valid_background_model = true;
+  bool is_duplicated = false;
+  bool is_chunk_boundary = false;
+  int feature_count = 0;
+  float mean_foreground_motion = 0.0f;
+};
 ```
-Add tests (feed N frames at increasing timestamps through one `runner.Run()`):
+
+`DecodeTrackingSignals(const TrackingData&)` should call
+`MotionVectorFrameFromTrackingData()` and compute:
+- `valid_background_model`
+- `is_duplicated`
+- `is_chunk_boundary`
+- `feature_count` from `global_feature_count` when set, else decoded vector size
+- mean foreground/object motion from decoded vectors
+
+- [ ] **Step 2: Add failing tests.**
+
+Add table-style tests for `DecideRefresh(priors, signals)`:
+
+- `NoTrackingDefaultsToDetect`
+- `EmptyPriorsForceDetect`
+- `BackgroundUnstableForcesDetect`
+- `ChunkBoundaryForcesDetectEvenWhenDuplicated`
+- `DuplicatedSkipsWhenPriorsExist`
+- `LowFeatureCountForcesDetect`
+- `HighForegroundMotionForcesDetect`
+- `LowForegroundMotionSkipsWhenThresholdEnabled`
+- `UncertainTrackingDetectsByDefault`
+
+Each test should assert both outputs:
+- DETECT -> scheduled tiles non-empty, `REFRESH=true`.
+- SKIP -> scheduled tiles empty, `REFRESH=false`.
+
+- [ ] **Step 3: Implement the decision order.**
+
+Decision pseudocode:
+
 ```cpp
-// detect_every_n_frames=3 -> DETECT on frames 0,3; SKIP on 1,2 (empty tiles +
-// propagated priors).
-TEST(VideoTileSchedulerTest, CadenceSkipsBetweenDetects) { /* feed 4 frames;
-  frame 0 DETECT(all tiles, empty prop); frames 1,2 SKIP(empty tiles, prop ==
-  priors fed that frame); frame 3 DETECT. Assert sched/prop sizes per frame. */ }
-
-// Empty priors on an off-cadence frame -> DETECT (cache miss).
-TEST(VideoTileSchedulerTest, CacheMissForcesDetect) { /* detect_every_n_frames:5,
-  frame 1 with empty priors -> sched == all tiles, prop empty. */ }
-
-// Prior max score below min_confidence on an off-cadence frame -> DETECT.
-TEST(VideoTileSchedulerTest, ConfidenceDropForcesDetect) { /* min_confidence:0.5
-  detect_every_n_frames:5; frame 1 priors=[Det(0.2,...)] -> DETECT. */ }
-```
-(For SKIP frames the test feeds non-empty `priors` and asserts `prop` equals them and `sched` is empty.)
-
-- [ ] **Step 2: Implement the decision** in `Process()`. Replace the image-mode body:
-```cpp
-  absl::Status Process(CalculatorContext* cc) override {
-    const std::vector<NormalizedRect>& base = *kInTiles(cc);
-    static const std::vector<Detection> kEmptyDets;
-    const std::vector<Detection>& priors =
-        kInPriorDets(cc).IsEmpty() ? kEmptyDets : *kInPriorDets(cc);
-
-    const bool detect = DecideDetect(priors);
-    if (detect) {
-      kOutTiles(cc).Send(std::vector<NormalizedRect>(base));
-      kOutProp(cc).Send(std::vector<Detection>{});
-    } else {
-      kOutTiles(cc).Send(std::vector<NormalizedRect>{});       // no inference
-      kOutProp(cc).Send(std::vector<Detection>(priors));        // hold
-    }
-    ++frame_index_;
-    return absl::OkStatus();
+bool ShouldRefresh(const std::vector<Detection>& priors,
+                   const TrackingSignals& s) const {
+  if (!s.present) return options_.detect_without_tracking();
+  if (priors.empty()) return true;
+  if (options_.refresh_on_background_unstable() &&
+      !s.valid_background_model) return true;
+  if (options_.refresh_on_chunk_boundary() && s.is_chunk_boundary) return true;
+  if (options_.min_global_features() > 0 &&
+      s.feature_count < options_.min_global_features()) return true;
+  if (options_.motion_refresh_threshold() > 0.0f &&
+      s.mean_foreground_motion > options_.motion_refresh_threshold()) {
+    return true;
   }
-
- private:
-  bool DecideDetect(const std::vector<Detection>& priors) const {
-    // Rule 1: hard refresh.
-    if (frame_index_ == 0) return true;                 // first frame
-    if (priors.empty()) return true;                    // cache miss
-    if (options_.min_confidence() > 0.0f &&
-        MaxScore(priors) < options_.min_confidence()) {
-      return true;                                      // confidence drop
-    }
-    // Rule 2 (motion skip) added in Task 4.
-    // Rule 3: cadence/staleness.
-    if (options_.detect_every_n_frames() > 0 &&
-        frame_index_ % options_.detect_every_n_frames() == 0) {
-      return true;
-    }
-    // Rule 4.
+  if (options_.skip_on_duplicated() && s.is_duplicated) return false;
+  if (options_.motion_skip_threshold() > 0.0f &&
+      s.mean_foreground_motion < options_.motion_skip_threshold()) {
     return false;
   }
-
-  static float MaxScore(const std::vector<Detection>& dets) {
-    float m = 0.0f;
-    for (const Detection& d : dets) {
-      if (d.score_size() > 0) m = std::max(m, d.score(0));
-    }
-    return m;
-  }
-```
-Add includes `#include <algorithm>` and ensure `absl/strings/str_cat.h` is available to the test.
-
-- [ ] **Step 3: Build + test, commit.**
-Run: `bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test --test_output=all`
-```bash
-git add mediapipe/calculators/tensor/video_tile_scheduler_calculator.cc mediapipe/calculators/tensor/video_tile_scheduler_calculator_test.cc
-git commit -m "$(printf 'feat(video-scheduler): cadence/cache-miss/confidence DETECT + SKIP propagation\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
-```
-
----
-
-### Task 3: Tile prioritization + `max_scheduled_tiles` cap (prior-detection fallback)
-
-**Files:** Modify `.cc` + `_test.cc`.
-
-On a DETECT frame, when `max_scheduled_tiles > 0` and tile count exceeds it, keep the top-K by priority. This task implements the **prior-detection-overlap** priority (the no-TRACKING fallback); motion priority comes in Task 4.
-
-- [ ] **Step 1: Add failing test** — 4 tiles, `max_scheduled_tiles=2`, priors whose centers fall in 2 specific tiles ⇒ exactly those 2 tiles kept (deterministic order = ascending original index):
-```cpp
-TEST(VideoTileSchedulerTest, CapKeepsTilesOverlappingPriorDetections) {
-  // tiles 0..3 across x; priors centered in tiles 1 and 3.
-  // detect_every_n_frames=1 (DETECT), max_scheduled_tiles=2.
-  // Expect sched == {tile1, tile3} (by original index order).
-}
-TEST(VideoTileSchedulerTest, NoCapEmitsAllTiles) {
-  // max_scheduled_tiles=0 -> all tiles regardless of priors.
+  return options_.refresh_on_uncertain_tracking();
 }
 ```
 
-- [ ] **Step 2: Implement** prioritization. Add a `ScheduleTiles` helper and call it on the DETECT branch:
-```cpp
-  std::vector<NormalizedRect> ScheduleTiles(
-      const std::vector<NormalizedRect>& base,
-      const std::vector<Detection>& priors) const {
-    const int cap = options_.max_scheduled_tiles();
-    if (cap <= 0 || static_cast<int>(base.size()) <= cap) {
-      return base;  // full refresh, original order preserved
-    }
-    // Priority = number of prior-detection centers inside the tile.
-    std::vector<std::pair<int, int>> scored;  // (-priority, index) for sort
-    scored.reserve(base.size());
-    for (int i = 0; i < static_cast<int>(base.size()); ++i) {
-      int hits = 0;
-      for (const Detection& d : priors) {
-        if (!d.has_location_data() ||
-            !d.location_data().has_relative_bounding_box()) continue;
-        const auto& b = d.location_data().relative_bounding_box();
-        const float cx = b.xmin() + b.width() / 2.0f;
-        const float cy = b.ymin() + b.height() / 2.0f;
-        if (PointInTile(cx, cy, base[i])) ++hits;
-      }
-      scored.push_back({-hits, i});
-    }
-    std::stable_sort(scored.begin(), scored.end());  // high priority, then index
-    std::vector<NormalizedRect> out;
-    out.reserve(cap);
-    std::vector<int> kept_idx;
-    for (int k = 0; k < cap; ++k) kept_idx.push_back(scored[k].second);
-    std::sort(kept_idx.begin(), kept_idx.end());     // restore original order
-    for (int idx : kept_idx) out.push_back(base[idx]);
-    return out;
-  }
+In `Process()`:
+- Decode `TrackingSignals` once when `TRACKING` is connected and non-empty.
+- DETECT emits scheduled tiles (full base list for now) and `REFRESH=true`.
+- SKIP emits empty tile vector and `REFRESH=false`.
+- Do not emit or store detections.
 
-  static bool PointInTile(float x, float y, const NormalizedRect& t) {
-    const float x0 = t.x_center() - t.width() / 2.0f;
-    const float y0 = t.y_center() - t.height() / 2.0f;
-    return x >= x0 && x <= x0 + t.width() && y >= y0 && y <= y0 + t.height();
-  }
-```
-In the DETECT branch replace `std::vector<NormalizedRect>(base)` with `ScheduleTiles(base, priors)`.
+- [ ] **Step 4: Verify.**
 
-- [ ] **Step 3: Build + test, commit.**
 ```bash
-git add mediapipe/calculators/tensor/video_tile_scheduler_calculator.cc mediapipe/calculators/tensor/video_tile_scheduler_calculator_test.cc
-git commit -m "$(printf 'feat(video-scheduler): tile prioritization + max_scheduled_tiles cap (prior-detection fallback)\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
+bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 \
+  //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test \
+  --test_output=all
 ```
 
 ---
 
-### Task 4: TRACKING motion — decode, triggers, motion-priority, aspect mapping
+## Task 3: DETECT-frame tile priority and cap
 
-**Files:** Modify `.cc` + `_test.cc`.
+**Files:** modify calculator and unit test.
 
-Wire `TrackingData`: rule-1 motion refresh triggers, rule-2 motion skip, and motion-energy tile priority (overriding the prior-detection fallback when features land in a tile).
+This task applies `max_scheduled_tiles` only on DETECT frames. SKIP frames still
+emit an empty tile vector.
 
-- [ ] **Step 1: Confirm the decode API** by reading `mediapipe/util/tracking/tracking.h` (`MotionVectorFrameFromTrackingData`, `MotionVector`, `MotionVectorFrame`) and how positions are normalized in `tracking.cc`. Verify `Vector2_f` exposes `.Norm()` (else use `std::hypot`). Note the exact `MotionVector` accessor for foreground motion (`object`).
+- [ ] **Step 1: Add tests.**
 
-- [ ] **Step 2: Add failing tests** with hand-built `TrackingData`. Build a small helper that constructs a `TrackingData` whose decoded `MotionVectorFrame` has known features — OR (simpler and robust to the CSC encoding) test the *decision/priority helpers directly* by refactoring them to accept a decoded `MotionVectorFrame` (see Step 3) and feeding a hand-built `MotionVectorFrame`. Tests:
-```cpp
-// is_duplicated -> SKIP on a non-first frame even when cadence says detect.
-// !valid_background_model -> DETECT.
-// is_chunk_boundary -> DETECT.
-// mean object motion > motion_refresh_threshold -> DETECT.
-// mean object motion < motion_skip_threshold -> SKIP overriding cadence.
-// feature_count < min_features -> DETECT.
-// prioritization: features (foreground motion) in tiles 0 and 2 -> those kept
-//   under max_scheduled_tiles=2.
-// aspect mapping: a feature at domain-center maps to frame (0.5,0.5)
-//   for landscape (aspect 16/9) and portrait (aspect 9/16).
-```
-Prefer driving these through the public calculator with a `TRACKING` input built via a tiny `MakeTrackingData(features, flags, aspect)` helper that you implement by populating `TrackingData` and round-tripping through `MotionVectorFrameFromTrackingData` in the test to assert your construction decodes as intended. If hand-encoding `motion_data` CSC is impractical, split the motion logic into free functions over `MotionVectorFrame` and unit-test those directly (this keeps the calculator thin and the math testable without the proto encoding).
+Tests:
+- `NoCapEmitsAllTiles`
+- `CapKeepsTopMotionTilesInStableOrder`
+- `PerTilePriorFallbackCanSelectZeroMotionTile`
+- `AllZeroPriorityFallsBackToOriginalOrder`
+- `AspectMappingMatchesTrackingDomain`
 
-- [ ] **Step 3: Implement.** Add includes:
-```cpp
-#include <cmath>
-#include "mediapipe/util/tracking/tracking.h"
-```
-Decode once per frame when TRACKING is connected and present, and extend the decision + scheduling. Decision becomes:
-```cpp
-  bool DecideDetect(const std::vector<Detection>& priors,
-                    const MotionVectorFrame* mvf) const {
-    if (frame_index_ == 0) return true;
-    if (priors.empty()) return true;
-    if (options_.min_confidence() > 0.0f &&
-        MaxScore(priors) < options_.min_confidence()) return true;
-    if (mvf != nullptr) {
-      if (!mvf->valid_background_model || mvf->is_chunk_boundary) return true;
-      const float e = MeanForegroundMotion(*mvf);
-      if (options_.motion_refresh_threshold() > 0.0f &&
-          e > options_.motion_refresh_threshold()) return true;
-      if (options_.min_features() > 0 &&
-          static_cast<int>(mvf->motion_vectors.size()) <
-              options_.min_features()) return true;
-      // Rule 2: motion skip overrides cadence.
-      if (mvf->is_duplicated ||
-          (options_.motion_skip_threshold() > 0.0f &&
-           e < options_.motion_skip_threshold())) return false;
-    }
-    if (options_.detect_every_n_frames() > 0 &&
-        frame_index_ % options_.detect_every_n_frames() == 0) return true;
-    return false;
-  }
+The fallback test must cover the important case where some tiles have motion and
+one tile has zero motion but a prior detection center. That zero-motion tile is
+allowed to use prior fallback without requiring all tile motion sums to be zero.
 
-  static float Magnitude(const Vector2_f& v) { return std::hypot(v.x(), v.y()); }
-  static float MeanForegroundMotion(const MotionVectorFrame& mvf) {
-    if (mvf.motion_vectors.empty()) return 0.0f;
-    float s = 0.0f;
-    for (const auto& m : mvf.motion_vectors) s += Magnitude(m.object);
-    return s / mvf.motion_vectors.size();
-  }
-  // longest-side-normalized -> frame-normalized [0,1]^2.
-  static void FeatureFramePos(const Vector2_f& pos, float aspect,
-                              float* fx, float* fy) {
-    if (aspect >= 1.0f) { *fx = pos.x(); *fy = pos.y() * aspect; }
-    else { *fx = pos.x() / aspect; *fy = pos.y(); }
-  }
-```
-Extend `ScheduleTiles` to accept `const MotionVectorFrame* mvf`: when `mvf != nullptr`, tile priority = Σ `Magnitude(object)` over features whose `FeatureFramePos` lies in the tile; if that sum is 0 for all tiles (no features land anywhere), fall back to the prior-detection-center count. Use a `float` priority key (`std::pair<float,int>` with negated priority) instead of the int version. In `Process()`, decode:
-```cpp
-    MotionVectorFrame mvf;
-    const MotionVectorFrame* mvf_ptr = nullptr;
-    if (kInTracking(cc).IsConnected() && !kInTracking(cc).IsEmpty()) {
-      MotionVectorFrameFromTrackingData(*kInTracking(cc), &mvf);
-      mvf_ptr = &mvf;
-    }
-```
-(`MotionVectorFrame`, `MotionVector`, `Vector2_f`, `MotionVectorFrameFromTrackingData` are in `namespace mediapipe`; the class is in `mediapipe::api2`, so reference them unqualified.)
+- [ ] **Step 2: Implement priority helpers.**
 
-- [ ] **Step 4: Build + test, commit.**
+Helpers:
+- `PointInTile(float x, float y, const NormalizedRect& tile)`
+- `FeatureFramePos(const Vector2_f& pos, float aspect, float* x, float* y)`
+- `PriorCenterPriority(tile, priors)`
+- `MotionPriority(tile, decoded_motion_vectors)`
+
+Scheduling rules:
+- If `max_scheduled_tiles <= 0`, return all tiles.
+- If `base.size() <= max_scheduled_tiles`, return all tiles.
+- Else score every tile:
+  - Start with per-tile motion energy.
+  - If that tile's motion score is zero, use prior-center count for that tile.
+- Sort by descending score and ascending original index.
+- Emit selected tiles in original input order.
+
+- [ ] **Step 3: Verify.**
+
 ```bash
-git add mediapipe/calculators/tensor/video_tile_scheduler_calculator.cc mediapipe/calculators/tensor/video_tile_scheduler_calculator_test.cc mediapipe/calculators/tensor/BUILD
-git commit -m "$(printf 'feat(video-scheduler): TrackingData motion triggers + motion tile-priority\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
+bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 \
+  //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test \
+  --test_output=all
 ```
-(If the test BUILD target needs `//mediapipe/util/tracking:tracking` for `MotionVectorFrame` in tests, add it.)
 
 ---
 
-### Task 5: Integration test — loopback + concat + single global NMS
+## Task 4: Frame-local multi-batch streaming and cache verification
 
-**Files:** Create `video_tile_scheduler_pipeline_test.cc`; modify `BUILD`.
+**Files:** create or extend `video_tile_scheduler_pipeline_test.cc`; modify
+BUILD only if new test deps are needed.
 
-Prove the scheduler composes into a video graph that emits one detection result per frame through exactly one NMS, with SKIP frames carried by propagation. The tiled-detect path is stubbed (canned merged detections fed at DETECT timestamps) so this stays CPU-only and inference-free.
+This task proves the tiled detect branch handles `tiles > batch_capacity`
+correctly and quickly. The scheduler may choose 5 tiles for a DETECT frame while
+the model accepts only 2 rows per inference input; that frame must run 3
+inference batches, apply tile-local candidate reduction inside each row, and
+still produce one source-frame detection vector before global NMS.
 
-- [ ] **Step 1: Write the integration test.** Build a `CalculatorGraph` wiring:
-  - `PreviousLoopbackCalculator` (`MAIN:tick`, `LOOP:final_dets`, `PREV_LOOP:priors`).
-  - `VideoTileSchedulerCalculator` (`TILES:base_tiles`, `PRIOR_DETECTIONS:priors`; outputs `TILES:sched`, `PROPAGATED_DETECTIONS:prop`).
-  - A stub for the detect path: feed `merged_dets` (a `std::vector<Detection>`) directly at the same timestamps (no real inference); on SKIP frames feed an empty `merged_dets`.
-  - `ConcatenateDetectionVectorCalculator` (inputs `prop` + `merged_dets`) → `combined`.
-  - `NonMaxSuppressionCalculator` (`combined`) → `final_dets` (also looped back).
-  Drive 3 frames: frame 0 DETECT (stub merged has 1 det), frame 1 SKIP (cadence with `detect_every_n_frames=2`; merged empty; prop carries frame-0 result), frame 2 DETECT. Assert: one `final_dets` packet per frame at its timestamp; frame 1's result equals the propagated prior; each result passed through NMS once. Confirm the exact `PreviousLoopbackCalculator`/`NonMaxSuppressionCalculator`/`ConcatenateDetectionVectorCalculator` stream tag names and any required options by reading their sources first.
+- [ ] **Step 1: Add the `T = 5, B = 2` streaming test.**
 
-- [ ] **Step 2: BUILD** — add:
+Graph shape:
+- `VideoTileSchedulerCalculator` emits 5 scheduled tiles for one DETECT frame.
+- `TileSpecToTilePlanCalculator` converts them to a `TilePlan`.
+- `StreamingTilesToTensorBatchCalculator` uses `InferenceMetadata` with
+  `batch_capacity: 2`.
+- A lightweight inference spy/stub records the timestamp and order of every
+  `TENSORS` packet it receives, then emits canned batch detections.
+- Batch decoder/merge accumulator consumes `BATCH_INFO` and canned detections.
+
+Assertions:
+- exactly 3 inference input packets are observed for the source frame
+- `TensorBatchInfo.batch_index` is 0, 1, 2
+- `TensorBatchInfo.total_batches` is 3 for all three batches
+- `valid_count` is 2, 2, 1
+- all three `BATCH_INFO` packets carry the same `source_frame_timestamp`
+- fixed-batch mode pads the last tensor to `N == 2`; dynamic-batch mode emits
+  the last tensor with `N == 1`
+- merge emits exactly one fresh detection vector at the source frame timestamp
+
+- [ ] **Step 2: Prove streaming, not bulk materialization.**
+
+Add a spy/event-log test that fails if inference cannot observe batch 0 until
+after every tile in the source frame is tensorized. Acceptable evidence:
+- a spy calculator receives batch 0 before the tensorizer logs preparation of
+  the final underfilled batch, or
+- the tensorizer is refactored into a true per-batch producer/loop where each
+  `Process()` emits one prepared batch and yields to the graph scheduler.
+
+Calling `Send()` multiple times from one long `Process()` is not sufficient if
+downstream inference still cannot run until that `Process()` returns.
+
+- [ ] **Step 3: Verify cache behavior.**
+
+Enable cache/stat options and drive two frames with the same scheduled tile list.
+Assertions:
+- `TileSpecToTilePlanCalculator` hits the tile-plan cache on the second frame.
+- `StreamingTilesToTensorBatchCalculator` hits the per-batch matrix/ROI cache for
+  the same row groups: `[0,1]`, `[2,3]`, `[4]`.
+- Tensor workspace pooling does not mutate or reuse a batch buffer while the
+  inference stub still owns it. For CPU tests, use distinct packet ownership or
+  a held-packet spy; for the GPU/OpenGL path, require resource-pool/fence
+  semantics and no CPU readback.
+- Pixel tensors or detector outputs are not cached by default. Any future
+  content cache must key on source image identity/content version, model
+  metadata, preprocessing options, tile geometry, and batch row.
+
+- [ ] **Step 4: Verify per-tile candidate reduction order.**
+
+Add decoder/merge tests with two overlapping tiles:
+- In tile 0, include one candidate below `conf_threshold`, two duplicate
+  candidates above threshold, and one separate object.
+- In tile 1, include a duplicate of the same object seen in tile 0.
+
+Assertions:
+- the below-threshold candidate is dropped before local NMS
+- optional tile-local NMS removes only the duplicate inside tile 0
+- tile-local NMS does not compare tile 0 and tile 1 candidates
+- both overlapping-tile candidates survive merge before global NMS
+- the final global NMS runs once and removes the cross-tile duplicate
+- disabling tile-local NMS still produces a correct final result, only with more
+  candidates entering global NMS
+- a separate single-tile/no-tracker case with local NMS enabled bypasses final
+  NMS and emits the same candidate vector
+- the same single-tile case with local NMS disabled does not bypass final NMS
+- adding tracker-updated detections disables the bypass even when there is one
+  tile, because fresh-vs-tracker dedup is global
+
+Configuration rules:
+- local NMS/top-K thresholds are configurable per decoder/task
+- if weighted global NMS is enabled, local NMS/top-K must be accuracy-tested
+  because removing candidates early can alter weighted boxes
+- if weighted global NMS is required for the frame, the bypass is disabled
+  because pass-through would skip box fusion
+- if the model already emits post-NMS detections, local NMS should be disabled or
+  tested as a no-op
+
+- [ ] **Step 5: Verify.**
+
+```bash
+bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 \
+  //mediapipe/calculators/tensor:video_tile_scheduler_pipeline_test \
+  --test_output=all
+```
+
+---
+
+## Task 5: Pipeline integration without copied-prior propagation
+
+**Files:** create `video_tile_scheduler_pipeline_test.cc`; modify BUILD.
+
+This proves the graph shape: scheduler controls the detect branch, tracker path
+supplies SKIP-frame candidates, concat/NMS runs once per timestamp.
+
+- [ ] **Step 1: Write the integration graph test.**
+
+The test may stub fresh detections and tracker-updated detections, but the graph
+must include the real wiring points:
+
+- `PreviousLoopbackCalculator`
+  - `MAIN:tick`
+  - `LOOP:final_dets`
+  - `input_stream_info { tag_index: "LOOP" back_edge: true }`
+  - `PREV_LOOP:priors`
+- `VideoTileSchedulerCalculator`
+  - inputs `TILES:base_tiles`, `PRIOR_DETECTIONS:priors`,
+    `TRACKING:tracking_data`
+  - outputs `TILES:scheduled_tiles`, `REFRESH:refresh`
+- detector stub or tiled detector branch
+  - emits fresh detections on DETECT frames
+  - supports the frame-local multi-batch contract from Task 4 when the scheduler
+    emits more tiles than model batch capacity
+  - emits no packet or empty packet on SKIP frames
+- `PassThroughOrEmptyDetectionVectorCalculator`
+  - turns skipped detector output into an empty vector at the frame timestamp
+- tracker stub or real tracker branch
+  - emits tracker-updated relative detections on SKIP frames
+- `ConcatenateDetectionVectorCalculator`
+- `NonMaxSuppressionCalculator`
+  - `return_empty_detections: true`
+  - no `IMAGE` input in this relative-coordinate segment
+
+Drive at least three timestamps:
+- Frame A: no priors -> DETECT; fresh detections reach NMS.
+- Frame B: duplicated tracking with priors -> SKIP; fresh vector is empty;
+  tracker-updated detections reach NMS.
+- Frame C: chunk boundary -> DETECT even if duplicated.
+- Frame D: DETECT with 5 scheduled tiles and batch capacity 2 -> 3 tiled
+  inference batches merge into one fresh detection vector before NMS.
+- Frame E: two overlapping tiles each keep a high-score duplicate after
+  tile-local filtering -> global NMS deduplicates them once at frame level.
+
+Assertions:
+- one final detection vector packet per timestamp
+- exactly one frame-level suppression stage in the test graph
+- scheduler SKIP output has empty `scheduled_tiles`
+- no scheduler `PROPAGATED_DETECTIONS` stream exists
+- final detections use `relative_bounding_box`
+- global NMS runs at most once per source frame, not once per tile batch
+- tile-local NMS/top-K, when enabled, reduces only per-tile candidates and does
+  not suppress cross-tile duplicates before merge
+- single-tile/no-tracker/already-local-NMSed frames bypass the final NMS call;
+  multi-tile or tracker-concat frames do not bypass it
+
+- [ ] **Step 2: Add BUILD deps.**
+
+Expected deps to confirm against actual target names:
+
 ```python
-cc_test(
-    name = "video_tile_scheduler_pipeline_test",
-    srcs = ["video_tile_scheduler_pipeline_test.cc"],
-    size = "small",
-    deps = [
-        ":video_tile_scheduler_calculator",
-        "//mediapipe/calculators/core:previous_loopback_calculator",
-        "//mediapipe/calculators/core:concatenate_detection_vector_calculator",
-        "//mediapipe/calculators/util:non_max_suppression_calculator",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
+":video_tile_scheduler_calculator",
+"//mediapipe/calculators/core:previous_loopback_calculator",
+"//mediapipe/calculators/core:concatenate_detection_vector_calculator",
+"//mediapipe/calculators/util:non_max_suppression_calculator",
+"//mediapipe/calculators/util:pass_through_or_empty_detection_vector_calculator",
+"//mediapipe/framework:calculator_framework",
+"//mediapipe/framework/formats:detection_cc_proto",
+"//mediapipe/framework/formats:rect_cc_proto",
+"//mediapipe/framework/port:gtest_main",
+"//mediapipe/framework/port:parse_text_proto",
+"//mediapipe/framework/port:status_matchers",
 ```
-(Confirm those calculator target labels exist; adjust to the actual names.)
 
-- [ ] **Step 3: Build + test, commit.**
-Run: `bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 //mediapipe/calculators/tensor:video_tile_scheduler_pipeline_test --test_output=all`
+- [ ] **Step 3: Verify.**
+
 ```bash
-git add mediapipe/calculators/tensor/video_tile_scheduler_pipeline_test.cc mediapipe/calculators/tensor/BUILD
-git commit -m "$(printf 'test(video-scheduler): loopback + concat + single-NMS integration\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
+bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 \
+  //mediapipe/calculators/tensor:video_tile_scheduler_pipeline_test \
+  --test_output=all
 ```
 
 ---
 
-## Self-review checklist (run before final review)
-- Defaults + no TRACKING ⇒ every frame DETECT, all tiles, empty propagation (Task 1 test).
-- Decision precedence matches the spec: hard-refresh → motion-skip → cadence → skip (Tasks 2+4).
-- SKIP emits empty `TILES` + propagated priors; DETECT emits scheduled tiles + empty propagation.
-- `max_scheduled_tiles` cap keeps top-K deterministically (stable order, original-index tie-break).
-- Motion priority uses foreground (`object`) motion; falls back to prior-detection containment.
-- Aspect mapping verified (center feature → (0.5,0.5)) for landscape and portrait.
-- TRACKING optional: unconnected ⇒ cadence/confidence path; connected ⇒ motion path.
-- One global NMS per frame; no track IDs; no cross-frame batches.
+## Task 6: Real video graph integration notes
+
+**Files:** update the owning graph/task integration once this calculator is
+ready. Do not hide these contracts inside the scheduler.
+
+- [ ] Keep `MotionAnalysisCalculator -> FlowPackagerCalculator` per-frame.
+- [ ] Wire `BoxTrackerCalculator` with `TRACKING:tracking_data` and the graph's
+  frame time stream, following `mediapipe/calculators/video/testdata/tracker_graph.pbtxt`.
+- [ ] Wire `TrackedDetectionManagerCalculator` to consume detector updates and
+  `TRACKING_BOXES`, and to output tracker-updated relative detections.
+- [ ] Use `FlowLimiterCalculator` only around expensive tiled detection work if
+  the video graph needs mobile-style backpressure.
+- [ ] Keep the tiled detect branch frame-local and streaming: when scheduled
+  tiles exceed batch capacity, send each prepared batch to inference immediately
+  and let the merge accumulator reconstruct one source-frame result.
+- [ ] Keep per-tile candidate reduction inside the decoder/tiled detector branch:
+  `conf_threshold` first, optional tile-local NMS/top-K second, projection/merge
+  third, final global NMS after concat with tracker detections.
+- [ ] Size CPU/GPU tensor workspace pools for streaming overlap. At minimum,
+  never reuse a buffer still held by downstream inference; on OpenGL paths use
+  resource ownership/fences rather than CPU readback.
+- [ ] Keep OpenGL/GPU zero-copy intact: the scheduler emits only rect metadata
+  and must not map image/tensor packets to CPU memory.
+- [ ] Keep final public Tasks pixel conversion after global NMS, not before
+  scheduler/tracker/NMS loopback.
+
+---
+
+## Self-review checklist
+
+- [ ] `rg -n "detect_every_n_frames|frame_index_|PROPAGATED_DETECTIONS" \
+  mediapipe/calculators/tensor/video_tile_scheduler*` returns no
+  implementation usage.
+- [ ] Defaults plus no `TRACKING` DETECT every frame.
+- [ ] With tracking present, refresh is decided by `FlowPackager`/decoded flags.
+- [ ] Hard refresh conditions dominate skip conditions.
+- [ ] SKIP does not copy prior detections.
+- [ ] Tile priority fallback is per tile, not all-or-nothing.
+- [ ] `T = 5`, `batch_capacity = 2` produces 3 inference batches with
+  `valid_count` 2, 2, 1 and one merged source-frame fresh detection vector.
+- [ ] Batch 0 can reach the inference stub before the final underfilled batch is
+  prepared; otherwise the tensorizer has been refactored into a true per-batch
+  producer.
+- [ ] Tile-plan cache, per-batch geometry cache, and tensor workspace pooling are
+  tested separately.
+- [ ] Per-tile `conf_threshold` runs before tile-local NMS/top-K.
+- [ ] Tile-local NMS/top-K never compares candidates across tiles, and global NMS
+  still deduplicates overlapping-tile candidates once per source frame.
+- [ ] Final suppression is frame-level and relative-box only: global NMS runs for
+  multi-source frames, while the safe single-tile/no-tracker/post-local-NMS case
+  bypasses the NMS call.
+- [ ] `PreviousLoopbackCalculator` `LOOP` input is a back edge.
+- [ ] Empty detector output on SKIP becomes an empty detection vector.
+- [ ] Scheduler remains metadata-only and does not break GPU zero-copy.
 
 ## Final verification
-- [ ] `bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test //mediapipe/calculators/tensor:video_tile_scheduler_pipeline_test --test_output=errors` — all pass.
-- [ ] `git status` clean.
+
+```bash
+bazel test -c opt --define MEDIAPIPE_DISABLE_GPU=1 \
+  //mediapipe/calculators/tensor:video_tile_scheduler_calculator_test \
+  //mediapipe/calculators/tensor:video_tile_scheduler_pipeline_test \
+  --test_output=errors
+
+git status --short
+```
 
 ## Done criteria
-- `VideoTileSchedulerCalculator` implements the deterministic DETECT/SKIP precedence, prioritization+cap, and SKIP propagation.
-- Motion-driven via decoded `TrackingData`; graceful cadence/confidence fallback when `TRACKING` unconnected.
-- Defaults reproduce image mode. Integration test proves single-global-NMS + loopback + propagation.
-- All tests pass under `--define MEDIAPIPE_DISABLE_GPU=1`; no track IDs, no cross-frame batches.
+
+- `VideoTileSchedulerCalculator` has no frame-cadence refresh logic.
+- Refresh decisions are directly driven by `FlowPackager` tracking signals.
+- Tracker path, not scheduler copied priors, supplies SKIP-frame detections.
+- DETECT-frame tile capping is deterministic and cache-friendly.
+- DETECT frames with more scheduled tiles than input batch capacity stream
+  multiple single-frame inference calls without waiting for all tile
+  preprocessing to finish before batch 0 enters inference.
+- Per-tile score filtering and optional tile-local NMS/top-K reduce candidate
+  volume before merge without replacing frame-level suppression. Final NMS is
+  bypassed only for the safe single-tile/no-tracker/post-local-NMS case.
+- Integration preserves one frame-level suppression stage, relative coordinates,
+  and GPU zero-copy boundaries.
