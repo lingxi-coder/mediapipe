@@ -19,9 +19,11 @@
 
 #ifdef __APPLE__
 #include <CoreVideo/CoreVideo.h>
-#if !TARGET_OS_OSX
+// Fork change: enable the CVPixelBuffer-backed GpuBuffer + Metal texture bridge
+// on macOS too. Upstream gates this to iOS (`!TARGET_OS_OSX`), but CoreVideo /
+// CVMetalTextureCache / Metal interop are all available on macOS, and the Metal
+// zero-copy preprocessing path (Phase 5) needs `metalTextureWithGpuBuffer:`.
 #define MEDIAPIPE_GPU_BUFFER_USE_CV_PIXEL_BUFFER 1
-#endif  // TARGET_OS_OSX
 #endif  // defined(__APPLE__)
 
 #include "mediapipe/framework/formats/image_format.pb.h"
