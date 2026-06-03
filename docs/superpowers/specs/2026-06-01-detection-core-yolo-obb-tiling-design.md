@@ -111,7 +111,7 @@ Tiles ─┴─ rects ─►  │  ─► TilePlan ─────────�
 
 **Why the metadata edge is not a cycle:** `METADATA` is a *side packet* resolved at `Open()` — `InferenceCalculator.Open()` loads the model/runner and emits it before any frame flows, so the tilers' `Open()` is deferred until it exists. The tiler→inference edge carries *tensors at `Process()`*. Different phases ⇒ no Open-time cycle, and `InferenceCalculator.Open()` does not depend on the tiler's stream output.
 
-**Frame-level invariant:** every frame emits exactly one detection result after **one** final global NMS — empty frames, underfilled batches, single-tile frames, and multi-batch tiled frames included. Decode may threshold/top-K candidates for performance, but NMS is frame-global and runs only after all valid tile rows for that source frame are projected to full-frame-normalized coordinates.
+**Frame-level invariant:** every frame emits exactly one detection result after a final frame-level suppression stage - empty frames, underfilled batches, single-tile frames, and multi-batch tiled frames included. Decode must apply `conf_threshold` before expensive candidate handling. A tile-local NMS/top-K stage is allowed as a candidate-reduction optimization after score filtering, but it may compare candidates only within the same tile row. Cross-tile, tracker-vs-detector, and final public result deduplication remains frame-global and runs only after all valid tile rows for that source frame are projected to full-frame-normalized coordinates. The final NMS may be bypassed as a pass-through only when the frame has exactly one valid tile row, no tracker/propagated candidates, and that row has already run tile-local NMS or the model output is known to be post-NMS.
 
 **Tile-count cases:**
 - `T == 0`: no inference; emit empty detections for the frame. (Static `InferenceMetadata` is unaffected — it was already emitted once at init.)
@@ -167,7 +167,10 @@ Tile coordinate contract:
 - `NormalizedRect.x_center` / `y_center` = tile center in `[0,1]` relative to full-frame width/height.
 - `NormalizedRect.width` / `height` = tile size normalized by full-frame width/height; must be positive.
 - `NormalizedRect.rotation` optional; absent = `0`; if present, radians CCW around the tile center.
-- Tiles may overlap. The same object may appear in multiple tiles; dedup is handled only by the final frame-level global NMS.
+- Tiles may overlap. The same object may appear in multiple tiles; cross-tile
+  dedup is handled only by the final frame-level global NMS. Optional tile-local
+  NMS may remove duplicate candidates produced within one tile, but it must not
+  compare boxes from different tiles before merge.
 - Input order is stable. `tile_index` is assigned from this order after validation; optional priority is used only by overflow policy (`DROP_LOW_PRIORITY`).
 - Default validation rejects non-finite values, non-positive size, and tiles that do not intersect the frame. Silent clipping is not the default.
 
@@ -231,12 +234,12 @@ Per-frame timing/stats (latency, batch count) are intentionally excluded — met
 ## 7. M2 — YOLO decode + NMS
 
 - **`YoloTensorsToDetectionsCalculator`** — anchor-free decode for Ultralytics **v8/v11** detect heads.
-  - Options: `layout` (`CHANNELS_FIRST [N,4+num_classes,A]` | `CHANNELS_LAST [N,A,4+num_classes]`), `num_classes`, `conf_threshold` (default 0.25), `max_detections_before_nms` (default 300), `class_agnostic_nms`, coordinate convention (`xywh_normalized` first; pixel-space export unsupported until added).
+  - Options: `layout` (`CHANNELS_FIRST [N,4+num_classes,A]` | `CHANNELS_LAST [N,A,4+num_classes]`), `num_classes`, `conf_threshold` (default 0.25), `max_detections_before_nms` (default 300), optional `tile_local_nms_iou_threshold`, optional `max_detections_after_tile_nms`, `class_agnostic_nms`, coordinate convention (`xywh_normalized` first; pixel-space export unsupported until added).
   - Supported dtypes: `float32` initially. Quantized `uint8/int8` outputs require explicit dequantization support before acceptance.
   - Output: batched `Detection` with `RELATIVE_BOUNDING_BOX`.
 - **`YoloObbTensorsToOrientedDetectionsCalculator`** — same decode plus a per-box angle channel → batched `OrientedDetection`. Shares common options; adds angle handling.
 - **`RotatedNonMaxSuppressionCalculator`** — rotated-IoU NMS over flattened full-frame `OrientedDetection`.
-- Axis-aligned detection reuses the existing `non_max_suppression_calculator`, but only after batched outputs are flattened and (for tiled graphs) projected to full-frame-normalized coordinates. **No final NMS runs per tile before projection**; an optional per-tile top-K prefilter is allowed only as a perf optimization and must not replace global NMS.
+- Axis-aligned detection reuses the existing `non_max_suppression_calculator`, but only after batched outputs are flattened and (for tiled graphs) projected to full-frame-normalized coordinates. The decoder may first run `conf_threshold`, top-K, and optional **tile-local** NMS inside each batch row to reduce candidates. That local NMS is not the final NMS, must not compare candidates from different tiles, and must not replace the final frame-level global NMS except for the explicit single-tile/no-tracker safe-bypass case.
 - v5 (anchor-based) decode is a later add-on, not in this milestone.
 
 ## 8. M3 — External tiling (CPU)
@@ -244,7 +247,7 @@ Per-frame timing/stats (latency, batch count) are intentionally excluded — met
 - **`TileSpecToTilePlanCalculator`** — inputs `IMAGE_SIZE`/`IMAGE` metadata, externally supplied `TILES` (`std::vector<TileSpec>`, min `std::vector<NormalizedRect>`), and the `InferenceMetadata` side packet (model input size / keep-aspect-ratio, needed to build each tile-to-tensor matrix). Validates the §5.2 contract, normalizes tile metadata, applies overflow policy, emits `TilePlan`. Empty tile lists emit an empty result for that frame.
 - The tile-generation algorithm is outside this calculator. Upstream may provide overlap grids, ROI proposals, tracker-guided tiles, saliency tiles, manual regions, or any custom source.
 - **`StreamingTilesToTensorBatchCalculator`** consumes the source `IMAGE` + `TilePlan` directly, filling one inference batch tensor row-by-row and emitting it as soon as it is full. Memory is bounded by the current output batch plus accumulator state; it does not wait for all `T` tiles before the first inference.
-- Performance guardrails: `max_tiles_per_frame` and `max_batches_per_frame` are explicit options. Default overflow = `FAIL`; optional `DROP_LOW_PRIORITY` only when tile priority is present. Per-tile score thresholding and top-K caps may run before merge to reduce NMS cost, but the only NMS remains the final frame-level global NMS.
+- Performance guardrails: `max_tiles_per_frame` and `max_batches_per_frame` are explicit options. Default overflow = `FAIL`; optional `DROP_LOW_PRIORITY` only when tile priority is present. Per-tile score thresholding, top-K caps, and optional tile-local NMS may run before merge to reduce candidate volume, but the only cross-tile/tracker/global NMS remains the final frame-level global NMS. If there is exactly one tile row, no tracker/propagated candidates, and that row has already been locally NMSed or is post-NMS, the final stage may pass through without invoking NMS.
 - **`MergeTileDetectionsAccumulator`** — inputs `BatchDetections`/`BatchOrientedDetections`, `TensorBatchInfo`, `TilePlan`, per-tile tensor matrices. It maps each valid decoded row to its `tile_index`, **drops padded rows (row index `>= valid_count`, so padding never contributes detections)**, projects the remaining boxes to full-frame-normalized coords, and accumulates frame candidates until all batches for `source_frame_timestamp` arrive.
   - Bounded: `max_in_flight_frames` defaults to `1`; memory remains bounded by `max_in_flight_frames * max_candidates_per_frame`.
   - Merge inverts each tile's tile-to-tensor matrix, then composes tensor-to-tile with `TileGeometry`, accounting for crop offset, resize scale, keep-aspect-ratio padding, and any `NormalizedRect` rotation.
@@ -301,7 +304,7 @@ Separate sub-plan, sequenced after Group 1 calculators are verified. Not a Group
   - `RotatedNonMaxSuppressionCalculator`: overlapping/rotated cases, class-agnostic vs per-class.
   - `StreamingTilesToTensorBatchCalculator` (CPU): `T=0`, `T<batch_capacity`, `T=batch_capacity`, `T>batch_capacity`, fixed-batch padding, dynamic last batch, overflow policies, no cross-frame batching, no cropped-tile materialization, and first batch emitted before later tiles are tensorized.
   - `MergeTileDetectionsAccumulator`: known-overlap tiles, projection correctness, padded-row drop, frame-candidate flattening, out-of-order batch arrival, bounded in-flight state.
-  - Final NMS graph tests: every frame (single-tile and multi-batch tiled) runs exactly one global NMS after projection.
+  - Final NMS graph tests: multi-tile, multi-batch, and tracker-concat frames run exactly one global NMS after projection; the single-tile/no-tracker/already-local-NMSed case takes the pass-through bypass and produces identical detections.
   - M4 metadata (`InferenceRunner::GetModelMetadata()` + opt-in `METADATA` side packet): emitted **exactly once** after successful runner init; fields read from the loaded instance are correct (input/output specs, `batch_capacity`, `is_dynamic_batch`, input `H/W/C`, dtype, layout, class count); **not emitted on init failure**; graphs that don't wire `METADATA` are byte-for-byte upstream (guarded opt-in).
   - Metadata-driven packing: tiles are resized/packed to the metadata-declared input geometry/dtype; emitted `N` never exceeds `batch_capacity`; fixed-batch padding rows are excluded from results (no padded-tile detections appear in the merged output).
 - Edge-case unit tests:
@@ -352,7 +355,7 @@ Bounded caches, all bounded by explicit options (`max_in_flight_frames`, `max_ca
 4. **Output/decoder buffer cache** — raw-output read views, decoder scratch, candidate vectors, NMS work buffers keyed by output specs, class count, max candidates, dtype, backend, memory type.
 5. **Model/delegate cache** — wire existing `InferenceCalculator` knobs (`cached_kernel_path`, NNAPI `cache_dir`, model resources). Startup/compilation only; no per-frame correctness effect.
 
-**Cache correctness rules:** cache hits must not bypass the one-global-NMS-per-frame invariant; must not mix tiles/detections from different source frames into one batch; invalidate on model id, decoder/preprocessing/tile-policy options, image size, tensor layout, backend/delegate, memory type, class labels, thresholds, or OBB geometry semantics changes; GPU caches are GL-context-scoped and released only after downstream packets release them. Caches default off until covered by tests.
+**Cache correctness rules:** cache hits must not bypass the frame-level suppression invariant or its explicit single-tile safe-bypass rules; must not mix tiles/detections from different source frames into one batch; invalidate on model id, decoder/preprocessing/tile-policy options, image size, tensor layout, backend/delegate, memory type, class labels, thresholds, or OBB geometry semantics changes; GPU caches are GL-context-scoped and released only after downstream packets release them. Caches default off until covered by tests.
 
 ### 14.2 M6 — OpenGL zero-copy input path (folded into Group 2's M6)
 When input is `IMAGE_GPU` or an `Image` backed by `GpuBuffer`, tile crop/resize/normalize runs in `GlCalculatorHelper` and writes into cached `Tensor::OpenGlTexture2dView` / `Tensor::OpenGlBufferView` storage compatible with the selected inference path. The tiled path must not call `GetCpuReadView`/readback or materialize `ImageFrame` unless explicitly configured for CPU fallback. Use double/triple-buffered input tensors + GL fences/release callbacks; if the source is CPU-only and GPU mode is requested, upload once then keep all tile/input work on GPU. M6 later generalizes this beyond the OpenGL/TFLite path to LiteRT-Next and platform-specific backends (Metal/Vulkan/CUDA).
@@ -370,11 +373,17 @@ Video frame ─► MotionAnalysis ─► FlowPackagerCalculator ─► TRACKING:
                                       ▼
 Prior final detections cache ─► VideoTileSchedulerCalculator ─► TilePlan
 ```
-`FlowPackagerCalculator` is not a detector and does not replace YOLO; Group-1-family video mode uses its `TrackingData` only as a scheduling/cache signal (prioritize tiles, shrink the tile list, decide a frame can use propagated cached candidates). It does **not** assign long-lived track IDs — BoTSORT remains M7.
+`FlowPackagerCalculator` is not a detector and does not replace YOLO; Group-1-family video mode uses its `TrackingData` only as a scheduling signal (prioritize tiles, shrink the tile list, and decide whether the detector branch refreshes). It does **not** assign long-lived track IDs - BoTSORT remains M7.
 
-**Scheduling policy:** no cross-frame input batches even in video mode; refresh full tiled detection on first frame / cache miss / flow discontinuity / scene cut / confidence drop / at least every `detect_every_n_frames`; track-only frames emit an empty inference `TilePlan` + cache-propagated candidates that still pass through the final frame-level global NMS at the current timestamp; tile priority from `TrackingData`/prior detections gives `DROP_LOW_PRIORITY` deterministic semantics.
+**Scheduling policy:** no cross-frame input batches even in video mode; refresh is driven directly by `FlowPackager` tracking flags and decoded motion signals (`valid_background_model`, `is_chunk_boundary`, `is_duplicated`, feature count, and foreground motion), not by a private frame cadence. SKIP frames emit an empty inference `TilePlan`; detections for those frames come from the tracker path (`BoxTrackerCalculator` / `TrackedDetectionManagerCalculator`), then concatenate with any fresh detections and pass through the final frame-level global NMS at the current timestamp. Tile priority from `TrackingData`/prior detections gives `DROP_LOW_PRIORITY` deterministic semantics.
 
-**Boundary risk:** cross-frame candidate propagation overlaps M7 (BoTSORT). Keep M9 strictly scheduling/caching; if flow confidence is poor or cache chunks are missing, fall back to full tiled detection. Revisit whether candidate propagation should instead live in M7 before implementing.
+**Integration policy:** M9 is verified as one coupled graph contract. The
+scheduler, frame-local multi-batch tiled inference, cache behavior, tile-local
+candidate reduction, tracker-updated SKIP detections, and frame-level
+suppression are not independent follow-up scopes because they share timestamps,
+coordinate systems, cache keys, and candidate lifetimes.
+
+**Boundary risk:** cross-frame candidate propagation overlaps M7 (BoTSORT). Keep M9 strictly scheduling/tile selection; if flow confidence is poor, the background model is unstable, or tracking has a chunk boundary, fall back to tiled detection. Tracker-updated boxes live in the tracker calculators, not in the scheduler.
 
 `FlowPackagerCalculator`'s `CACHE_DIR` is a video-metadata cache (offline/random-access tracking metadata), distinct from the M8 tile/input/output caches; in live mode consume `TRACKING` directly and treat `COMPLETE` as offline-cache-finalization only.
 
