@@ -1,0 +1,35 @@
+// Copyright 2026 The MediaPipe Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package mediapipe;
+
+import "mediapipe/framework/calculator.proto";
+
+message VideoTileSchedulerCalculatorOptions {
+  extend mediapipe.CalculatorOptions {
+    optional VideoTileSchedulerCalculatorOptions ext = 471230006;
+  }
+
+  optional int32 max_scheduled_tiles = 1 [default = 0];
+  optional float motion_refresh_threshold = 2 [default = 0.0];
+  optional float motion_skip_threshold = 3 [default = 0.0];
+  optional int32 min_global_features = 4 [default = 0];
+  optional bool refresh_on_background_unstable = 5 [default = true];
+  optional bool refresh_on_chunk_boundary = 6 [default = true];
+  optional bool skip_on_duplicated = 7 [default = true];
+  optional bool detect_without_tracking = 8 [default = true];
+  optional bool refresh_on_uncertain_tracking = 9 [default = true];
+}

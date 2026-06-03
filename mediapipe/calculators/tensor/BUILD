@@ -2618,6 +2618,47 @@ cc_test(
     ],
 )
 
+mediapipe_proto_library(
+    name = "video_tile_scheduler_calculator_proto",
+    srcs = ["video_tile_scheduler_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "video_tile_scheduler_calculator",
+    srcs = ["video_tile_scheduler_calculator.cc"],
+    deps = [
+        ":video_tile_scheduler_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "//mediapipe/util/tracking:flow_packager_cc_proto",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "video_tile_scheduler_calculator_test",
+    srcs = ["video_tile_scheduler_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":video_tile_scheduler_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
 cc_test(
     name = "vector_to_tensor_calculator_test",
     srcs = ["vector_to_tensor_calculator_test.cc"],
