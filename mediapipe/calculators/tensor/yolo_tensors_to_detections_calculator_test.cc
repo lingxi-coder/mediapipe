@@ -223,5 +223,247 @@ TEST(YoloTensorsToDetectionsCalculatorTest, TopKKeepsHighestScores) {
   EXPECT_NEAR(batch[0][1].score(0), 0.6f, 1e-5);
 }
 
+// ---------------------------------------------------------------------------
+// Tile-local NMS tests
+// ---------------------------------------------------------------------------
+
+// Two highly-overlapping same-class boxes + one non-overlapping box.
+// With NMS threshold=0.5 the duplicate should be removed; the separate box kept.
+TEST(YoloTensorsToDetectionsCalculatorTest, TileLocalNmsRemovesWithinRowDuplicate) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.1
+        tile_local_nms_iou_threshold: 0.5
+      }
+    }
+  )pb"));
+
+  // Shape [N=1, C=5, A=3]; CHANNELS_FIRST layout: index c*A + a.
+  // Anchor0: cx=0.5 cy=0.5 w=0.4 h=0.4 score=0.9  (high scorer, kept)
+  // Anchor1: cx=0.5 cy=0.5 w=0.4 h=0.4 score=0.6  (duplicate of anchor0, suppressed)
+  // Anchor2: cx=0.1 cy=0.1 w=0.1 h=0.1 score=0.7  (separate box, kept)
+  // Anchor0 and Anchor1 are identical boxes -> IoU=1.0 > 0.5, so anchor1 suppressed.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 5, 3},
+                       {0.5f, 0.5f, 0.1f,    // cx: a0, a1, a2
+                        0.5f, 0.5f, 0.1f,    // cy
+                        0.4f, 0.4f, 0.1f,    // w
+                        0.4f, 0.4f, 0.1f,    // h
+                        0.9f, 0.6f, 0.7f})   // score (class 0)
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<BatchDetections>();
+  ASSERT_EQ(batch.size(), 1);
+  // Expect 2 detections: anchor0 (score 0.9) and anchor2 (score 0.7).
+  // Anchor1 (score 0.6, same box as anchor0) must be suppressed.
+  ASSERT_EQ(batch[0].size(), 2);
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+  EXPECT_NEAR(batch[0][1].score(0), 0.7f, 1e-5);
+}
+
+// Two overlapping boxes of DIFFERENT classes. With per-class NMS (default),
+// both should be kept because they have different label_ids.
+TEST(YoloTensorsToDetectionsCalculatorTest, TileLocalNmsIsPerClassByDefault) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 2
+        conf_threshold: 0.1
+        tile_local_nms_iou_threshold: 0.5
+        tile_local_nms_class_agnostic: false
+      }
+    }
+  )pb"));
+
+  // Shape [N=1, C=6, A=2]; channels = cx,cy,w,h,s0,s1; index c*A + a.
+  // Anchor0: box(0.5,0.5,0.4,0.4), class0=0.9, class1=0.2 -> class 0, score 0.9
+  // Anchor1: box(0.5,0.5,0.4,0.4), class0=0.1, class1=0.8 -> class 1, score 0.8
+  // Same geometry, IoU=1.0 > 0.5, but different classes -> both kept (per-class).
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 2},
+                       {0.5f, 0.5f,    // cx
+                        0.5f, 0.5f,    // cy
+                        0.4f, 0.4f,    // w
+                        0.4f, 0.4f,    // h
+                        0.9f, 0.1f,    // s0
+                        0.2f, 0.8f})   // s1
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<BatchDetections>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 2);  // both kept: different classes
+  EXPECT_EQ(batch[0][0].label_id(0), 0);
+  EXPECT_EQ(batch[0][1].label_id(0), 1);
+}
+
+// Same two overlapping different-class boxes, but with class_agnostic=true.
+// The lower-scoring box must be suppressed regardless of class.
+TEST(YoloTensorsToDetectionsCalculatorTest,
+     TileLocalNmsClassAgnosticSuppressesAcrossClasses) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 2
+        conf_threshold: 0.1
+        tile_local_nms_iou_threshold: 0.5
+        tile_local_nms_class_agnostic: true
+      }
+    }
+  )pb"));
+
+  // Same tensor as TileLocalNmsIsPerClassByDefault.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 2},
+                       {0.5f, 0.5f,    // cx
+                        0.5f, 0.5f,    // cy
+                        0.4f, 0.4f,    // w
+                        0.4f, 0.4f,    // h
+                        0.9f, 0.1f,    // s0
+                        0.2f, 0.8f})   // s1
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<BatchDetections>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 1);  // lower-scoring suppressed across classes
+  EXPECT_EQ(batch[0][0].label_id(0), 0);   // class 0 had score 0.9 (highest)
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+}
+
+// NMS operates WITHIN each row only. Two rows each with a box at the same
+// coordinates; NMS enabled -> both survive (one per row).
+TEST(YoloTensorsToDetectionsCalculatorTest, TileLocalNmsDoesNotCrossRows) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.1
+        tile_local_nms_iou_threshold: 0.5
+      }
+    }
+  )pb"));
+
+  // Shape [N=2, C=5, A=1]; CHANNELS_FIRST, A=1 so index (n*C + c)*1 = n*5+c.
+  // Row 0: cx=0.5,cy=0.5,w=0.4,h=0.4,score=0.9
+  // Row 1: cx=0.5,cy=0.5,w=0.4,h=0.4,score=0.8
+  // Both rows have a box at the same location, but NMS is per-row -> both kept.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{2, 5, 1},
+                       {0.5f, 0.5f, 0.4f, 0.4f, 0.9f,    // row 0
+                        0.5f, 0.5f, 0.4f, 0.4f, 0.8f})   // row 1
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<BatchDetections>();
+  ASSERT_EQ(batch.size(), 2);
+  EXPECT_EQ(batch[0].size(), 1);  // row 0: 1 detection
+  EXPECT_EQ(batch[1].size(), 1);  // row 1: 1 detection (not suppressed by row 0)
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+  EXPECT_NEAR(batch[1][0].score(0), 0.8f, 1e-5);
+}
+
+// max_detections_after_tile_nms caps the result to the top N highest-scoring.
+TEST(YoloTensorsToDetectionsCalculatorTest, MaxDetectionsAfterTileNmsCaps) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.1
+        tile_local_nms_iou_threshold: 0.5
+        max_detections_after_tile_nms: 2
+      }
+    }
+  )pb"));
+
+  // Shape [N=1, C=5, A=4]; four non-overlapping boxes (different positions),
+  // scores 0.3, 0.9, 0.5, 0.7. None overlap -> NMS keeps all 4, then cap to 2.
+  // Expected survivors: score 0.9 and 0.7.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 5, 4},
+                       {0.1f, 0.5f, 0.9f, 0.3f,    // cx
+                        0.1f, 0.5f, 0.9f, 0.3f,    // cy
+                        0.1f, 0.1f, 0.1f, 0.1f,    // w
+                        0.1f, 0.1f, 0.1f, 0.1f,    // h
+                        0.3f, 0.9f, 0.5f, 0.7f})   // score
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<BatchDetections>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 2);
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+  EXPECT_NEAR(batch[0][1].score(0), 0.7f, 1e-5);
+}
+
+// With tile_local_nms_iou_threshold=0 (default), two overlapping boxes both
+// survive — current behavior is preserved (no NMS applied).
+TEST(YoloTensorsToDetectionsCalculatorTest, DisabledTileLocalNmsIsNoOp) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:detections"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        layout: CHANNELS_FIRST
+        num_classes: 1
+        conf_threshold: 0.1
+      }
+    }
+  )pb"));
+
+  // Two identical boxes; with NMS disabled both should survive.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 5, 2},
+                       {0.5f, 0.5f,    // cx
+                        0.5f, 0.5f,    // cy
+                        0.4f, 0.4f,    // w
+                        0.4f, 0.4f,    // h
+                        0.9f, 0.6f})   // score
+                .release())
+          .At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("DETECTIONS").packets[0].Get<BatchDetections>();
+  ASSERT_EQ(batch.size(), 1);
+  ASSERT_EQ(batch[0].size(), 2);  // both boxes kept (NMS disabled)
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+  EXPECT_NEAR(batch[0][1].score(0), 0.6f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe

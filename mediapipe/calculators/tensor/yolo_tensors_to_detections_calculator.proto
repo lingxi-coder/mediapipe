@@ -44,4 +44,18 @@ message YoloTensorsToDetectionsCalculatorOptions {
   // Per batch row, keep at most this many highest-scoring candidates before
   // NMS. -1 keeps all candidates above conf_threshold.
   optional int32 max_detections_before_nms = 4 [default = 300];
+
+  // Tile-local NMS: after conf-threshold + top-K, suppress duplicate candidates
+  // WITHIN this batch row (one tile). IoU above this threshold suppresses the
+  // lower-scoring box. 0 = disabled (no tile-local NMS; default, unchanged).
+  // This is NOT the final frame-level NMS; it never compares across rows/tiles.
+  optional float tile_local_nms_iou_threshold = 5 [default = 0.0];
+
+  // After tile-local NMS, keep at most this many highest-scoring candidates per
+  // row. 0 = no post-cap (default).
+  optional int32 max_detections_after_tile_nms = 6 [default = 0];
+
+  // If true, tile-local NMS suppresses across classes; if false (default), only
+  // boxes with the same label_id suppress each other.
+  optional bool tile_local_nms_class_agnostic = 7 [default = false];
 }
