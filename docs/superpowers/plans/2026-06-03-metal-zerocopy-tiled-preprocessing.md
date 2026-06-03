@@ -1,5 +1,16 @@
 # Metal Zero-Copy Tiled Preprocessing (Phase 5, macOS) Implementation Plan
 
+> **OUTCOME UPDATE (2026-06-03):** implemented, then revised. Tasks 1–3 (Metal smoke,
+> tiled writer, calculator branch) shipped; Task 4 (delegate direct external-input)
+> shipped then was **reverted**. Deep review showed the physical-PHWC4 + direct-bind
+> approach is **batch-1 only** (delegate input is SHWBC4/batch-innermost; a contiguous
+> packet is batch-outermost — match only at N=1). Final design (commit `2fa11df`)
+> switched to the **GL-style logical-tensor** approach: the Metal writer is a **compute**
+> shader emitting logical BHWC `[N,H,W,C]`; the **unmodified** `InferenceCalculatorMetal`
+> converts it (correct for all N). The `metal_external_input_zero_copy` proto field and
+> Task 4 were removed. Task 4 below + the "true zero-copy delegate input" goal are
+> historical; "zero-copy" now means no-CPU-round-trip (one cheap on-GPU conversion stays).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a true Metal zero-copy tiled path: GPU-backed input is cropped/resized/normalized per tile in Metal, written directly into the exact `MTLBuffer` layout consumed by the TFLite Metal delegate, and `InferenceCalculatorMetal` invokes the delegate on that same buffer — no CPU readback and no intermediate BHWC→BPHWC4 input copy.

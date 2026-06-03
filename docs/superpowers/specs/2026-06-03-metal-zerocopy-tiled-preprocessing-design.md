@@ -1,5 +1,17 @@
 # Spec — Phase 5 (Metal): zero-copy tiled preprocessing on macOS
 
+> **DESIGN UPDATE (2026-06-03, commit `2fa11df`) — supersedes the delegate-direct-input design below.**
+> This spec originally specified emitting *physical PHWC4* and binding the packet
+> `MTLBuffer` directly to the TFLite Metal delegate (skipping `converter_to_BPHWC4_`).
+> Deep review found that is **batch-1 only**: the delegate's batched input is SHWBC4
+> (batch-innermost) while a contiguous packet is batch-outermost — they match only at
+> N=1. The shipped design instead follows the **GL path**: the Metal writer is a
+> **compute** shader emitting a *logical* BHWC `[N,H,W,C]` tensor, and the **unmodified**
+> `InferenceCalculatorMetal` runs its normal BHWC→BPHWC4 conversion (correct for all N).
+> "Zero-copy" = no CPU round-trip (preserved); one cheap on-GPU input conversion remains.
+> The `metal_external_input_zero_copy` proto field and the direct-bind mode were removed.
+> Sections below describing direct delegate binding / physical PHWC4 emission are historical.
+
 Date: 2026-06-03
 Status: Design (pre-plan)
 Branch: `dev` (long-lived integration branch; commit only when asked)
