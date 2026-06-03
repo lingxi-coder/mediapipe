@@ -2579,6 +2579,15 @@ mediapipe_proto_library(
 cc_library(
     name = "streaming_tiles_to_tensor_batch_calculator",
     srcs = ["streaming_tiles_to_tensor_batch_calculator.cc"],
+    # On Apple the Metal branch makes this an ObjC++ TU (mirrors
+    # image_to_tensor_calculator).
+    copts = select({
+        "//mediapipe:apple": [
+            "-x objective-c++",
+            "-fobjc-arc",
+        ],
+        "//conditions:default": [],
+    }),
     # Allow depending on the GPU-deps grab-bag below without strict layering.
     features = ["-layering_check"],
     deps = [
@@ -2618,6 +2627,11 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = selects.with_or({
         "//mediapipe:apple": [
+            ":image_to_tensor_converter",
+            ":image_to_tensor_utils",
+            ":streaming_tiles_to_tensor_batch_metal",
+            "//mediapipe/framework/port:status",
+            "//mediapipe/gpu:MPPMetalHelper",
             "//mediapipe/gpu:gpu_buffer",
         ],
         "//mediapipe:emscripten": [
@@ -2767,7 +2781,7 @@ cc_test(
             "//mediapipe/framework/formats:inference_metadata_cc_proto",
             "//mediapipe/framework/formats:tensor",
             "//mediapipe/framework/port:parse_text_proto",
-            "//mediapipe/framework/port:status_macros",
+            "//mediapipe/framework/port:status",
             "//mediapipe/framework/port:status_matchers",
             "//mediapipe/gpu:gpu_buffer",
             "//mediapipe/gpu:gpu_test_base",
@@ -2840,6 +2854,34 @@ cc_test(
             ":streaming_tiles_to_tensor_batch_metal",
             "//mediapipe/framework/formats:tensor",
             "//mediapipe/framework/port:status_matchers",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# Metal env required. Calculator-level Metal zero-copy test; runs on this Mac.
+# On non-apple the source compiles to an empty TU.
+cc_test(
+    name = "streaming_tiles_to_tensor_batch_calculator_metal_test",
+    srcs = ["streaming_tiles_to_tensor_batch_calculator_metal_test.cc"],
+    deps = [
+        "//mediapipe/framework:port",
+        "//mediapipe/framework/port:gtest_main",
+    ] + select({
+        "//mediapipe:apple": [
+            ":streaming_tiles_to_tensor_batch_calculator",
+            ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+            ":tiling_types",
+            "//mediapipe/framework:calculator_framework",
+            "//mediapipe/framework/formats:inference_metadata_cc_proto",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:parse_text_proto",
+            "//mediapipe/framework/port:status",
+            "//mediapipe/framework/port:status_matchers",
+            "//mediapipe/gpu:gpu_buffer",
+            "//mediapipe/gpu:gpu_shared_data_internal",
+            "//mediapipe/util:image_test_utils",
+            "@com_google_absl//absl/status",
         ],
         "//conditions:default": [],
     }),

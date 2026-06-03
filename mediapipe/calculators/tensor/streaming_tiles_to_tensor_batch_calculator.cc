@@ -39,10 +39,11 @@
 #include "mediapipe/framework/port/ret_check.h"
 #include "mediapipe/framework/timestamp.h"
 
-// GPU zero-copy path (Plan 4). All GPU code is compiled out under
-// MEDIAPIPE_DISABLE_GPU=1 and on configs without GLES 3.1 (e.g. Apple, where
-// the GLES SSBO compute path is unavailable); the CPU path below is then the
-// only code and stays byte-identical to Plan 3.
+// GPU zero-copy path (Plan 4 OpenGL / Phase 5 Metal). All GPU code is compiled
+// out under MEDIAPIPE_DISABLE_GPU=1; the GLES branch additionally requires GLES
+// 3.1 (Android/Linux) and the Metal branch requires MEDIAPIPE_METAL_ENABLED
+// (Apple). When no GPU path compiles, the CPU path below is the only code and
+// stays byte-identical to Plan 3.
 #if !MEDIAPIPE_DISABLE_GPU
 #include "mediapipe/gpu/gpu_buffer.h"
 #if MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31
@@ -56,15 +57,33 @@
 #include "tensorflow/lite/delegates/gpu/gl/gl_buffer.h"
 #include "tensorflow/lite/delegates/gpu/gl/gl_texture.h"
 #include "tensorflow/lite/delegates/gpu/gl/request_gpu_info.h"
+#elif MEDIAPIPE_METAL_ENABLED
+#import <Metal/Metal.h>
+
+#include "mediapipe/calculators/tensor/image_to_tensor_converter.h"  // BorderMode
+#include "mediapipe/calculators/tensor/image_to_tensor_utils.h"      // RotatedRect
+#include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_metal.h"
+#include "mediapipe/framework/formats/tensor_mtl_buffer_view.h"
+#include "mediapipe/framework/port/status_macros.h"
+#include "mediapipe/gpu/MPPMetalHelper.h"
 #endif  // MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31
 #endif  // !MEDIAPIPE_DISABLE_GPU
 
 namespace mediapipe {
 namespace api2 {
 
+// GLES 3.1 SSBO zero-copy branch (Android/Linux GL).
 #define MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY \
   (!MEDIAPIPE_DISABLE_GPU &&                     \
    MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31)
+// Metal zero-copy branch (Apple). GLES takes precedence where both could apply.
+#define MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY \
+  (!MEDIAPIPE_DISABLE_GPU && !MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY && \
+   MEDIAPIPE_METAL_ENABLED)
+// Either GPU zero-copy branch (shared helpers: RoiToRotatedRect, kInImageGpu).
+#define MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY \
+  (MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY ||       \
+   MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY)
 
 // Streams externally-supplied tiles into batched [N,H,W,C] float32 tensors.
 // CPU: crop -> resize -> normalize into batch rows.
@@ -92,6 +111,20 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                           kOutStats,
                           ::mediapipe::api2::TimestampChange::Arbitrary());
 #endif  // !MEDIAPIPE_DISABLE_GPU
+
+#if MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
+  // Declare the (optional) GPU service so it is injected when the graph provides
+  // GpuResources. Keeping it OPTIONAL means a CPU-only graph on a GPU-enabled
+  // build (no GpuResources) still runs the CPU path unaffected.
+  static absl::Status UpdateContract(CalculatorContract* cc) {
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+    return [MPPMetalHelper updateContract:cc requestGpuAsOptional:true];
+#else
+    return mediapipe::GlCalculatorHelper::UpdateContract(
+        cc, /*request_gpu_as_optional=*/true);
+#endif
+  }
+#endif  // MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
 
   absl::Status Open(CalculatorContext* cc) override {
     options_ = cc->Options<
@@ -163,10 +196,32 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       gpu_zero_copy_active_ = true;
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+    if (options_.enable_gpu_zero_copy() && kInImageGpu(cc).IsConnected()) {
+      RET_CHECK_EQ(meta_.input_channels(), 3)
+          << "Metal zero-copy path supports RGB (input_channels == 3) only";
+      metal_helper_ = [[MPPMetalHelper alloc] initWithCalculatorContext:cc];
+      RET_CHECK(metal_helper_ != nil) << "failed creating MPPMetalHelper";
+      MP_ASSIGN_OR_RETURN(
+          metal_writer_,
+          TiledBatchMetalWriter::Create(metal_helper_.mtlDevice,
+                                        meta_.input_width(),
+                                        meta_.input_height(),
+                                        meta_.input_channels(),
+                                        BorderMode::kReplicate));
+      metal_zero_copy_active_ = true;
+    }
+#endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
     return absl::OkStatus();
   }
 
   absl::Status Process(CalculatorContext* cc) override {
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+    if (metal_zero_copy_active_ && kInImageGpu(cc).IsConnected() &&
+        !kInImageGpu(cc).IsEmpty()) {
+      return ProcessMetal(cc);
+    }
+#endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
 #if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
     if (gpu_zero_copy_active_ && kInImageGpu(cc).IsConnected() &&
         !kInImageGpu(cc).IsEmpty()) {
@@ -343,7 +398,97 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     MaybeEmitStats(cc, ts);
     return absl::OkStatus();
   }
+#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
 
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+  // Metal zero-copy path (Apple): crop/resize/normalize each tile into its
+  // PHWC4 row of a Metal-backed physical [N,H,W,C4] tensor via the Metal render
+  // writer, no CPU readback. Mirrors ProcessCpu's batch/timestamp/INFO
+  // semantics; the emitted tensor is physical PHWC4 (C4=RoundUp(C,4)) for the
+  // Metal delegate's direct input layout (Task 4), while TensorBatchInfo stays
+  // logical.
+  absl::Status ProcessMetal(CalculatorContext* cc) {
+    const mediapipe::GpuBuffer& gpu = *kInImageGpu(cc);
+    const TilePlan& plan = *kInPlan(cc);
+    const int H = meta_.input_height();
+    const int W = meta_.input_width();
+    const int C = meta_.input_channels();
+    const int C4 = ((C + 3) / 4) * 4;  // PHWC4 physical channels
+    const int cap = meta_.batch_capacity();
+    const int fw = gpu.width();
+    const int fh = gpu.height();
+
+    const int T = static_cast<int>(plan.tiles.size());
+    const int total_batches = (T + cap - 1) / cap;
+    const int64_t ts = cc->InputTimestamp().Value();
+
+    ++gpu_frames_;  // one program use per frame (Cache 4 reuse accounting)
+    int emitted = 0;
+    for (int start = 0; start < T; start += cap) {
+      const int rows = std::min(cap, T - start);
+      const int N = dynamic_batch_ ? rows : cap;
+      Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{N, H, W, C4},
+                    gpu_memory_manager_.get());
+
+      std::shared_ptr<const TileBatchGeometry> geom =
+          BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
+
+      @autoreleasepool {
+        id<MTLTexture> texture = [metal_helper_ metalTextureWithGpuBuffer:gpu];
+        RET_CHECK(texture != nil) << "failed creating MTLTexture from GpuBuffer";
+        id<MTLCommandBuffer> command_buffer = [metal_helper_ commandBuffer];
+        const auto& write_view =
+            MtlBufferView::GetWriteView(tensor, command_buffer);
+        // GpuBuffer textures are 4-channel; Metal samples them as [0,1], so
+        // alpha=1 (NOT 1/255) matches the CPU uint8/255 normalization.
+        for (int r = 0; r < rows; ++r) {
+          const RotatedRect rr = RoiToRotatedRect(geom->effective_pixel_rois[r]);
+          MP_RETURN_IF_ERROR(metal_writer_->RenderTileRow(
+              texture, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f, command_buffer,
+              write_view.buffer()));
+        }
+        // Clear padding rows [rows, N): alpha=0,beta=0 writes (0,0,0,0).
+        const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
+        for (int r = rows; r < N; ++r) {
+          MP_RETURN_IF_ERROR(metal_writer_->RenderTileRow(
+              texture, full, r, /*alpha=*/0.0f, /*beta=*/0.0f, command_buffer,
+              write_view.buffer()));
+        }
+        [command_buffer commit];
+        // write_view destructs at scope end -> Metal fence; downstream Metal
+        // inference's read view waits on it. No CPU readback.
+      }
+
+      TensorBatchInfo info;
+      info.source_frame_timestamp = ts;
+      info.batch_timestamp = batch_ts_.Value();
+      info.batch_index = emitted;
+      info.total_batches = total_batches;
+      info.batch_capacity = N;
+      info.batch_size = N;
+      info.valid_count = rows;
+      info.tile_indices = geom->tile_indices;
+      info.geometry = geom;
+
+      std::vector<Tensor> tensors;
+      tensors.push_back(std::move(tensor));
+      kOutTensors(cc).Send(
+          mediapipe::api2::MakePacket<std::vector<Tensor>>(std::move(tensors))
+              .At(batch_ts_));
+      kOutInfo(cc).Send(
+          mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+              .At(batch_ts_));
+      ++batch_ts_;
+      ++emitted;
+    }
+    gpu_batches_in_flight_ = emitted;
+    EmitEmptyFrameIfNeeded(cc, T, ts);
+    MaybeEmitStats(cc, ts);
+    return absl::OkStatus();
+  }
+#endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+
+#if MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
   static RotatedRect RoiToRotatedRect(const TilePixelRoi& roi) {
     RotatedRect rect;
     rect.center_x = roi.x + roi.width / 2.0f;
@@ -353,7 +498,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     rect.rotation = 0.0f;
     return rect;
   }
-#endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+#endif  // MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
 
   // Geometry (matrices + ROIs) depends only on frame size + tile set, not
   // pixels. Cache it; the pixel crop/resize always runs every frame.
@@ -422,6 +567,15 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       // a GLES device.
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+    if (metal_zero_copy_active_) {
+      // Cache 4: the Metal render pipeline is compiled once and reused.
+      stats.tile_surface.misses = (metal_writer_ != nullptr) ? 1 : 0;
+      stats.tile_surface.hits = (gpu_frames_ > 0) ? gpu_frames_ - 1 : 0;
+      stats.in_flight_gpu_batches = gpu_batches_in_flight_;
+      stats.gpu_to_cpu_fallbacks = gpu_to_cpu_fallbacks_;
+    }
+#endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
     kOutStats(cc).Send(
         mediapipe::api2::MakePacket<TilingCacheStats>(stats).At(Timestamp(ts)));
   }
@@ -466,16 +620,24 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   std::shared_ptr<MemoryManager> memory_manager_;  // null unless pooling enabled
   cv::Mat resized_workspace_;  // reused across rows/batches when shape matches
   cv::Mat f32_workspace_;
+#if MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
+  // Shared by both GPU branches (Cache 5 AHWB pool + diagnostic counters).
+  std::shared_ptr<MemoryManager> gpu_memory_manager_;
+  int64_t gpu_frames_ = 0;             // ProcessGpu/Metal() calls = program uses
+  int64_t gpu_batches_in_flight_ = 0;  // batches emitted from the last frame
+  int64_t gpu_to_cpu_fallbacks_ = 0;   // GPU-requested frames served on CPU
+#endif  // MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
 #if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
   mediapipe::GlCalculatorHelper gl_helper_;
   std::unique_ptr<tflite::gpu::gl::CommandQueue> command_queue_;
   std::unique_ptr<TiledBatchGlWriter> gl_writer_;
-  std::shared_ptr<MemoryManager> gpu_memory_manager_;  // Cache 5 (AHWB pool)
   bool gpu_zero_copy_active_ = false;
-  int64_t gpu_frames_ = 0;             // ProcessGpu() calls = program uses
-  int64_t gpu_batches_in_flight_ = 0;  // batches emitted from the last frame
-  int64_t gpu_to_cpu_fallbacks_ = 0;   // GPU-requested frames served on CPU
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+  MPPMetalHelper* metal_helper_ = nil;
+  std::unique_ptr<TiledBatchMetalWriter> metal_writer_;
+  bool metal_zero_copy_active_ = false;
+#endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
 };
 
 MEDIAPIPE_REGISTER_NODE(StreamingTilesToTensorBatchCalculator);
