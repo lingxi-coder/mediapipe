@@ -2950,6 +2950,77 @@ cc_test(
     }),
 )
 
+# Metal env required (runs on this Mac, Apple M2 Max). END-TO-END proof of TRUE
+# Metal zero-copy through a real tiled OBB detection pipeline: GPU frame ->
+# direct-PHWC4 tiled front -> direct Metal delegate input (converter skipped) ->
+# OBB decode -> tile->global merge -> global rotated NMS. Asserts converter-
+# skipped direct bind + buffer identity (ZERO_COPY_DEBUG), no CPU fallback, one
+# merged result, equivalence vs the CPU-front Metal-inference control, and a
+# ship. Gated on the yolov8n-obb.tflite + boats.jpg fixtures. On non-apple the
+# source compiles to an empty TU.
+cc_test(
+    name = "tiled_zero_copy_detection_metal_test",
+    srcs = ["tiled_zero_copy_detection_metal_test.cc"],
+    copts = select({
+        "//mediapipe:apple": [
+            "-x objective-c++",
+            "-fobjc-arc",
+        ],
+        "//conditions:default": [],
+    }),
+    # yolo_obb_test_model globs BOTH yolov8n-obb.tflite AND boats.jpg, and is
+    # the fixture target whose visibility was widened to this package. (The
+    # general :test_images group keeps the package-default //mediapipe/tasks
+    # visibility, so it is intentionally NOT used here.)
+    data = select({
+        "//mediapipe:apple": [
+            "//mediapipe/tasks/testdata/vision:yolo_obb_test_model",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "//mediapipe:apple": [
+            "-framework Metal",
+            "-framework Foundation",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = 1,
+    deps = [
+        "//mediapipe/framework:port",
+        "//mediapipe/framework/port:gtest_main",
+    ] + select({
+        "//mediapipe:apple": [
+            ":inference_calculator",
+            ":merge_tile_detections_accumulator_calculator",
+            ":streaming_tiles_to_tensor_batch_calculator",
+            ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+            ":tiling_cache_stats",
+            ":tiling_types",
+            ":yolo_obb_tensors_to_oriented_detections_calculator",
+            "//mediapipe/calculators/core:pass_through_calculator",
+            "//mediapipe/calculators/util:rotated_non_max_suppression_calculator",
+            "//mediapipe/framework:calculator_framework",
+            "//mediapipe/framework/formats:image_frame",
+            "//mediapipe/framework/formats:inference_metadata_cc_proto",
+            "//mediapipe/framework/formats:oriented_detection_cc_proto",
+            "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:file_helpers",
+            "//mediapipe/framework/port:opencv_core",
+            "//mediapipe/framework/port:opencv_imgcodecs",
+            "//mediapipe/framework/port:parse_text_proto",
+            "//mediapipe/framework/port:status",
+            "//mediapipe/framework/port:status_matchers",
+            "//mediapipe/gpu:gpu_buffer",
+            "//mediapipe/gpu:gpu_buffer_format",
+            "//mediapipe/gpu:gpu_shared_data_internal",
+            "//mediapipe/util:image_test_utils",
+            "@com_google_absl//absl/status",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
 mediapipe_proto_library(
     name = "video_tile_scheduler_calculator_proto",
     srcs = ["video_tile_scheduler_calculator.proto"],
