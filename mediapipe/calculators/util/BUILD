@@ -2026,3 +2026,67 @@ cc_test(
         "//mediapipe/framework/port:status_matchers",
     ],
 )
+
+mediapipe_proto_library(
+    name = "oriented_detection_label_id_to_text_calculator_proto",
+    srcs = ["oriented_detection_label_id_to_text_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+        "//mediapipe/util:label_map_proto",
+    ],
+)
+
+cc_library(
+    name = "oriented_detection_label_id_to_text_calculator",
+    srcs = ["oriented_detection_label_id_to_text_calculator.cc"],
+    deps = [
+        ":oriented_detection_label_id_to_text_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:packet",
+        "//mediapipe/framework:resources",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:core_proto",
+        "//mediapipe/framework/port:integral_types",
+        "//mediapipe/framework/port:ret_check",
+        "//mediapipe/framework/port:status",
+        "//mediapipe/util:label_map_cc_proto",
+        "//mediapipe/util:label_map_util",
+        "//mediapipe/util:resource_util",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+    ] + select({
+        "//mediapipe:android": [
+            "//mediapipe/util/android/file/base",
+        ],
+        "//mediapipe:ios": [
+            "//mediapipe/util/android/file/base",
+        ],
+        "//mediapipe:emscripten": [
+            "//mediapipe/util/android/file/base",
+        ],
+        "//mediapipe:macos": [
+            "//mediapipe/framework/port:file_helpers",
+        ],
+        "//conditions:default": [
+            "//mediapipe/framework/port:file_helpers",
+        ],
+    }),
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "oriented_detection_label_id_to_text_calculator_test",
+    srcs = ["oriented_detection_label_id_to_text_calculator_test.cc"],
+    deps = [
+        ":oriented_detection_label_id_to_text_calculator",
+        ":oriented_detection_label_id_to_text_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
