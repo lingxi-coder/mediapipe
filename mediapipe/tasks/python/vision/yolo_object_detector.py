@@ -205,10 +205,11 @@ class YoloObjectDetectorOptions:
       data. The result callback should only be specified when the running mode
       is set to the live stream mode.
 
-  NOTE: display_names_locale / category_allowlist / category_denylist are
-  accepted for parity with the C++ task, but the current YOLO graph does not
-  apply label mapping or allowlist/denylist filtering. Category names are
-  populated best-effort in Python from TFLite metadata (None if unavailable).
+  Category names are populated by the YOLO graph from the model metadata's
+  label file, and category_allowlist / category_denylist filter results by
+  class name. The Python `_load_label_map` fallback below is a display-only
+  safety net for models whose graph did not populate names; it never overrides
+  a name the graph already provided and does not implement filtering.
   """
 
   base_options: _BaseOptions

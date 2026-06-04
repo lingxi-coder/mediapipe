@@ -42,11 +42,9 @@ typedef MpDetectionResult MpYoloObjectDetectorResult;
 
 // The options for configuring a MediaPipe YOLO object detector task.
 //
-// NOTE: display_names_locale, category_allowlist, and category_denylist are
-// passed through faithfully to the C++ task, but the 2.1a YOLO graph currently
-// validates them only for mutual exclusivity and does NOT apply label mapping
-// or allowlist/denylist filtering. They are therefore presently no-ops; only
-// score_threshold / iou_threshold / max_results affect output today.
+// display_names_locale, category_allowlist, and category_denylist are applied
+// by the YOLO graph: category names are read from the model metadata's label
+// file and allow/deny filter results by class name (resolved to indices).
 struct MpYoloObjectDetectorOptions {
   struct MpBaseOptions base_options;
 
