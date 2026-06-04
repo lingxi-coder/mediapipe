@@ -82,10 +82,10 @@ cc_test(
     name = "oriented_object_detector_test",
     srcs = ["oriented_object_detector_test.cc"],
     data = [
-        # Image fixture (always present — fetched from GCS via mediapipe_files).
+        # Image fixture set (always present — fetched from GCS via mediapipe_files).
         "//mediapipe/tasks/testdata/vision:test_images",
-        # Model fixture (NOT yet available — add when yolov8n-obb.tflite lands):
-        # "//mediapipe/tasks/testdata/vision:yolov8n-obb.tflite",
+        # OBB model + DOTA image: empty unless exported locally (export_yolov8n_obb_tflite.py).
+        "//mediapipe/tasks/testdata/vision:yolo_obb_test_model",
     ],
     deps = [
         ":oriented_object_detector",
