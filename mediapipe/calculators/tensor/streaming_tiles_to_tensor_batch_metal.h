@@ -43,12 +43,17 @@ namespace mediapipe {
 // BHWC->BPHWC4 conversion (which handles batch correctly for any N). This avoids
 // the batch-1-only restriction of writing the delegate's physical PHWC4/SHWBC4
 // layout directly. RGB (channels == 3) only for v1.
+//
+// When physical_phwc4=true, writes 4 floats/pixel (RGB + 0.0 pad) into a
+// physical PHWC4 [1,H,W,4] buffer at index 4*(tile_row*out_h*out_w + y*out_w +
+// x), matching the TFLite Metal delegate's N=1 input layout for direct binding.
 class TiledBatchMetalWriter {
  public:
   // out_w/out_h: per-tile (= per-row) width/height. channels must be 3.
+  // physical_phwc4: when true, writes 4 floats/pixel (RGB + 0.0) instead of 3.
   static absl::StatusOr<std::unique_ptr<TiledBatchMetalWriter>> Create(
       id<MTLDevice> device, int out_w, int out_h, int channels,
-      BorderMode border_mode);
+      BorderMode border_mode, bool physical_phwc4 = false);
 
   // sub_rect: the tile's RotatedRect over the source texture (same convention as
   //   the CPU path / image_to_tensor).
@@ -70,16 +75,18 @@ class TiledBatchMetalWriter {
  private:
   TiledBatchMetalWriter(id<MTLDevice> device,
                         id<MTLComputePipelineState> pipeline, int out_w,
-                        int out_h)
+                        int out_h, bool physical_phwc4)
       : device_(device),
         pipeline_(pipeline),
         out_w_(out_w),
-        out_h_(out_h) {}
+        out_h_(out_h),
+        physical_phwc4_(physical_phwc4) {}
 
   id<MTLDevice> device_;
   id<MTLComputePipelineState> pipeline_;
   int out_w_ = 0;
   int out_h_ = 0;
+  bool physical_phwc4_ = false;
 };
 
 }  // namespace mediapipe

@@ -139,6 +139,64 @@ TEST(StreamingTilesToTensorBatchMetalTest, FullFrameMatrixIsIdentity) {
   EXPECT_NEAR(mat[7], 0.0f, 1e-5);
 }
 
+// Physical PHWC4 mode: 4 floats/pixel, RGB + 0.0 pad.  Verifies that the
+// padded 4th channel is exactly 0.0 and the RGB channels match the expected
+// normalized color values (within GPU bilinear tolerance).
+TEST(StreamingTilesToTensorBatchMetalTest, PhysicalPhwc4WriterWritesPaddedRgba) {
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  ASSERT_NE(device, nil) << "no Metal device";
+  id<MTLCommandQueue> queue = [device newCommandQueue];
+
+  constexpr int kSrcW = 16, kSrcH = 16;
+  constexpr int kOutW = 4, kOutH = 4;
+  constexpr int kPhysC = 4;  // physical PHWC4 stride
+  constexpr uint8_t kR = 80, kG = 160, kB = 200;
+
+  std::vector<float> cpu;
+  @autoreleasepool {
+    id<MTLTexture> input = MakeUniformTexture(device, kSrcW, kSrcH, kR, kG, kB);
+
+    // Create writer in physical PHWC4 mode; channels is still the logical 3.
+    auto writer_or = TiledBatchMetalWriter::Create(device, kOutW, kOutH,
+                                                   /*channels=*/3,
+                                                   BorderMode::kReplicate,
+                                                   /*physical_phwc4=*/true);
+    MP_ASSERT_OK(writer_or);
+    auto writer = std::move(writer_or).value();
+
+    // Physical [1, kOutH, kOutW, 4] tensor (batch==1, 4 channels).
+    Tensor tensor(Tensor::ElementType::kFloat32,
+                  Tensor::Shape{1, kOutH, kOutW, kPhysC});
+
+    id<MTLCommandBuffer> cb = [queue commandBuffer];
+    {
+      auto wv = MtlBufferView::GetWriteView(tensor, cb);
+      // Full-frame crop: sub_rect covers the whole source image.
+      MP_ASSERT_OK(writer->WriteTileRow(
+          input, PixelRoiRect(0, 0, kSrcW, kSrcH), /*tile_row=*/0,
+          /*alpha=*/1.0f, /*beta=*/0.0f, cb, wv.buffer()));
+    }
+    [cb commit];
+    [cb waitUntilCompleted];
+
+    auto view = tensor.GetCpuReadView();
+    const float* buf = view.buffer<float>();
+    cpu.assign(buf, buf + tensor.shape().num_elements());
+  }
+
+  ASSERT_EQ(cpu.size(),
+            static_cast<size_t>(1 * kOutH * kOutW * kPhysC));
+
+  const float er = kR / 255.0f, eg = kG / 255.0f, eb = kB / 255.0f;
+  for (int p = 0; p < kOutH * kOutW; ++p) {
+    const int base = p * kPhysC;
+    EXPECT_NEAR(cpu[base + 0], er, 2e-2) << "px " << p << " R";
+    EXPECT_NEAR(cpu[base + 1], eg, 2e-2) << "px " << p << " G";
+    EXPECT_NEAR(cpu[base + 2], eb, 2e-2) << "px " << p << " B";
+    EXPECT_EQ(cpu[base + 3], 0.0f) << "px " << p << " pad channel must be 0";
+  }
+}
+
 }  // namespace
 }  // namespace mediapipe
 

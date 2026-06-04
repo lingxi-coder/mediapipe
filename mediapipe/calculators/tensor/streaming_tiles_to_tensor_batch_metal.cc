@@ -32,13 +32,10 @@
 namespace mediapipe {
 namespace {
 
-// Compute shader: per output pixel, transform the normalized output coord
-// through the sub-rect matrix, sample the input texture, normalize, and write 3
-// packed floats at this tile's batch-row offset. Mirrors the GLES 3.1 SSBO
-// writer's shader. The transform is uploaded as the raw row-major
-// GetRotatedSubRectToRectTransformMatrix bytes and applied as (rowvec * matrix),
-// exactly matching image_to_tensor_converter_metal's vertex transform.
-constexpr char kComputeShader[] = R"(
+// Shared preamble for both compute shaders: uniforms struct + sampler selection
+// via CLAMP_TO_ZERO define. CHANNEL_STRIDE switches between 3 (logical BHWC)
+// and 4 (physical PHWC4).
+constexpr char kShaderPreamble[] = R"(
   #include <metal_stdlib>
   using namespace metal;
 
@@ -49,7 +46,10 @@ constexpr char kComputeShader[] = R"(
     float alpha;
     float beta;
   };
+)";
 
+// Logical [N,H,W,3] writer — 3 floats/pixel, tight packed RGB. Default mode.
+constexpr char kComputeShader[] = R"(
   kernel void tileWriter(
       texture2d<float, access::sample> input_texture [[texture(0)]],
       device float* output_data [[buffer(0)]],
@@ -77,6 +77,37 @@ constexpr char kComputeShader[] = R"(
   }
 )";
 
+// Physical PHWC4 [1,H,W,4] writer — 4 floats/pixel: RGB + 0.0 pad.
+// Matches the TFLite Metal delegate's N=1 input layout for direct binding.
+constexpr char kComputeShaderPhwc4[] = R"(
+  kernel void tileWriter(
+      texture2d<float, access::sample> input_texture [[texture(0)]],
+      device float* output_data [[buffer(0)]],
+      constant Uniforms& u [[buffer(1)]],
+      constant float4x4& transform_matrix [[buffer(2)]],
+      uint2 gid [[thread_position_in_grid]]) {
+    if (int(gid.x) >= u.out_w || int(gid.y) >= u.out_h) {
+      return;
+    }
+    float nx = (float(gid.x) + 0.5) / float(u.out_w);
+    float ny = (float(gid.y) + 0.5) / float(u.out_h);
+    float4 tc = float4(nx, ny, 0.0, 1.0) * transform_matrix;
+    #ifdef CLAMP_TO_ZERO
+    constexpr sampler linear_sampler(address::clamp_to_zero, min_filter::linear,
+                                     mag_filter::linear);
+    #else
+    constexpr sampler linear_sampler(address::clamp_to_edge, min_filter::linear,
+                                     mag_filter::linear);
+    #endif
+    float4 px = input_texture.sample(linear_sampler, tc.xy) * u.alpha + u.beta;
+    int linear_index = u.row_base + int(gid.y) * u.out_w + int(gid.x);
+    output_data[4 * linear_index + 0] = px.r;
+    output_data[4 * linear_index + 1] = px.g;
+    output_data[4 * linear_index + 2] = px.b;
+    output_data[4 * linear_index + 3] = 0.0;
+  }
+)";
+
 struct Uniforms {
   int out_w;
   int out_h;
@@ -89,7 +120,8 @@ struct Uniforms {
 
 absl::StatusOr<std::unique_ptr<TiledBatchMetalWriter>>
 TiledBatchMetalWriter::Create(id<MTLDevice> device, int out_w, int out_h,
-                              int channels, BorderMode border_mode) {
+                              int channels, BorderMode border_mode,
+                              bool physical_phwc4) {
   RET_CHECK(device != nil);
   RET_CHECK_GT(out_w, 0);
   RET_CHECK_GT(out_h, 0);
@@ -101,7 +133,11 @@ TiledBatchMetalWriter::Create(id<MTLDevice> device, int out_w, int out_h,
   if (border_mode == BorderMode::kZero) {
     clamp_def = "\n#define CLAMP_TO_ZERO\n";
   }
-  const std::string source = absl::StrCat(clamp_def, kComputeShader);
+  // Select shader body based on output layout mode.
+  const char* shader_body =
+      physical_phwc4 ? kComputeShaderPhwc4 : kComputeShader;
+  const std::string source =
+      absl::StrCat(clamp_def, kShaderPreamble, shader_body);
 
   NSError* error = nil;
   id<MTLLibrary> library =
@@ -118,7 +154,7 @@ TiledBatchMetalWriter::Create(id<MTLDevice> device, int out_w, int out_h,
                              << [[error localizedDescription] UTF8String];
 
   return absl::WrapUnique(
-      new TiledBatchMetalWriter(device, pipeline, out_w, out_h));
+      new TiledBatchMetalWriter(device, pipeline, out_w, out_h, physical_phwc4));
 }
 
 absl::Status TiledBatchMetalWriter::WriteTileRow(
