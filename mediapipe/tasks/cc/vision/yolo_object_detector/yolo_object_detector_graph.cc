@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "mediapipe/calculators/tensor/yolo_tensors_to_detections_calculator.pb.h"
+#include "mediapipe/calculators/util/detection_label_id_to_text_calculator.pb.h"
 #include "mediapipe/calculators/util/non_max_suppression_calculator.pb.h"
 #include "mediapipe/framework/api2/builder.h"
 #include "mediapipe/framework/api2/port.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/core/model_resources.h"
 #include "mediapipe/tasks/cc/core/model_task_graph.h"
 #include "mediapipe/tasks/cc/core/proto/inference_subgraph.pb.h"
+#include "mediapipe/tasks/cc/vision/utils/detection_label_resolution.h"
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/proto/yolo_object_detector_options.pb.h"
 #include "mediapipe/tasks/metadata/metadata_schema_generated.h"
 
@@ -184,6 +186,14 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
           MediaPipeTasksStatus::kMetadataNotFoundError);
     }
 
+    // Resolve label items from model metadata (empty map if the model has no
+    // label file). Used for both category-name mapping and for resolving
+    // category_allowlist/category_denylist names to class indices.
+    MP_ASSIGN_OR_RETURN(
+        auto label_items,
+        GetLabelItemsFromMetadata(model_resources,
+                                  task_options.display_names_locale()));
+
     // Adds preprocessing calculators and connects them to the graph input image
     // stream.
     auto& preprocessing = graph.AddNode(
@@ -224,6 +234,19 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
                     CHANNELS_LAST
               : ::mediapipe::YoloTensorsToDetectionsCalculatorOptions::
                     CHANNELS_FIRST);
+      // Resolve category allow/deny names -> class indices and apply them as
+      // decoder-level filters (applied before the score/NMS cap, matching
+      // upstream semantics). Empty lists => no filtering; an all-unknown
+      // allowlist resolves to an empty set (a no-op, not "drop all").
+      MP_ASSIGN_OR_RETURN(
+          auto allow_idx,
+          ResolveCategoryIndices(label_items, task_options.category_allowlist(),
+                                 task_options.category_denylist()));
+      if (!task_options.category_allowlist().empty()) {
+        for (int c : allow_idx) opts.add_allow_classes(c);
+      } else {
+        for (int c : allow_idx) opts.add_ignore_classes(c);
+      }
     }
     model_output_tensors >> yolo_decode.In(kTensorTag);
 
@@ -245,7 +268,23 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
       nms_opts.set_return_empty_detections(true);
     }
     batch_to_single.Out(kDetectionsTag) >> nms.In("");
-    auto detections = nms.Out("");
+
+    // Map integer class ids -> category-name strings from the model metadata.
+    // keep_label_id=true preserves label_id so Category.index survives
+    // (ConvertToDetectionResult would otherwise emit index = -1). With an empty
+    // label_items map this is a safe pass-through: no labels are added and
+    // label_id is left untouched, so a model without metadata labels behaves
+    // exactly as before.
+    auto& label_id_to_text =
+        graph.AddNode("DetectionLabelIdToTextCalculator");
+    {
+      auto& label_opts = label_id_to_text.GetOptions<
+          ::mediapipe::DetectionLabelIdToTextCalculatorOptions>();
+      label_opts.set_keep_label_id(true);
+      *label_opts.mutable_label_items() = label_items;
+    }
+    nms.Out("") >> label_id_to_text.In("");
+    auto detections = label_id_to_text.Out("");
 
     // Calculator to project detections back to the original coordinate system.
     auto& detection_projection = graph.AddNode("DetectionProjectionCalculator");

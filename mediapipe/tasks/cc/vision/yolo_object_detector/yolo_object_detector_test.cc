@@ -29,6 +29,7 @@ limitations under the License.
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "mediapipe/framework/deps/file_path.h"
 #include "mediapipe/framework/formats/image.h"
@@ -118,6 +119,12 @@ TEST(YoloObjectDetectorTest, DetectOnImage) {
     EXPECT_GE(cat.index, 0);
     EXPECT_LT(cat.index, 80);
     labels.insert(cat.index);
+    // Names are populated in-graph from model metadata; the integer index is
+    // preserved (keep_label_id=true). COCO: cat=15, dog=16.
+    ASSERT_TRUE(cat.category_name.has_value());
+    EXPECT_FALSE(cat.category_name->empty());
+    if (cat.index == 15) EXPECT_EQ(*cat.category_name, "cat");
+    if (cat.index == 16) EXPECT_EQ(*cat.category_name, "dog");
     const auto& bb = det.bounding_box;  // Rect{left,top,right,bottom} in pixels
     EXPECT_GE(bb.left, 0);
     EXPECT_GE(bb.top, 0);
@@ -213,6 +220,51 @@ TEST(YoloObjectDetectorTest, DetectForVideo) {
   EXPECT_FALSE(result1.detections.empty());
 
   MP_ASSERT_OK(detector->Close());
+}
+
+// ---------------------------------------------------------------------------
+// category_allowlist / category_denylist filter by class name.
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTest, CategoryAllowlistAndDenylistFilterByName) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path;
+  }
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+  auto base = [&]() {
+    auto o = std::make_unique<YoloObjectDetectorOptions>();
+    o->base_options.model_asset_path = model_path;
+    o->running_mode = core::RunningMode::IMAGE;
+    o->num_classes = 80;
+    o->score_threshold = 0.25f;
+    o->iou_threshold = 0.45f;
+    o->max_results = 10;
+    return o;
+  };
+
+  // Allowlist {"dog"}: only dogs (index 16, name "dog") may survive.
+  auto allow = base();
+  allow->category_allowlist = {"dog"};
+  MP_ASSERT_OK_AND_ASSIGN(auto det_allow,
+                          YoloObjectDetector::Create(std::move(allow)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_allow, det_allow->Detect(image));
+  MP_ASSERT_OK(det_allow->Close());
+  for (const auto& det : r_allow.detections) {
+    EXPECT_EQ(det.categories[0].index, 16);
+    ASSERT_TRUE(det.categories[0].category_name.has_value());
+    EXPECT_EQ(*det.categories[0].category_name, "dog");
+  }
+
+  // Denylist {"dog"}: dogs (index 16) must be excluded.
+  auto deny = base();
+  deny->category_denylist = {"dog"};
+  MP_ASSERT_OK_AND_ASSIGN(auto det_deny,
+                          YoloObjectDetector::Create(std::move(deny)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_deny, det_deny->Detect(image));
+  MP_ASSERT_OK(det_deny->Close());
+  for (const auto& det : r_deny.detections) {
+    EXPECT_NE(det.categories[0].index, 16);
+  }
 }
 
 }  // namespace
