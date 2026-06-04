@@ -294,9 +294,12 @@ py_test(
     name = "oriented_object_detector_test",
     srcs = ["oriented_object_detector_test.py"],
     data = [
-        # test_models is intentionally omitted: yolov8n-obb.tflite is not present;
-        # the inference test is gated with unittest.skipUnless.
         "//mediapipe/tasks/testdata/vision:test_images",
+        # Glob-gated (allow_empty): provides yolov8n-obb.tflite + labels +
+        # boats.jpg when the fixtures are present; the inference tests
+        # skipUnless when absent. The Python run itself is still deferred until
+        # libmediapipe.so builds in this environment.
+        "//mediapipe/tasks/testdata/vision:yolo_obb_test_model",
     ],
     tags = ["not_run:arm"],
     deps = [
