@@ -44,6 +44,6 @@ message YoloObbTensorsToOrientedDetectionsCalculatorOptions {
 
   // Class-index filter during decode (before conf-threshold / cap). Mutually
   // exclusive; empty (default) = no filtering.
-  repeated int32 allow_classes = 8 [packed = true];
-  repeated int32 ignore_classes = 9 [packed = true];
+  repeated int32 allow_classes = 5 [packed = true];
+  repeated int32 ignore_classes = 6 [packed = true];
 }
