@@ -211,6 +211,12 @@ filegroup(
         ],
         allow_empty = True,
     ),
+    # Overrides the package default_visibility (//mediapipe/tasks:internal) so the
+    # zero-copy e2e test under //mediapipe/calculators/tensor can use this fixture.
+    visibility = [
+        "//mediapipe/calculators/tensor:__pkg__",
+        "//mediapipe/tasks:internal",
+    ],
 )
 
 # TODO Create individual filegroup for models required for each Tasks.
