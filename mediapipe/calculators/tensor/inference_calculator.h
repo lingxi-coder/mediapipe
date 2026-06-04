@@ -185,9 +185,16 @@ class InferenceCalculator : public NodeIntf {
   // override GetModelMetadata); leaving it unconnected is a no-op.
   static constexpr SideOutput<InferenceMetadata>::Optional kSideOutMetadata{
       "METADATA"};
+  // Fork extension (Phase 5, Apple/Metal only). Optional diagnostic: when
+  // wired, InferenceCalculatorMetal emits the address of the input MTLBuffer it
+  // bound directly to the delegate this Process() call (metal_external_input_
+  // zero_copy mode), or 0 when the normal BHWC->BPHWC4 converter ran. Lets an
+  // e2e test prove the zero-copy direct bind happened. No-op on other backends.
+  static constexpr Output<int64_t>::Optional kZeroCopyDebug{"ZERO_COPY_DEBUG"};
   MEDIAPIPE_NODE_CONTRACT(kInTensors, kInTensor, kSideInCustomOpResolver,
                           kSideInOpResolver, kSideInModel, kOutTensors,
-                          kOutTensor, kDelegate, kSideInIoMap, kSideOutMetadata);
+                          kOutTensor, kDelegate, kSideInIoMap, kSideOutMetadata,
+                          kZeroCopyDebug);
 
  protected:
   using TfLiteDelegatePtr =

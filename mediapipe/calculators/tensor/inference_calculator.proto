@@ -154,6 +154,15 @@ message InferenceCalculatorOptions {
 
       // Experimental support for WebNN delegate for GPU/NPU mode.
       optional WebNn webnn = 13;
+
+      // Fork extension (Phase 5, Apple/Metal only). When true, the Metal
+      // delegate binds each input packet's MTLBuffer directly as its external
+      // input and SKIPS the built-in BHWC->BPHWC4 input conversion — true
+      // zero-copy delegate input. The input packet tensor must already be
+      // physical PHWC4 float32 ([N,H,W,RoundUp(C,4)]) AND batch N==1 (the
+      // delegate's batched layout is batch-innermost; only N==1 matches a
+      // contiguous packet). Default off => byte-identical normal path.
+      optional bool metal_external_input_zero_copy = 14 [default = false];
     }
 
     // Android only.

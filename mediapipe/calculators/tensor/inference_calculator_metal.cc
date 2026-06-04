@@ -108,6 +108,16 @@ class InferenceCalculatorMetalImpl
   std::unique_ptr<tflite::Interpreter> interpreter_;
   TfLiteDelegatePtr delegate_;
   bool allow_precision_loss_ = false;
+  // Fork (Phase 5): bind input packet MTLBuffers directly to the delegate and
+  // skip the BHWC->BPHWC4 input conversion (true zero-copy delegate input).
+  // Only correct at batch N==1 (see Process(); enforced by RET_CHECK there).
+  bool external_input_zero_copy_ = false;
+  // Diagnostic for the optional ZERO_COPY_DEBUG output: address of the input
+  // MTLBuffer bound directly this Process() call; reset to 0 each call, so a
+  // non-direct (converter) call reports 0.
+  int64_t last_bound_input_addr_ = 0;
+  // Count of direct binds performed (across all Process() calls / inputs).
+  int64_t direct_binds_ = 0;
 
 #if MEDIAPIPE_TFLITE_METAL_INFERENCE
   MPPMetalHelper* gpu_helper_ = nullptr;
@@ -140,6 +150,15 @@ absl::Status InferenceCalculatorMetalImpl::UpdateContract(
 absl::Status InferenceCalculatorMetalImpl::Open(CalculatorContext* cc) {
   const auto& options = cc->Options<::mediapipe::InferenceCalculatorOptions>();
   allow_precision_loss_ = options.delegate().gpu().allow_precision_loss();
+  external_input_zero_copy_ =
+      options.delegate().gpu().metal_external_input_zero_copy();
+  if (external_input_zero_copy_) {
+    // The packet PHWC4 buffers produced upstream are float32; the delegate
+    // input layout must match, so half precision is incompatible here.
+    RET_CHECK(!allow_precision_loss_)
+        << "metal_external_input_zero_copy requires allow_precision_loss=false "
+           "(float32 PHWC4 input)";
+  }
 
   gpu_helper_ = [[MPPMetalHelper alloc] initWithCalculatorContext:cc];
   RET_CHECK(gpu_helper_);
@@ -154,10 +173,38 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
 
   command_buffer = [gpu_helper_ commandBuffer];
   command_buffer.label = @"InferenceCalculator";
+  // Reset the ZERO_COPY_DEBUG diagnostic so a non-direct call reports 0.
+  last_bound_input_addr_ = 0;
   // Explicit copy input with conversion float 32 bits to 16 bits.
   for (int i = 0; i < tensor_span.size(); ++i) {
     auto input_view =
         MtlBufferView::GetReadView(tensor_span[i], command_buffer);
+    if (external_input_zero_copy_) {
+      // True zero-copy: bind the packet's PHWC4 MTLBuffer directly as the
+      // delegate input and skip BHWC->BPHWC4 conversion.
+      // PERMANENT GUARD: only correct at N==1 (delegate input is batch-innermost
+      // SHWBC4; a contiguous packet matches only when batch==1). Fail loudly.
+      const auto& shape = tensor_span[i].shape();
+      RET_CHECK(!shape.dims.empty() && shape.dims[0] == 1)
+          << "metal_external_input_zero_copy requires input batch N==1, got N="
+          << (shape.dims.empty() ? -1 : shape.dims[0]) << " (input #" << i
+          << "). The delegate input is SHWBC4 (batch-innermost) but the "
+             "zero-copy packet is contiguous batch-outermost PHWC4; they match "
+             "only at N==1. Use the non-zero-copy path for batched models.";
+      RET_CHECK_EQ(tensor_span[i].bytes(), gpu_buffers_in_[i]->bytes())
+          << "metal_external_input_zero_copy input #" << i
+          << " byte-size mismatch: packet " << tensor_span[i].bytes()
+          << " vs delegate input " << gpu_buffers_in_[i]->bytes()
+          << " (input must be physical PHWC4 float32 [N,H,W,RoundUp(C,4)]).";
+      RET_CHECK_EQ(TFLGpuDelegateBindMetalBufferToTensor(
+                       delegate_.get(), interpreter_->inputs()[i],
+                       input_view.buffer()),
+                   true);
+      last_bound_input_addr_ =
+          reinterpret_cast<int64_t>((__bridge void*)input_view.buffer());
+      ++direct_binds_;
+      continue;
+    }
     // Reshape tensor.
     tflite::gpu::BHWC shape = BhwcFromTensorShape(tensor_span[i].shape());
     auto gpu_buffer_view =
@@ -199,6 +246,14 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
   // TODO: investigate and ensure proper synchronization
   // (e.g. fences/barriers/events).
   [command_buffer waitUntilScheduled];
+
+  // Fork (Phase 5): optional diagnostic. Emits the address of the input
+  // MTLBuffer bound directly to the delegate this call (zero-copy mode), or 0
+  // when the normal converter ran. Unconnected => no-op.
+  if (InferenceCalculator::kZeroCopyDebug(cc).IsConnected()) {
+    InferenceCalculator::kZeroCopyDebug(cc).Send(last_bound_input_addr_,
+                                                 cc->InputTimestamp());
+  }
 
   return output_tensors;
 }
