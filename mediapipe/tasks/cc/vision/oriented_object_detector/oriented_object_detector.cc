@@ -91,8 +91,11 @@ CalculatorGraphConfig CreateGraphConfig(
   return graph.GetConfig();
 }
 
+}  // namespace
+
 // Converts the user-facing OrientedObjectDetectorOptions struct to the internal
-// OrientedObjectDetectorOptions proto.
+// OrientedObjectDetectorOptions proto.  Defined outside the anonymous namespace
+// so that unit tests can call it directly to verify options→proto mapping.
 std::unique_ptr<OrientedObjectDetectorOptionsProto>
 ConvertOrientedObjectDetectorOptionsToProto(
     OrientedObjectDetectorOptions* options) {
@@ -109,10 +112,13 @@ ConvertOrientedObjectDetectorOptionsToProto(
   options_proto->set_layout(
       static_cast<OrientedObjectDetectorOptionsProto::Layout>(options->layout));
   options_proto->set_num_classes(options->num_classes);
+  options_proto->set_display_names_locale(options->display_names_locale);
+  for (const std::string& c : options->category_allowlist)
+    options_proto->add_category_allowlist(c);
+  for (const std::string& c : options->category_denylist)
+    options_proto->add_category_denylist(c);
   return options_proto;
 }
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<OrientedObjectDetector>>
 OrientedObjectDetector::Create(

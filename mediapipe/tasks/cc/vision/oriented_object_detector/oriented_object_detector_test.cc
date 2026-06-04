@@ -31,6 +31,7 @@ limitations under the License.
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "mediapipe/framework/deps/file_path.h"
 #include "mediapipe/framework/formats/image.h"
@@ -48,6 +49,8 @@ namespace oriented_object_detector {
 namespace {
 
 using ::mediapipe::file::JoinPath;
+using ::mediapipe::tasks::vision::oriented_object_detector::
+    ConvertOrientedObjectDetectorOptionsToProto;
 
 // Path prefix used by all testdata files (mirrors the sibling task tests).
 constexpr char kTestDataDirectory[] = "/mediapipe/tasks/testdata/vision/";
@@ -68,6 +71,28 @@ std::string ModelPath() {
 // Returns the absolute path to the test input image.
 std::string ImagePath() {
   return JoinPath("./", kTestDataDirectory, kTestImage);
+}
+
+// ---------------------------------------------------------------------------
+// Options passthrough test — no model fixture required.
+// Verifies that display_names_locale, category_allowlist, and
+// category_denylist are copied correctly into the options proto by
+// ConvertOrientedObjectDetectorOptionsToProto.
+// ---------------------------------------------------------------------------
+TEST(OrientedObjectDetectorOptionsTest, CopiesCategoryFieldsToProto) {
+  auto opts = std::make_unique<OrientedObjectDetectorOptions>();
+  opts->display_names_locale = "fr";
+  opts->category_allowlist = {"ship", "plane"};
+  opts->category_denylist = {"helicopter"};
+
+  auto proto = ConvertOrientedObjectDetectorOptionsToProto(opts.get());
+
+  EXPECT_EQ(proto->display_names_locale(), "fr");
+  ASSERT_EQ(proto->category_allowlist_size(), 2);
+  EXPECT_EQ(proto->category_allowlist(0), "ship");
+  EXPECT_EQ(proto->category_allowlist(1), "plane");
+  ASSERT_EQ(proto->category_denylist_size(), 1);
+  EXPECT_EQ(proto->category_denylist(0), "helicopter");
 }
 
 // ---------------------------------------------------------------------------

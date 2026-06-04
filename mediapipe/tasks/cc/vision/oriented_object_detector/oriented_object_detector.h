@@ -32,6 +32,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/vision/core/base_vision_task_api.h"
 #include "mediapipe/tasks/cc/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/cc/vision/core/running_mode.h"
+#include "mediapipe/tasks/cc/vision/oriented_object_detector/proto/oriented_object_detector_options.pb.h"
 
 namespace mediapipe {
 namespace tasks {
@@ -88,6 +89,20 @@ struct OrientedObjectDetectorOptions {
   // Number of classes. If 0, derived from model metadata at graph build time.
   int num_classes = 0;
 
+  // The locale to use for display names specified through the TFLite Model
+  // Metadata, if any. Defaults to English.
+  std::string display_names_locale = "en";
+
+  // The allowlist of category names. If non-empty, detection results whose
+  // category name is not in this set will be filtered out. Duplicate or unknown
+  // category names are ignored. Mutually exclusive with category_denylist.
+  std::vector<std::string> category_allowlist = {};
+
+  // The denylist of category names. If non-empty, detection results whose
+  // category name is in this set will be filtered out. Duplicate or unknown
+  // category names are ignored. Mutually exclusive with category_allowlist.
+  std::vector<std::string> category_denylist = {};
+
   // The user-defined result callback for processing live stream data.
   // The result callback should only be specified when the running mode is set
   // to RunningMode::LIVE_STREAM.
@@ -95,6 +110,13 @@ struct OrientedObjectDetectorOptions {
                      int64_t)>
       result_callback = nullptr;
 };
+
+// Converts a public OrientedObjectDetectorOptions struct into the corresponding
+// proto. Exposed here (outside the anonymous namespace in the .cc) so that unit
+// tests can verify the options→proto mapping without constructing a live graph.
+std::unique_ptr<proto::OrientedObjectDetectorOptions>
+ConvertOrientedObjectDetectorOptionsToProto(
+    OrientedObjectDetectorOptions* options);
 
 // Performs oriented (rotated bounding box) object detection on single images,
 // video frames, or live stream.
