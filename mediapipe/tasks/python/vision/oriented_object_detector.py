@@ -105,8 +105,13 @@ class MpOrientedObjectDetectorOptionsC(ctypes.Structure):
   _fields_ = [
       ('base_options', base_options_c_module.MpBaseOptionsC),
       ('running_mode', ctypes.c_int),
+      ('display_names_locale', ctypes.c_char_p),
       ('max_results', ctypes.c_int),
       ('score_threshold', ctypes.c_float),
+      ('category_allowlist', ctypes.POINTER(ctypes.c_char_p)),
+      ('category_allowlist_count', ctypes.c_uint32),
+      ('category_denylist', ctypes.POINTER(ctypes.c_char_p)),
+      ('category_denylist_count', ctypes.c_uint32),
       ('iou_threshold', ctypes.c_float),
       ('class_agnostic_nms', ctypes.c_bool),
       ('layout', ctypes.c_int),
@@ -185,9 +190,19 @@ class OrientedObjectDetectorOptions:
       detecting objects on the decoded frames of a video. 3) The live stream
       mode for detecting objects on a live stream of input data, such as from
       camera.
+    display_names_locale: The locale to use for display names specified through
+      the TFLite Model Metadata.
     max_results: The maximum number of top-scored detection results to return.
     score_threshold: Overrides the ones provided in the model metadata. Results
       below this value are rejected. Default 0.25.
+    category_allowlist: Allowlist of category names. If non-empty, detection
+      results whose category name is not in this set will be filtered out.
+      Duplicate or unknown category names are ignored. Mutually exclusive with
+      `category_denylist`.
+    category_denylist: Denylist of category names. If non-empty, detection
+      results whose category name is in this set will be filtered out. Duplicate
+      or unknown category names are ignored. Mutually exclusive with
+      `category_allowlist`.
     iou_threshold: IoU threshold for rotated non-maximum suppression. Default
       0.45.
     class_agnostic_nms: If True, NMS is applied across all classes jointly.
@@ -198,14 +213,20 @@ class OrientedObjectDetectorOptions:
       data. The result callback should only be specified when the running mode
       is set to the live stream mode.
 
-  NOTE: category names are populated best-effort in Python from TFLite metadata
-  (None if unavailable); the OBB graph emits index+score only.
+  Category names are populated by the OBB graph from the model metadata's label
+  file, and category_allowlist / category_denylist filter results by class name.
+  The Python `_load_label_map` fallback below is a display-only safety net; it
+  never overrides a name the graph already provided and does not implement
+  filtering.
   """
 
   base_options: _BaseOptions
   running_mode: _RunningMode = _RunningMode.IMAGE
+  display_names_locale: Optional[str] = None
   max_results: Optional[int] = -1
   score_threshold: Optional[float] = 0.25
+  category_allowlist: Optional[List[str]] = None
+  category_denylist: Optional[List[str]] = None
   iou_threshold: float = 0.45
   class_agnostic_nms: bool = False
   layout: Layout = Layout.CHANNELS_FIRST
@@ -329,11 +350,30 @@ class OrientedObjectDetector:
         options.result_callback, _C_TYPES_RESULT_CALLBACK
     )
 
+    allowlist_c = mediapipe_c_bindings_c_module.convert_strings_to_ctypes_array(
+        options.category_allowlist
+    )
+    denylist_c = mediapipe_c_bindings_c_module.convert_strings_to_ctypes_array(
+        options.category_denylist
+    )
     ctypes_options = MpOrientedObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
+        display_names_locale=(
+            options.display_names_locale.encode('utf-8')
+            if options.display_names_locale
+            else None
+        ),
         max_results=options.max_results,
         score_threshold=options.score_threshold,
+        category_allowlist=allowlist_c,
+        category_allowlist_count=(
+            len(options.category_allowlist) if options.category_allowlist else 0
+        ),
+        category_denylist=denylist_c,
+        category_denylist_count=(
+            len(options.category_denylist) if options.category_denylist else 0
+        ),
         iou_threshold=options.iou_threshold,
         class_agnostic_nms=options.class_agnostic_nms,
         layout=int(options.layout),
