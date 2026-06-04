@@ -112,5 +112,39 @@ TEST(YoloObbCalculatorTest, BatchNativeTwoRows) {
   EXPECT_NEAR(batch[0][0].rotation(), 0.3f, 1e-5);
 }
 
+TEST(YoloObbCalculatorTest, MultiClassArgmaxAndAngleChannel) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 3
+        conf_threshold: 0.25
+      }
+    }
+  )pb"));
+  // CHANNELS_FIRST [1, 4+3+1=8, 1]: cx,cy,w,h, s0,s1,s2, angle (index c*A+a, A=1).
+  // argmax over {0.1,0.8,0.3} -> class 1 @ 0.8; angle lives at channel 7 (4+3).
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 8, 1},
+                       {0.5f, 0.5f, 0.2f, 0.4f, 0.1f, 0.8f, 0.3f, 0.7f})
+                .release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch =
+      runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0].Get<BatchOrientedDetections>();
+  ASSERT_EQ(batch.size(), 1u);
+  ASSERT_EQ(batch[0].size(), 1u);
+  const OrientedDetection& d = batch[0][0];
+  EXPECT_NEAR(d.cx(), 0.5f, 1e-5);
+  EXPECT_NEAR(d.cy(), 0.5f, 1e-5);
+  EXPECT_NEAR(d.width(), 0.2f, 1e-5);
+  EXPECT_NEAR(d.height(), 0.4f, 1e-5);
+  EXPECT_EQ(d.label_id(0), 1);          // argmax picked class 1
+  EXPECT_NEAR(d.score(0), 0.8f, 1e-5);
+  EXPECT_NEAR(d.rotation(), 0.7f, 1e-5);  // angle read from channel 4+num_classes
+}
+
 }  // namespace
 }  // namespace mediapipe
