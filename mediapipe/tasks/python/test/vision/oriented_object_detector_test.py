@@ -94,7 +94,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
         base_options=_BaseOptions(model_asset_path=model_path),
         running_mode=_RUNNING_MODE.IMAGE,
         score_threshold=0.25,
-        layout=_Layout.CHANNELS_LAST,
+        layout=_Layout.CHANNELS_FIRST,
         num_classes=15,
     )
     with _OrientedObjectDetector.create_from_options(options) as detector:
@@ -161,7 +161,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
         num_classes=15,
         score_threshold=0.25,
         max_results=10,
-        layout=_Layout.CHANNELS_LAST,
+        layout=_Layout.CHANNELS_FIRST,
     )
     with _OrientedObjectDetector.create_from_options(options) as detector:
       result = detector.detect(image)
@@ -194,7 +194,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
         num_classes=15,
         score_threshold=0.25,
         max_results=10,
-        layout=_Layout.CHANNELS_LAST,
+        layout=_Layout.CHANNELS_FIRST,
         category_allowlist=['ship'],
     )
     with _OrientedObjectDetector.create_from_options(allow_options) as detector:
@@ -223,7 +223,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
         num_classes=15,
         score_threshold=0.25,
         max_results=10,
-        layout=_Layout.CHANNELS_LAST,
+        layout=_Layout.CHANNELS_FIRST,
         category_denylist=['ship'],
     )
     with _OrientedObjectDetector.create_from_options(deny_options) as detector:
