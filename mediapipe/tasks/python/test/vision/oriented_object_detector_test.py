@@ -164,6 +164,11 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
         layout=_Layout.CHANNELS_FIRST,
     )
     with _OrientedObjectDetector.create_from_options(options) as detector:
+      # Isolate the graph path: disable the best-effort Python label fallback so
+      # category_name can ONLY come from the graph (read off the C result),
+      # proving the in-graph metadata label mapping works end-to-end through
+      # Python rather than being filled by _load_label_map / _enrich_with_label_map.
+      detector._label_map = None  # pylint: disable=protected-access
       result = detector.detect(image)
     self.assertIsInstance(result, _OrientedObjectDetectionResult)
     self.assertGreater(
