@@ -129,6 +129,112 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
           f'rotation must be finite: {detection}',
       )
 
+  @unittest.skipUnless(
+      _MODEL_PRESENT,
+      'yolov8n-obb.tflite fixture not present; skipping inference test',
+  )
+  def test_category_names_and_allow_deny_filter(self):
+    """Asserts graph-provided category names and allow/deny filtering on boats.jpg.
+
+    Verifies that:
+      1. The OBB graph populates category_name from the model metadata label
+         file (not from the Python _load_label_map fallback), so index 1 maps
+         to 'ship' on the DOTA boats.jpg fixture.
+      2. category_allowlist=['ship'] retains only ship detections.
+      3. category_denylist=['ship'] suppresses all ship detections.
+    """
+    model_path = test_utils.get_test_data_path(
+        os.path.join(_TEST_DATA_DIR, _MODEL_FILE)
+    )
+    # boats.jpg is a DOTA aerial image where YOLO-OBB reliably detects ships
+    # (DOTA class index 1).  The image lives in the same testdata directory as
+    # the other OBB fixtures.
+    boats_image_path = test_utils.get_test_data_path(
+        os.path.join(_TEST_DATA_DIR, 'boats.jpg')
+    )
+    image = _Image.create_from_file(boats_image_path)
+
+    # --- default options: all classes, verify names come from the graph ---
+    options = _OrientedObjectDetectorOptions(
+        base_options=_BaseOptions(model_asset_path=model_path),
+        running_mode=_RUNNING_MODE.IMAGE,
+        num_classes=15,
+        score_threshold=0.25,
+        max_results=10,
+        layout=_Layout.CHANNELS_LAST,
+    )
+    with _OrientedObjectDetector.create_from_options(options) as detector:
+      result = detector.detect(image)
+    self.assertIsInstance(result, _OrientedObjectDetectionResult)
+    self.assertGreater(
+        len(result.detections),
+        0,
+        'Expected at least one OBB detection on boats.jpg',
+    )
+    saw_ship = False
+    for det in result.detections:
+      cat = det.categories[0]
+      self.assertIsNotNone(
+          cat.category_name,
+          f'category_name must not be None (graph must populate it): {det}',
+      )
+      if cat.index == 1:
+        self.assertEqual(
+            cat.category_name,
+            'ship',
+            f'DOTA index 1 must map to "ship", got {cat.category_name!r}',
+        )
+        saw_ship = True
+    self.assertTrue(saw_ship, 'Expected at least one "ship" detection on boats.jpg')
+
+    # --- allowlist=['ship']: only ship detections must survive ---
+    allow_options = _OrientedObjectDetectorOptions(
+        base_options=_BaseOptions(model_asset_path=model_path),
+        running_mode=_RUNNING_MODE.IMAGE,
+        num_classes=15,
+        score_threshold=0.25,
+        max_results=10,
+        layout=_Layout.CHANNELS_LAST,
+        category_allowlist=['ship'],
+    )
+    with _OrientedObjectDetector.create_from_options(allow_options) as detector:
+      result = detector.detect(image)
+    self.assertGreater(
+        len(result.detections),
+        0,
+        'allowlist=["ship"] must still yield detections on boats.jpg',
+    )
+    for det in result.detections:
+      self.assertEqual(
+          det.categories[0].index,
+          1,
+          f'allowlist=["ship"] must keep only index 1, got {det.categories[0]}',
+      )
+      self.assertEqual(
+          det.categories[0].category_name,
+          'ship',
+          f'allowlist=["ship"] must keep only "ship", got {det.categories[0]}',
+      )
+
+    # --- denylist=['ship']: no ship detection must survive ---
+    deny_options = _OrientedObjectDetectorOptions(
+        base_options=_BaseOptions(model_asset_path=model_path),
+        running_mode=_RUNNING_MODE.IMAGE,
+        num_classes=15,
+        score_threshold=0.25,
+        max_results=10,
+        layout=_Layout.CHANNELS_LAST,
+        category_denylist=['ship'],
+    )
+    with _OrientedObjectDetector.create_from_options(deny_options) as detector:
+      result = detector.detect(image)
+    for det in result.detections:
+      self.assertNotEqual(
+          det.categories[0].index,
+          1,
+          f'denylist=["ship"] must suppress index 1, got {det.categories[0]}',
+      )
+
 
 if __name__ == '__main__':
   absltest.main()
