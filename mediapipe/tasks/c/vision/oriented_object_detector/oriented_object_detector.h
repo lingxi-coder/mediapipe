@@ -45,11 +45,22 @@ struct MpOrientedObjectDetectorOptions {
   struct MpBaseOptions base_options;
   MpRunningMode running_mode;
 
+  // Locale for display names in TFLite metadata, if any. Defaults to English.
+  const char* display_names_locale;
+
   // Max number of top-scored results. < 0 returns all; 0 is invalid.
   int max_results;
 
   // Score threshold overriding the model metadata value. Default 0.25.
   float score_threshold;
+
+  // Allowlist of category names (mutually exclusive with denylist).
+  const char** category_allowlist;
+  uint32_t category_allowlist_count;
+
+  // Denylist of category names (mutually exclusive with allowlist).
+  const char** category_denylist;
+  uint32_t category_denylist_count;
 
   // IoU threshold for rotated non-maximum suppression. Default 0.45.
   float iou_threshold;

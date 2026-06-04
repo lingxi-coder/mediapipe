@@ -18,7 +18,9 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/log/absl_check.h"
 #include "absl/status/status.h"
@@ -73,8 +75,19 @@ ObbNs::OrientedObjectDetector* GetCppDetector(
 
 void CppConvertToDetectorOptions(const MpOrientedObjectDetectorOptions& in,
                                  ObbNs::OrientedObjectDetectorOptions* out) {
+  out->display_names_locale =
+      in.display_names_locale ? std::string(in.display_names_locale) : "en";
   out->max_results = in.max_results;
   out->score_threshold = in.score_threshold;
+  out->category_allowlist =
+      std::vector<std::string>(in.category_allowlist_count);
+  for (uint32_t i = 0; i < in.category_allowlist_count; ++i) {
+    out->category_allowlist[i] = in.category_allowlist[i];
+  }
+  out->category_denylist = std::vector<std::string>(in.category_denylist_count);
+  for (uint32_t i = 0; i < in.category_denylist_count; ++i) {
+    out->category_denylist[i] = in.category_denylist[i];
+  }
   out->iou_threshold = in.iou_threshold;
   out->class_agnostic_nms = in.class_agnostic_nms;
   out->layout =
