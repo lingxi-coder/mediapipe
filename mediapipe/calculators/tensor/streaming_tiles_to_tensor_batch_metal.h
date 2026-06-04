@@ -75,18 +75,16 @@ class TiledBatchMetalWriter {
  private:
   TiledBatchMetalWriter(id<MTLDevice> device,
                         id<MTLComputePipelineState> pipeline, int out_w,
-                        int out_h, bool physical_phwc4)
+                        int out_h)
       : device_(device),
         pipeline_(pipeline),
         out_w_(out_w),
-        out_h_(out_h),
-        physical_phwc4_(physical_phwc4) {}
+        out_h_(out_h) {}
 
   id<MTLDevice> device_;
   id<MTLComputePipelineState> pipeline_;
   int out_w_ = 0;
   int out_h_ = 0;
-  bool physical_phwc4_ = false;
 };
 
 }  // namespace mediapipe

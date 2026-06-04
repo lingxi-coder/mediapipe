@@ -154,7 +154,7 @@ TiledBatchMetalWriter::Create(id<MTLDevice> device, int out_w, int out_h,
                              << [[error localizedDescription] UTF8String];
 
   return absl::WrapUnique(
-      new TiledBatchMetalWriter(device, pipeline, out_w, out_h, physical_phwc4));
+      new TiledBatchMetalWriter(device, pipeline, out_w, out_h));
 }
 
 absl::Status TiledBatchMetalWriter::WriteTileRow(

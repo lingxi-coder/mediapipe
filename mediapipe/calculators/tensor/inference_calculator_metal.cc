@@ -116,8 +116,6 @@ class InferenceCalculatorMetalImpl
   // MTLBuffer bound directly this Process() call; reset to 0 each call, so a
   // non-direct (converter) call reports 0.
   int64_t last_bound_input_addr_ = 0;
-  // Count of direct binds performed (across all Process() calls / inputs).
-  int64_t direct_binds_ = 0;
 
 #if MEDIAPIPE_TFLITE_METAL_INFERENCE
   MPPMetalHelper* gpu_helper_ = nullptr;
@@ -175,7 +173,6 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
   command_buffer.label = @"InferenceCalculator";
   // Reset the ZERO_COPY_DEBUG diagnostic so a non-direct call reports 0.
   last_bound_input_addr_ = 0;
-  // Explicit copy input with conversion float 32 bits to 16 bits.
   for (int i = 0; i < tensor_span.size(); ++i) {
     auto input_view =
         MtlBufferView::GetReadView(tensor_span[i], command_buffer);
@@ -202,7 +199,6 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
                    true);
       last_bound_input_addr_ =
           reinterpret_cast<int64_t>((__bridge void*)input_view.buffer());
-      ++direct_binds_;
       continue;
     }
     // Reshape tensor.
