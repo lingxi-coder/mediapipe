@@ -171,6 +171,50 @@ TEST_F(StreamingTilesMetalTest, MultiBatchEmitsCeil) {
   EXPECT_EQ(r.info[1].Get<TensorBatchInfo>().valid_count, 1);
 }
 
+// Verifies that metal_direct_delegate_input=true emits a physical PHWC4 tensor
+// of shape [1,H,W,4], is GPU-resident, and is not CPU-materialized. Uses a
+// single tile and batch_capacity=1 (N==1 is required by this mode).
+TEST_F(StreamingTilesMetalTest, DirectDelegateInputEmitsPhysicalPhwc4) {
+  RunResult r;
+  MP_ASSERT_OK(RunZeroCopy(
+      gpu_resources_,
+      "enable_gpu_zero_copy: true max_gpu_tensor_buffers: 2 "
+      "metal_direct_delegate_input: true",
+      /*out_w=*/8, /*out_h=*/8, /*channels=*/3, /*batch_capacity=*/1,
+      /*in_w=*/64, /*in_h=*/48,
+      {NormTile(0, 0.0f, 0.0f, 1.0f, 1.0f)},
+      &r));
+  ASSERT_EQ(r.tensors.size(), 1);
+  const auto& t = r.tensors[0].Get<std::vector<Tensor>>()[0];
+  const Tensor::Shape& shape = t.shape();
+  ASSERT_EQ(shape.dims.size(), 4);
+  // Physical PHWC4: [1, H, W, 4] — batch-1, 4 channels (RGB + 0-pad).
+  EXPECT_EQ(shape.dims[0], 1);
+  EXPECT_EQ(shape.dims[1], 8);
+  EXPECT_EQ(shape.dims[2], 8);
+  EXPECT_EQ(shape.dims[3], 4);
+
+  // GPU-resident, not CPU-materialized before any explicit read.
+  EXPECT_TRUE(t.ready_on_gpu());
+  EXPECT_FALSE(t.ready_on_cpu());
+
+  // Explicit test-side readback: all values in [0,1] (normalized RGB + 0-pad).
+  auto view = t.GetCpuReadView();
+  const float* buf = view.buffer<float>();
+  const int n = shape.num_elements();
+  for (int i = 0; i < n; ++i) {
+    EXPECT_GE(buf[i], 0.0f) << "elem " << i;
+    EXPECT_LE(buf[i], 1.0001f) << "elem " << i;
+  }
+
+  // Exactly one batch info packet matching the shape.
+  ASSERT_EQ(r.info.size(), 1u);
+  const TensorBatchInfo& info = r.info[0].Get<TensorBatchInfo>();
+  EXPECT_EQ(info.valid_count, 1);
+  EXPECT_EQ(info.total_batches, 1);
+  EXPECT_EQ(info.batch_capacity, 1);
+}
+
 }  // namespace
 }  // namespace mediapipe
 

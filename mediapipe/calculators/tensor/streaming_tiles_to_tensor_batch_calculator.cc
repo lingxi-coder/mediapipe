@@ -208,7 +208,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                                         meta_.input_width(),
                                         meta_.input_height(),
                                         meta_.input_channels(),
-                                        BorderMode::kReplicate));
+                                        BorderMode::kReplicate,
+                                        options_.metal_direct_delegate_input()));
       metal_zero_copy_active_ = true;
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
@@ -429,57 +430,113 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     for (int start = 0; start < T; start += cap) {
       const int rows = std::min(cap, T - start);
       const int N = dynamic_batch_ ? rows : cap;
-      Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{N, H, W, C},
-                    gpu_memory_manager_.get());
 
       std::shared_ptr<const TileBatchGeometry> geom =
           BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
 
-      @autoreleasepool {
-        id<MTLTexture> texture = [metal_helper_ metalTextureWithGpuBuffer:gpu];
-        RET_CHECK(texture != nil) << "failed creating MTLTexture from GpuBuffer";
-        id<MTLCommandBuffer> command_buffer = [metal_helper_ commandBuffer];
-        const auto& write_view =
-            MtlBufferView::GetWriteView(tensor, command_buffer);
-        // GpuBuffer textures are 4-channel; Metal samples them as [0,1], so
-        // alpha=1 (NOT 1/255) matches the CPU uint8/255 normalization.
-        for (int r = 0; r < rows; ++r) {
-          const RotatedRect rr = RoiToRotatedRect(geom->effective_pixel_rois[r]);
+      if (options_.metal_direct_delegate_input()) {
+        // Direct delegate input: physical PHWC4, N==1 per batch (fixed-batch-1
+        // model). Guard loudly — N>1 / C>4 cannot be direct-bound.
+        RET_CHECK_EQ(N, 1) << "metal_direct_delegate_input requires batch N==1 "
+                              "(set batch_capacity=1); got N="
+                           << N;
+        RET_CHECK_LE(C, 4) << "metal_direct_delegate_input requires C<=4; got C="
+                           << C;
+        Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{1, H, W, 4},
+                      gpu_memory_manager_.get());
+
+        @autoreleasepool {
+          id<MTLTexture> texture = [metal_helper_ metalTextureWithGpuBuffer:gpu];
+          RET_CHECK(texture != nil)
+              << "failed creating MTLTexture from GpuBuffer";
+          id<MTLCommandBuffer> command_buffer = [metal_helper_ commandBuffer];
+          const auto& write_view =
+              MtlBufferView::GetWriteView(tensor, command_buffer);
+          // Physical PHWC4: write the single tile (the one batch row) at row 0.
+          // The writer was created with physical_phwc4=true so it writes 4
+          // floats/pixel (RGB + 0.0).
+          const RotatedRect rr =
+              RoiToRotatedRect(geom->effective_pixel_rois[0]);
           MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
-              texture, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f, command_buffer,
-              write_view.buffer()));
+              texture, rr, /*tile_row=*/0, /*alpha=*/1.0f, /*beta=*/0.0f,
+              command_buffer, write_view.buffer()));
+          [command_buffer commit];
+          // write_view destructs here -> Metal fence; downstream Metal
+          // inference's read view waits on it. No CPU readback.
         }
-        // Clear padding rows [rows, N): alpha=0,beta=0 writes zeros.
-        const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
-        for (int r = rows; r < N; ++r) {
-          MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
-              texture, full, r, /*alpha=*/0.0f, /*beta=*/0.0f, command_buffer,
-              write_view.buffer()));
+
+        TensorBatchInfo info;
+        info.source_frame_timestamp = ts;
+        info.batch_timestamp = batch_ts_.Value();
+        info.batch_index = emitted;
+        info.total_batches = total_batches;
+        info.batch_capacity = N;
+        info.batch_size = N;
+        info.valid_count = rows;
+        info.tile_indices = geom->tile_indices;
+        info.geometry = geom;
+
+        std::vector<Tensor> tensors;
+        tensors.push_back(std::move(tensor));
+        kOutTensors(cc).Send(
+            mediapipe::api2::MakePacket<std::vector<Tensor>>(std::move(tensors))
+                .At(batch_ts_));
+        kOutInfo(cc).Send(
+            mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+                .At(batch_ts_));
+      } else {
+        // Logical [N,H,W,C] Metal path (default): each tile written to its row.
+        Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{N, H, W, C},
+                      gpu_memory_manager_.get());
+
+        @autoreleasepool {
+          id<MTLTexture> texture = [metal_helper_ metalTextureWithGpuBuffer:gpu];
+          RET_CHECK(texture != nil)
+              << "failed creating MTLTexture from GpuBuffer";
+          id<MTLCommandBuffer> command_buffer = [metal_helper_ commandBuffer];
+          const auto& write_view =
+              MtlBufferView::GetWriteView(tensor, command_buffer);
+          // GpuBuffer textures are 4-channel; Metal samples them as [0,1], so
+          // alpha=1 (NOT 1/255) matches the CPU uint8/255 normalization.
+          for (int r = 0; r < rows; ++r) {
+            const RotatedRect rr =
+                RoiToRotatedRect(geom->effective_pixel_rois[r]);
+            MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
+                texture, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f, command_buffer,
+                write_view.buffer()));
+          }
+          // Clear padding rows [rows, N): alpha=0,beta=0 writes zeros.
+          const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
+          for (int r = rows; r < N; ++r) {
+            MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
+                texture, full, r, /*alpha=*/0.0f, /*beta=*/0.0f, command_buffer,
+                write_view.buffer()));
+          }
+          [command_buffer commit];
+          // write_view destructs at scope end -> Metal fence; downstream Metal
+          // inference's read view waits on it. No CPU readback.
         }
-        [command_buffer commit];
-        // write_view destructs at scope end -> Metal fence; downstream Metal
-        // inference's read view waits on it. No CPU readback.
+
+        TensorBatchInfo info;
+        info.source_frame_timestamp = ts;
+        info.batch_timestamp = batch_ts_.Value();
+        info.batch_index = emitted;
+        info.total_batches = total_batches;
+        info.batch_capacity = N;
+        info.batch_size = N;
+        info.valid_count = rows;
+        info.tile_indices = geom->tile_indices;
+        info.geometry = geom;
+
+        std::vector<Tensor> tensors;
+        tensors.push_back(std::move(tensor));
+        kOutTensors(cc).Send(
+            mediapipe::api2::MakePacket<std::vector<Tensor>>(std::move(tensors))
+                .At(batch_ts_));
+        kOutInfo(cc).Send(
+            mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
+                .At(batch_ts_));
       }
-
-      TensorBatchInfo info;
-      info.source_frame_timestamp = ts;
-      info.batch_timestamp = batch_ts_.Value();
-      info.batch_index = emitted;
-      info.total_batches = total_batches;
-      info.batch_capacity = N;
-      info.batch_size = N;
-      info.valid_count = rows;
-      info.tile_indices = geom->tile_indices;
-      info.geometry = geom;
-
-      std::vector<Tensor> tensors;
-      tensors.push_back(std::move(tensor));
-      kOutTensors(cc).Send(
-          mediapipe::api2::MakePacket<std::vector<Tensor>>(std::move(tensors))
-              .At(batch_ts_));
-      kOutInfo(cc).Send(
-          mediapipe::api2::MakePacket<TensorBatchInfo>(std::move(info))
-              .At(batch_ts_));
       ++batch_ts_;
       ++emitted;
     }

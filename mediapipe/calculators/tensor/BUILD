@@ -2877,6 +2877,7 @@ cc_test(
             "//mediapipe/framework:calculator_framework",
             "//mediapipe/framework/formats:inference_metadata_cc_proto",
             "//mediapipe/framework/formats:tensor",
+            "//mediapipe/framework/port:opencv_imgcodecs",
             "//mediapipe/framework/port:parse_text_proto",
             "//mediapipe/framework/port:status",
             "//mediapipe/framework/port:status_matchers",

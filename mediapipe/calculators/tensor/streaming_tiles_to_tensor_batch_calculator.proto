@@ -72,4 +72,11 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // fallback (true) or fail with ResourceExhausted (false). Perf/zero-copy
   // tests set this false so any readback is a failure.
   optional bool allow_gpu_readback_fallback = 10 [default = false];
+
+  // Apple/Metal only. When true (and enable_gpu_zero_copy + IMAGE_GPU), emit a
+  // PHYSICAL PHWC4 float32 [1,H,W,RoundUp(C,4)] Metal tensor per batch for
+  // direct delegate binding (pair with InferenceCalculatorMetal
+  // metal_external_input_zero_copy=true). Requires N==1 and C<=4; fails loudly
+  // otherwise. Default off => the logical [N,H,W,C] Metal path (unchanged).
+  optional bool metal_direct_delegate_input = 11 [default = false];
 }

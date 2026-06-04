@@ -46,6 +46,7 @@ cc_library(
         [
             paths.join(PREFIX, "lib/libopencv_core.dylib"),
             paths.join(PREFIX, "lib/libopencv_imgproc.dylib"),
+            paths.join(PREFIX, "lib/libopencv_imgcodecs.dylib"),
         ],
     ),
     hdrs = glob([paths.join(PREFIX, "include/opencv4/opencv2/**/*.h*")]),
