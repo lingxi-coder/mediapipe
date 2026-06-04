@@ -47,5 +47,24 @@ TEST(OrientedObjectDetectionResultTest, ConvertsNormalizedProtoToPixels) {
   EXPECT_FALSE(od.categories[0].display_name.has_value());
 }
 
+TEST(OrientedObjectDetectionResultTest, PopulatesCategoryNameFromLabel) {
+  mediapipe::OrientedDetection d;
+  d.set_cx(0.5f); d.set_cy(0.5f); d.set_width(0.4f); d.set_height(0.2f);
+  d.set_rotation(0.3f);
+  d.add_label("ship");
+  d.add_label_id(1);
+  d.add_score(0.9f);
+  d.add_display_name("Ship");
+  auto result = ConvertToOrientedObjectDetectionResult({d}, {100, 100});
+  ASSERT_EQ(result.detections.size(), 1u);
+  ASSERT_EQ(result.detections[0].categories.size(), 1u);
+  const auto& cat = result.detections[0].categories[0];
+  EXPECT_EQ(cat.index, 1);
+  ASSERT_TRUE(cat.category_name.has_value());
+  EXPECT_EQ(*cat.category_name, "ship");
+  ASSERT_TRUE(cat.display_name.has_value());
+  EXPECT_EQ(*cat.display_name, "Ship");
+}
+
 }  // namespace
 }  // namespace mediapipe::tasks::components::containers

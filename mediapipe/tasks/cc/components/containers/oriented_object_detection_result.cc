@@ -40,8 +40,10 @@ OrientedObjectDetectionResult ConvertToOrientedObjectDetectionResult(
           {/* index= */ d.label_id_size() > i ? d.label_id(i)
                                               : kDefaultCategoryIndex,
            /* score= */ d.score(i),
-           /* category_name= */ std::nullopt,
-           /* display_name= */ std::nullopt});
+           /* category_name= */ d.label_size() > i
+               ? std::make_optional(d.label(i)) : std::nullopt,
+           /* display_name= */ d.display_name_size() > i
+               ? std::make_optional(d.display_name(i)) : std::nullopt});
     }
     od.cx = d.cx() * w;
     od.cy = d.cy() * h;
