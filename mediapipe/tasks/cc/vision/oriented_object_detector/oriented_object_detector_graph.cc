@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "mediapipe/calculators/tensor/yolo_obb_tensors_to_oriented_detections_calculator.pb.h"
+#include "mediapipe/calculators/util/oriented_detection_label_id_to_text_calculator.pb.h"
 #include "mediapipe/calculators/util/rotated_non_max_suppression_calculator.pb.h"
 #include "mediapipe/framework/api2/builder.h"
 #include "mediapipe/framework/api2/port.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/core/model_task_graph.h"
 #include "mediapipe/tasks/cc/core/proto/inference_subgraph.pb.h"
 #include "mediapipe/tasks/cc/vision/oriented_object_detector/proto/oriented_object_detector_options.pb.h"
+#include "mediapipe/tasks/cc/vision/utils/detection_label_resolution.h"
 #include "mediapipe/tasks/metadata/metadata_schema_generated.h"
 
 namespace mediapipe {
@@ -71,6 +73,14 @@ absl::Status SanityCheckOptions(
     return CreateStatusWithPayload(
         absl::StatusCode::kInvalidArgument,
         "Invalid `max_results` option: value must be != 0",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
+  if (options.category_allowlist_size() > 0 &&
+      options.category_denylist_size() > 0) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "`category_allowlist` and `category_denylist` are mutually "
+        "exclusive options.",
         MediaPipeTasksStatus::kInvalidArgumentError);
   }
   return absl::OkStatus();
@@ -175,6 +185,14 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
           MediaPipeTasksStatus::kMetadataNotFoundError);
     }
 
+    // Resolve label items from model metadata (empty map if the model has no
+    // label file). Used for both category-name mapping and for resolving
+    // category_allowlist/category_denylist names to class indices.
+    MP_ASSIGN_OR_RETURN(
+        auto label_items,
+        GetLabelItemsFromMetadata(model_resources,
+                                  task_options.display_names_locale()));
+
     // Adds preprocessing calculators and connects them to the graph input image
     // stream.
     auto& preprocessing = graph.AddNode(
@@ -215,6 +233,19 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
                     CHANNELS_LAST
               : ::mediapipe::YoloObbTensorsToOrientedDetectionsCalculatorOptions::
                     CHANNELS_FIRST);
+      // Resolve category allow/deny names -> class indices and apply them as
+      // decoder-level filters (before the score/NMS cap, matching upstream
+      // semantics). Empty lists => no filtering; an all-unknown allowlist
+      // resolves to an empty set (a no-op, not "drop all").
+      MP_ASSIGN_OR_RETURN(
+          auto allow_idx,
+          ResolveCategoryIndices(label_items, task_options.category_allowlist(),
+                                 task_options.category_denylist()));
+      if (!task_options.category_allowlist().empty()) {
+        for (int c : allow_idx) opts.add_allow_classes(c);
+      } else {
+        for (int c : allow_idx) opts.add_ignore_classes(c);
+      }
     }
     model_output_tensors >> obb_decode.In(kTensorTag);
 
@@ -235,9 +266,25 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
     }
     flatten.Out(kOrientedDetectionsTag) >> nms.In(kOrientedDetectionsTag);
 
+    // Map integer class ids -> category-name strings from the model metadata.
+    // keep_label_id=true preserves label_id so Category.index survives
+    // (ConvertToOrientedObjectDetectionResult would otherwise emit index = -1).
+    // With an empty label_items map this is a safe pass-through: no labels are
+    // added and label_id is untouched, so a model without metadata labels
+    // behaves exactly as before.
+    auto& label_id_to_text =
+        graph.AddNode("OrientedDetectionLabelIdToTextCalculator");
+    {
+      auto& label_opts = label_id_to_text.GetOptions<
+          ::mediapipe::OrientedDetectionLabelIdToTextCalculatorOptions>();
+      label_opts.set_keep_label_id(true);
+      *label_opts.mutable_label_items() = label_items;
+    }
+    nms.Out(kOrientedDetectionsTag) >> label_id_to_text.In("");
+
     // Project to original-image-normalized coords (using preprocessing matrix).
     auto& projection = graph.AddNode("OrientedDetectionProjectionCalculator");
-    nms.Out(kOrientedDetectionsTag) >> projection.In(kOrientedDetectionsTag);
+    label_id_to_text.Out("") >> projection.In(kOrientedDetectionsTag);
     preprocessing.Out(kMatrixTag) >> projection.In(kProjectionMatrixTag);
     auto oriented_detections = projection.Out(kOrientedDetectionsTag);
 

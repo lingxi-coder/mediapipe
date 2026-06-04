@@ -139,6 +139,11 @@ TEST(OrientedObjectDetectorTest, DetectOnImage) {
     EXPECT_GE(cat.index, 0);
     EXPECT_LT(cat.index, 15);
     labels.insert(cat.index);
+    // Names are populated in-graph from model metadata; index is preserved
+    // (keep_label_id=true). DOTA: ship=1.
+    ASSERT_TRUE(cat.category_name.has_value());
+    EXPECT_FALSE(cat.category_name->empty());
+    if (cat.index == 1) EXPECT_EQ(*cat.category_name, "ship");
     EXPECT_GT(det.width, 0.0f);
     EXPECT_GT(det.height, 0.0f);
     EXPECT_TRUE(std::isfinite(det.rotation));
@@ -186,6 +191,52 @@ TEST(OrientedObjectDetectorTest, DetectForVideo) {
   EXPECT_FALSE(result1.detections.empty());
 
   MP_ASSERT_OK(detector->Close());
+}
+
+// ---------------------------------------------------------------------------
+// category_allowlist / category_denylist filter by class name.
+// ---------------------------------------------------------------------------
+TEST(OrientedObjectDetectorTest, CategoryAllowlistAndDenylistFilterByName) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path;
+  }
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+  auto base = [&]() {
+    auto o = std::make_unique<OrientedObjectDetectorOptions>();
+    o->base_options.model_asset_path = model_path;
+    o->running_mode = core::RunningMode::IMAGE;
+    o->num_classes = 15;
+    o->score_threshold = 0.25f;
+    o->iou_threshold = 0.45f;
+    o->max_results = 10;
+    return o;
+  };
+
+  // Allowlist {"ship"}: only ships (index 1, name "ship") may survive.
+  auto allow = base();
+  allow->category_allowlist = {"ship"};
+  MP_ASSERT_OK_AND_ASSIGN(auto det_allow,
+                          OrientedObjectDetector::Create(std::move(allow)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_allow, det_allow->Detect(image));
+  MP_ASSERT_OK(det_allow->Close());
+  EXPECT_FALSE(r_allow.detections.empty()) << "allowlist {ship} dropped all";
+  for (const auto& det : r_allow.detections) {
+    EXPECT_EQ(det.categories[0].index, 1);
+    ASSERT_TRUE(det.categories[0].category_name.has_value());
+    EXPECT_EQ(*det.categories[0].category_name, "ship");
+  }
+
+  // Denylist {"ship"}: ships (index 1) must be excluded.
+  auto deny = base();
+  deny->category_denylist = {"ship"};
+  MP_ASSERT_OK_AND_ASSIGN(auto det_deny,
+                          OrientedObjectDetector::Create(std::move(deny)));
+  MP_ASSERT_OK_AND_ASSIGN(auto r_deny, det_deny->Detect(image));
+  MP_ASSERT_OK(det_deny->Close());
+  for (const auto& det : r_deny.detections) {
+    EXPECT_NE(det.categories[0].index, 1);
+  }
 }
 
 }  // namespace
