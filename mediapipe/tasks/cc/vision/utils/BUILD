@@ -130,6 +130,38 @@ cc_test(
 )
 
 cc_library(
+    name = "detection_label_resolution",
+    srcs = ["detection_label_resolution.cc"],
+    hdrs = ["detection_label_resolution.h"],
+    deps = [
+        "//mediapipe/framework/port:core_proto",
+        "//mediapipe/tasks/cc:common",
+        "//mediapipe/tasks/cc/core:model_resources",
+        "//mediapipe/tasks/cc/metadata:metadata_extractor",
+        "//mediapipe/tasks/metadata:metadata_schema_cc",
+        "//mediapipe/util:label_map_cc_proto",
+        "//mediapipe/util:label_map_util",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_protobuf//:protobuf",
+        "@org_tensorflow//tensorflow/lite/schema:schema_fbs",
+    ],
+)
+
+cc_test(
+    name = "detection_label_resolution_test",
+    srcs = ["detection_label_resolution_test.cc"],
+    deps = [
+        ":detection_label_resolution",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/util:label_map_cc_proto",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_library(
     name = "data_renderer",
     srcs = ["data_renderer.cc"],
     hdrs = ["data_renderer.h"],
