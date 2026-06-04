@@ -249,6 +249,10 @@ TEST(YoloObjectDetectorTest, CategoryAllowlistAndDenylistFilterByName) {
                           YoloObjectDetector::Create(std::move(allow)));
   MP_ASSERT_OK_AND_ASSIGN(auto r_allow, det_allow->Detect(image));
   MP_ASSERT_OK(det_allow->Close());
+  // Guard against a vacuous pass: a broken allow-filter that drops everything
+  // would make the per-detection loop below trivially true. The oracle reports
+  // a dog at conf>=0.25 on cats_and_dogs.jpg, so the allowed class must remain.
+  EXPECT_FALSE(r_allow.detections.empty()) << "allowlist {dog} dropped all";
   for (const auto& det : r_allow.detections) {
     EXPECT_EQ(det.categories[0].index, 16);
     ASSERT_TRUE(det.categories[0].category_name.has_value());
