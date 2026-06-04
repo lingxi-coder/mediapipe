@@ -66,4 +66,10 @@ message YoloTensorsToDetectionsCalculatorOptions {
   // callers feed normalized boxes).
   optional int32 input_width = 8 [default = 0];
   optional int32 input_height = 9 [default = 0];
+
+  // Class-index filter applied during decode (before conf-threshold / cap).
+  // Mutually exclusive. Empty (default) = no filtering (unchanged). Mirrors
+  // TensorsToDetectionsCalculatorOptions.allow_classes/ignore_classes.
+  repeated int32 allow_classes = 10 [packed = true];
+  repeated int32 ignore_classes = 11 [packed = true];
 }

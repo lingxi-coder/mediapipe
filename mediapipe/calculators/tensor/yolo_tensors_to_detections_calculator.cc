@@ -16,6 +16,7 @@
 #include <memory>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/detection_nms_util.h"
 #include "mediapipe/calculators/tensor/yolo_tensors_to_detections_calculator.pb.h"
@@ -51,6 +52,10 @@ class YoloTensorsToDetectionsCalculator : public Node {
       inv_w_ = 1.0f / static_cast<float>(options_.input_width());
       inv_h_ = 1.0f / static_cast<float>(options_.input_height());
     }
+    RET_CHECK(options_.allow_classes().empty() || options_.ignore_classes().empty())
+        << "allow_classes and ignore_classes are mutually exclusive";
+    for (int c : options_.allow_classes()) allow_classes_.insert(c);
+    for (int c : options_.ignore_classes()) ignore_classes_.insert(c);
     return absl::OkStatus();
   }
 
@@ -117,6 +122,8 @@ class YoloTensorsToDetectionsCalculator : public Node {
           best = c;
         }
       }
+      if (!allow_classes_.empty() && !allow_classes_.contains(best)) continue;
+      if (ignore_classes_.contains(best)) continue;
       if (best_score < options_.conf_threshold()) continue;
 
       Detection d;
@@ -169,6 +176,8 @@ class YoloTensorsToDetectionsCalculator : public Node {
   mediapipe::YoloTensorsToDetectionsCalculatorOptions options_;
   float inv_w_ = 0.0f;  // 1/input_width when normalizing pixel-space boxes
   float inv_h_ = 0.0f;  // 1/input_height; 0 => boxes already normalized
+  absl::flat_hash_set<int> allow_classes_;
+  absl::flat_hash_set<int> ignore_classes_;
 };
 
 MEDIAPIPE_REGISTER_NODE(YoloTensorsToDetectionsCalculator);

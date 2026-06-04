@@ -2392,6 +2392,7 @@ cc_library(
         "//mediapipe/framework/formats:location_data_cc_proto",
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
     ],
     alwayslink = 1,

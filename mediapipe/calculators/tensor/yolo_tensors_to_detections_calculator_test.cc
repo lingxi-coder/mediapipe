@@ -498,5 +498,49 @@ TEST(YoloTensorsToDetectionsCalculatorTest, PixelSpaceBoxesNormalizedByInputDims
   EXPECT_NEAR(bb.height(), 48.0f / 480.0f, 1e-5);  // 0.1
 }
 
+TEST(YoloTensorsToDetectionsCalculatorTest, AllowClassesFiltersByIndex) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:dets"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.25 allow_classes: 1
+      }
+    }
+  )pb"));
+  // [1, 4+2=6, 2]: cx,cy,w,h, s0,s1 ; anchor0 argmax class0(0.9), anchor1 class1(0.8).
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 2},
+                       {0.5f,0.5f, 0.5f,0.5f, 0.2f,0.2f, 0.2f,0.2f,
+                        0.9f,0.1f, 0.1f,0.8f}).release()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = runner.Outputs().Tag("DETECTIONS").packets[0]
+                        .Get<std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(out[0].size(), 1u);          // only the class-1 anchor survives
+  EXPECT_EQ(out[0][0].label_id(0), 1);
+}
+TEST(YoloTensorsToDetectionsCalculatorTest, IgnoreClassesDropsByIndex) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:dets"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.25 ignore_classes: 0
+      }
+    }
+  )pb"));
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 2},
+                       {0.5f,0.5f, 0.5f,0.5f, 0.2f,0.2f, 0.2f,0.2f,
+                        0.9f,0.1f, 0.1f,0.8f}).release()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = runner.Outputs().Tag("DETECTIONS").packets[0]
+                        .Get<std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(out[0].size(), 1u);
+  EXPECT_EQ(out[0][0].label_id(0), 1);   // class 0 dropped
+}
+
 }  // namespace
 }  // namespace mediapipe
