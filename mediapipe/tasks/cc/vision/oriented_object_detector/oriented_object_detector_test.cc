@@ -29,6 +29,7 @@ limitations under the License.
 
 #include <cmath>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "mediapipe/framework/deps/file_path.h"
@@ -56,7 +57,7 @@ constexpr char kTestDataDirectory[] = "/mediapipe/tasks/testdata/vision/";
 constexpr char kOrientedModel[] = "yolov8n-obb.tflite";
 
 // An existing test image from //mediapipe/tasks/testdata/vision:test_images.
-constexpr char kTestImage[] = "cats_and_dogs.jpg";
+constexpr char kTestImage[] = "boats.jpg";
 
 // Returns the absolute path to the OBB fixture, using the same path
 // convention as the sibling object_detector tests ("./", prefix, filename).
@@ -95,8 +96,6 @@ TEST(OrientedObjectDetectorTest, DetectOnImage) {
   options->num_classes = 15;
   options->score_threshold = 0.25f;
   options->iou_threshold = 0.45f;
-  // YOLOv8 exported to TFLite typically uses CHANNELS_LAST layout.
-  options->layout = OrientedObjectDetectorOptions::kChannelsLast;
 
   MP_ASSERT_OK_AND_ASSIGN(auto detector,
                            OrientedObjectDetector::Create(std::move(options)));
@@ -104,16 +103,23 @@ TEST(OrientedObjectDetectorTest, DetectOnImage) {
   MP_ASSERT_OK_AND_ASSIGN(OrientedObjectDetectorResult result,
                            detector->Detect(image));
 
-  EXPECT_FALSE(result.detections.empty())
-      << "Expected at least one oriented detection on " << kTestImage << ".";
+  ASSERT_FALSE(result.detections.empty())
+      << "Expected oriented detections on " << kTestImage << ".";
+  EXPECT_LE(result.detections.size(), 10u);  // max_results respected
+  std::set<int> labels;
   for (const auto& det : result.detections) {
-    // Pixel-unit box dimensions must be positive and the angle finite.
+    ASSERT_EQ(det.categories.size(), 1u);
+    const auto& cat = det.categories[0];
+    EXPECT_GE(cat.score, 0.25f);
+    EXPECT_GE(cat.index, 0);
+    EXPECT_LT(cat.index, 15);
+    labels.insert(cat.index);
     EXPECT_GT(det.width, 0.0f);
     EXPECT_GT(det.height, 0.0f);
     EXPECT_TRUE(std::isfinite(det.rotation));
-    ASSERT_EQ(det.categories.size(), 1u);
-    EXPECT_GT(det.categories[0].score, 0.0f);
   }
+  // boats.jpg -> DOTA "ship" (class 1) per Step 1 oracle.
+  EXPECT_TRUE(labels.count(1)) << "expected a ship detection";
   MP_ASSERT_OK(detector->Close());
 }
 
@@ -138,7 +144,6 @@ TEST(OrientedObjectDetectorTest, DetectForVideo) {
   options->num_classes = 15;
   options->score_threshold = 0.25f;
   options->iou_threshold = 0.45f;
-  options->layout = OrientedObjectDetectorOptions::kChannelsLast;
 
   MP_ASSERT_OK_AND_ASSIGN(auto detector,
                            OrientedObjectDetector::Create(std::move(options)));

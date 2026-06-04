@@ -252,9 +252,14 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
   }
 };
 
-REGISTER_MEDIAPIPE_GRAPH(
-    ::mediapipe::tasks::vision::oriented_object_detector::
-        OrientedObjectDetectorGraph);
+// NOTE: keep the fully-qualified type name on a single line. The
+// REGISTER_MEDIAPIPE_GRAPH macro stringifies its argument with `#name`, so a
+// line break here would inject a stray space into the registered name (e.g.
+// "oriented_object_detector:: OrientedObjectDetectorGraph") and the graph would
+// never be found by lookup.
+// clang-format off
+REGISTER_MEDIAPIPE_GRAPH(::mediapipe::tasks::vision::oriented_object_detector::OrientedObjectDetectorGraph);  // NOLINT(whitespace/line_length)
+// clang-format on
 
 }  // namespace oriented_object_detector
 }  // namespace vision
