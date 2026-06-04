@@ -41,4 +41,9 @@ message YoloObbTensorsToOrientedDetectionsCalculatorOptions {
   // Per batch row, keep at most this many highest-scoring candidates before
   // NMS. -1 keeps all candidates above conf_threshold.
   optional int32 max_detections_before_nms = 4 [default = 300];
+
+  // Class-index filter during decode (before conf-threshold / cap). Mutually
+  // exclusive; empty (default) = no filtering.
+  repeated int32 allow_classes = 8 [packed = true];
+  repeated int32 ignore_classes = 9 [packed = true];
 }

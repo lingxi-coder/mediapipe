@@ -146,5 +146,49 @@ TEST(YoloObbCalculatorTest, MultiClassArgmaxAndAngleChannel) {
   EXPECT_NEAR(d.rotation(), 0.7f, 1e-5);  // angle read from channel 4+num_classes
 }
 
+TEST(YoloObbCalculatorTest, AllowClassesFiltersByIndex) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.25 allow_classes: 1
+      }
+    }
+  )pb"));
+  // [1, 4+2+1=7, 2]: cx,cy,w,h, s0,s1, angle ; anchor0 class0(0.9), anchor1 class1(0.8).
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 7, 2},
+                       {0.5f,0.5f, 0.5f,0.5f, 0.2f,0.2f, 0.2f,0.2f,
+                        0.9f,0.1f, 0.1f,0.8f, 0.3f,0.4f}).release()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                          .Get<BatchOrientedDetections>();
+  ASSERT_EQ(batch[0].size(), 1u);
+  EXPECT_EQ(batch[0][0].label_id(0), 1);
+}
+TEST(YoloObbCalculatorTest, IgnoreClassesDropsByIndex) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.25 ignore_classes: 0
+      }
+    }
+  )pb"));
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 7, 2},
+                       {0.5f,0.5f, 0.5f,0.5f, 0.2f,0.2f, 0.2f,0.2f,
+                        0.9f,0.1f, 0.1f,0.8f, 0.3f,0.4f}).release()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                          .Get<BatchOrientedDetections>();
+  ASSERT_EQ(batch[0].size(), 1u);
+  EXPECT_EQ(batch[0][0].label_id(0), 1);
+}
+
 }  // namespace
 }  // namespace mediapipe

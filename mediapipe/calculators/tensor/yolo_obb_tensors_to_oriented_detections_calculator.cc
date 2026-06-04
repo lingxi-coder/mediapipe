@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/yolo_obb_tensors_to_oriented_detections_calculator.pb.h"
 #include "mediapipe/framework/api2/node.h"
@@ -38,6 +39,10 @@ class YoloObbTensorsToOrientedDetectionsCalculator : public Node {
     options_ =
         cc->Options<mediapipe::YoloObbTensorsToOrientedDetectionsCalculatorOptions>();
     RET_CHECK_GT(options_.num_classes(), 0) << "num_classes must be set and > 0";
+    RET_CHECK(options_.allow_classes().empty() || options_.ignore_classes().empty())
+        << "allow_classes and ignore_classes are mutually exclusive";
+    for (int c : options_.allow_classes()) allow_classes_.insert(c);
+    for (int c : options_.ignore_classes()) ignore_classes_.insert(c);
     return absl::OkStatus();
   }
 
@@ -99,6 +104,8 @@ class YoloObbTensorsToOrientedDetectionsCalculator : public Node {
           best = c;
         }
       }
+      if (!allow_classes_.empty() && !allow_classes_.contains(best)) continue;
+      if (ignore_classes_.contains(best)) continue;
       if (best_score < options_.conf_threshold()) continue;
 
       OrientedDetection d;
@@ -123,6 +130,8 @@ class YoloObbTensorsToOrientedDetectionsCalculator : public Node {
   }
 
   mediapipe::YoloObbTensorsToOrientedDetectionsCalculatorOptions options_;
+  absl::flat_hash_set<int> allow_classes_;
+  absl::flat_hash_set<int> ignore_classes_;
 };
 
 MEDIAPIPE_REGISTER_NODE(YoloObbTensorsToOrientedDetectionsCalculator);
