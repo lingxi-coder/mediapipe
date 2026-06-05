@@ -3299,3 +3299,15 @@ cc_test(
         "@com_google_absl//absl/status",
     ],
 )
+
+cc_test(
+    name = "onnxruntime_link_smoke_test",
+    srcs = ["onnxruntime_link_smoke_test.cc"],
+    tags = ["nomsan", "notsan"],
+    deps = [
+        "//mediapipe/framework/port:gtest_main",
+    ] + select({
+        "//mediapipe:macos": ["@macos_onnxruntime//:onnxruntime"],
+        "//conditions:default": [],
+    }),
+)

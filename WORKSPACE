@@ -543,6 +543,15 @@ new_local_repository(
 )
 
 new_local_repository(
+    name = "macos_onnxruntime",
+    build_file = "@//third_party:onnxruntime_macos.BUILD",
+    # Apple-Silicon Homebrew root; PREFIX "opt/onnxruntime" in the BUILD file
+    # resolves through /opt/homebrew/opt/onnxruntime -> current Cellar version.
+    # Intel Homebrew: "/usr/local".
+    path = "/opt/homebrew",
+)
+
+new_local_repository(
     name = "macos_ffmpeg",
     build_file = "@//third_party:ffmpeg_macos.BUILD",
     path = "/usr/local/opt/ffmpeg",
