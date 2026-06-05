@@ -192,6 +192,7 @@ filegroup(
     srcs = glob(
         [
             "yolov8n.tflite",
+            "yolov8n.onnx",
             "yolov8n_labels.txt",
         ],
         allow_empty = True,
@@ -206,6 +207,7 @@ filegroup(
     srcs = glob(
         [
             "yolov8n-obb.tflite",
+            "yolov8n-obb.onnx",
             "yolov8n_obb_labels.txt",
             "boats.jpg",
         ],

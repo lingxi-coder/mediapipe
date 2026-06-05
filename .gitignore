@@ -32,3 +32,9 @@ __pycache__/
 /yolov8n-obb.pt
 /yolov8n-obb.onnx
 /yolov8n-obb_saved_model/
+
+# Locally-exported ONNX backend test fixtures (regenerate via export_yolov8n_onnx.py)
+/mediapipe/tasks/testdata/vision/yolov8n.onnx
+/mediapipe/tasks/testdata/vision/yolov8n-obb.onnx
+/mediapipe/tasks/testdata/vision/yolov8n.pt
+/mediapipe/tasks/testdata/vision/yolov8n-obb.pt
