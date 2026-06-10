@@ -46,4 +46,18 @@ message YoloObbTensorsToOrientedDetectionsCalculatorOptions {
   // exclusive; empty (default) = no filtering.
   repeated int32 allow_classes = 5 [packed = true];
   repeated int32 ignore_classes = 6 [packed = true];
+
+  // Per-row (tile-local) greedy ROTATED NMS applied inside the decoder before
+  // results leave the tile, so cross-tile merge and global NMS see a bounded,
+  // deduped candidate set. <= 0 disables (default). Mirrors
+  // YoloTensorsToDetectionsCalculatorOptions.tile_local_nms_iou_threshold.
+  optional float tile_local_nms_iou_threshold = 7 [default = 0.0];
+
+  // After tile-local NMS, keep at most this many detections per row (highest
+  // scores first). 0 disables (default).
+  optional int32 max_detections_after_tile_nms = 8 [default = 0];
+
+  // Tile-local NMS class behavior: false (default) = per-class (only same
+  // label_id suppresses), true = class-agnostic.
+  optional bool tile_local_nms_class_agnostic = 9 [default = false];
 }

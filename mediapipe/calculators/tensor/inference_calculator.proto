@@ -162,7 +162,9 @@ message InferenceCalculatorOptions {
       // physical PHWC4 float32 ([N,H,W,RoundUp(C,4)]) AND batch N==1 (the
       // delegate's batched layout is batch-innermost; only N==1 matches a
       // contiguous packet). Default off => byte-identical normal path.
-      optional bool metal_external_input_zero_copy = 14 [default = false];
+      // Deliberately numbered far above upstream's range so future upstream
+      // fields cannot collide on rebase (was fork-field 14).
+      optional bool metal_external_input_zero_copy = 471230 [default = false];
     }
 
     // Android only.

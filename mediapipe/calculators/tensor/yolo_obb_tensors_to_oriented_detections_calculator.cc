@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "absl/status/status.h"
+#include "mediapipe/calculators/tensor/detection_nms_util.h"
 #include "mediapipe/calculators/tensor/yolo_obb_tensors_to_oriented_detections_calculator.pb.h"
 #include "mediapipe/framework/api2/node.h"
 #include "mediapipe/framework/calculator_framework.h"
@@ -135,6 +136,31 @@ class YoloObbTensorsToOrientedDetectionsCalculator : public Node {
                         });
       dets->resize(k);
     }
+
+    TileLocalNms(dets);
+    const int post = options_.max_detections_after_tile_nms();
+    if (post > 0 && static_cast<int>(dets->size()) > post) {
+      // dets already in descending-score order from TileLocalNms (or unsorted
+      // if NMS was disabled — guard that case).
+      if (options_.tile_local_nms_iou_threshold() <= 0.0f) {
+        std::partial_sort(
+            dets->begin(), dets->begin() + post, dets->end(),
+            [](const OrientedDetection& l, const OrientedDetection& r) {
+              return l.score(0) > r.score(0);
+            });
+      }
+      dets->resize(post);
+    }
+  }
+
+  // Greedy rotated NMS within one row (tile), via the shared util. Per-row
+  // only (DecodeRow is called once per row); never compares across rows.
+  // Disabled when threshold <= 0. Result is in descending-score order.
+  void TileLocalNms(std::vector<OrientedDetection>* dets) const {
+    const float thr = options_.tile_local_nms_iou_threshold();
+    if (thr <= 0.0f || dets->size() < 2) return;
+    *dets = GreedyOrientedDetectionNms(
+        std::move(*dets), thr, options_.tile_local_nms_class_agnostic());
   }
 
   mediapipe::YoloObbTensorsToOrientedDetectionsCalculatorOptions options_;

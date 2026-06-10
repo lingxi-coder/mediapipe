@@ -120,5 +120,30 @@ TEST(RotatedNmsCalculatorTest, ClassAwareDoesNotSuppressAcrossClasses) {
   EXPECT_EQ(build(/*agnostic=*/true), 1u);   // agnostic -> dup suppressed
 }
 
+// max_detections is a cap on the kept list: an explicit 0 means "keep none"
+// (default -1 = uncapped). Previously the cap was applied after the first
+// push, so 0 wrongly returned one detection.
+TEST(RotatedNmsCalculatorTest, MaxDetectionsZeroReturnsNone) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "RotatedNonMaxSuppressionCalculator"
+    input_stream: "ORIENTED_DETECTIONS:in"
+    output_stream: "ORIENTED_DETECTIONS:out"
+    options {
+      [mediapipe.RotatedNonMaxSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5 max_detections: 0
+      }
+    }
+  )pb"));
+  auto in = std::make_unique<std::vector<OrientedDetection>>();
+  in->push_back(MakeObb(0.5f, 0.5f, 0.4f, 0.4f, 0.0f, 0.95f, 0));
+  in->push_back(MakeObb(0.9f, 0.9f, 0.1f, 0.1f, 0.0f, 0.70f, 0));
+  runner.MutableInputs()->Tag("ORIENTED_DETECTIONS").packets.push_back(
+      Adopt(in.release()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  EXPECT_TRUE(runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                  .Get<std::vector<OrientedDetection>>()
+                  .empty());
+}
+
 }  // namespace
 }  // namespace mediapipe

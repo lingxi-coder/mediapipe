@@ -218,5 +218,62 @@ TEST(YoloObbCalculatorTest, FilteredTopClassDoesNotSuppressAllowedClass) {
   EXPECT_NEAR(batch[0][0].rotation(), 0.3f, 1e-5);
 }
 
+// Tile-local rotated NMS inside the decoder (mirrors the axis-aligned YOLO
+// decoder): two heavily-overlapping same-class oriented boxes in one row are
+// deduped to the higher-scoring one before they ever leave the tile.
+TEST(YoloObbCalculatorTest, TileLocalNmsRemovesWithinRowDuplicate) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 1
+        conf_threshold: 0.25
+        tile_local_nms_iou_threshold: 0.5
+      }
+    }
+  )pb"));
+  // [1, 4+1+1=6, 2] CHANNELS_FIRST: identical boxes, scores 0.9 / 0.8.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 2},
+                       {0.5f, 0.5f, 0.5f, 0.5f, 0.4f, 0.4f, 0.4f, 0.4f,
+                        0.9f, 0.8f, 0.3f, 0.3f}).release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                          .Get<BatchOrientedDetections>();
+  ASSERT_EQ(batch[0].size(), 1u);
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+}
+
+// max_detections_after_tile_nms caps the per-row output (highest scores kept)
+// even when tile-local NMS itself is disabled.
+TEST(YoloObbCalculatorTest, MaxDetectionsAfterTileNmsCaps) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 1
+        conf_threshold: 0.25
+        max_detections_after_tile_nms: 1
+      }
+    }
+  )pb"));
+  // Two disjoint boxes, scores 0.8 / 0.9 (lower score first in anchor order).
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 2},
+                       {0.2f, 0.7f, 0.2f, 0.7f, 0.1f, 0.1f, 0.1f, 0.1f,
+                        0.8f, 0.9f, 0.0f, 0.0f}).release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                          .Get<BatchOrientedDetections>();
+  ASSERT_EQ(batch[0].size(), 1u);
+  EXPECT_NEAR(batch[0][0].score(0), 0.9f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe

@@ -2473,13 +2473,13 @@ cc_library(
     name = "yolo_obb_tensors_to_oriented_detections_calculator",
     srcs = ["yolo_obb_tensors_to_oriented_detections_calculator.cc"],
     deps = [
+        ":detection_nms_util",
         ":yolo_obb_tensors_to_oriented_detections_calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/framework/port:ret_check",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
     ],
     alwayslink = 1,
@@ -3127,6 +3127,7 @@ cc_library(
     name = "merge_tile_detections_accumulator_calculator",
     srcs = ["merge_tile_detections_accumulator_calculator.cc"],
     deps = [
+        ":tile_frame_accumulator",
         ":tiling_matrix_utils",
         ":tiling_types",
         "//mediapipe/framework:calculator_framework",
@@ -3138,6 +3139,47 @@ cc_library(
         "@com_google_absl//absl/status",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "tile_frame_accumulator",
+    hdrs = ["tile_frame_accumulator.h"],
+)
+
+cc_library(
+    name = "merge_tile_box_detections_accumulator_calculator",
+    srcs = ["merge_tile_box_detections_accumulator_calculator.cc"],
+    deps = [
+        ":tile_frame_accumulator",
+        ":tiling_matrix_utils",
+        ":tiling_types",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:timestamp",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/api2:packet",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "merge_tile_box_detections_accumulator_calculator_test",
+    srcs = ["merge_tile_box_detections_accumulator_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":merge_tile_box_detections_accumulator_calculator",
+        ":tiling_matrix_utils",
+        ":tiling_types",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
 )
 
 cc_test(
@@ -3229,6 +3271,9 @@ cc_library(
     hdrs = ["detection_nms_util.h"],
     deps = [
         "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:opencv_core",
+        "//mediapipe/framework/port:opencv_imgproc",
     ],
 )
 

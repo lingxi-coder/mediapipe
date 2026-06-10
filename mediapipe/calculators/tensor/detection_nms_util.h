@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "mediapipe/framework/formats/detection.pb.h"
+#include "mediapipe/framework/formats/oriented_detection.pb.h"
 
 namespace mediapipe {
 
@@ -33,6 +34,24 @@ float DetectionRelativeIoU(const Detection& a, const Detection& b);
 std::vector<Detection> GreedyDetectionNms(std::vector<Detection> dets,
                                           float iou_threshold,
                                           bool class_agnostic);
+
+// Rotated IoU of two oriented detections, computed in the coordinate space
+// the OrientedDetection fields are defined in (frame-normalized; see
+// oriented_detection.proto — on non-square frames that space is anisotropic
+// w.r.t. pixels). 0 if the boxes don't intersect or the union is empty.
+float OrientedDetectionIoU(const OrientedDetection& a,
+                           const OrientedDetection& b);
+
+// Greedy rotated-IoU NMS over OrientedDetections. Sorts by score(0)
+// descending (stable), keeps higher-scoring boxes, suppresses a lower-scoring
+// box when IoU >= iou_threshold (note: >=, matching
+// RotatedNonMaxSuppressionCalculator, while the axis-aligned util uses >).
+// When !class_agnostic, only boxes with the same label_id(0) suppress each
+// other. A missing score reads as 0.0 and a missing label_id as -1. Returns
+// kept detections in descending-score order.
+std::vector<OrientedDetection> GreedyOrientedDetectionNms(
+    std::vector<OrientedDetection> dets, float iou_threshold,
+    bool class_agnostic);
 
 }  // namespace mediapipe
 #endif  // MEDIAPIPE_CALCULATORS_TENSOR_DETECTION_NMS_UTIL_H_

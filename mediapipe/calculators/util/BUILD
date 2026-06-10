@@ -460,11 +460,10 @@ cc_library(
     srcs = ["rotated_non_max_suppression_calculator.cc"],
     deps = [
         ":rotated_non_max_suppression_calculator_cc_proto",
+        "//mediapipe/calculators/tensor:detection_nms_util",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:opencv_core",
-        "//mediapipe/framework/port:opencv_imgproc",
         "@com_google_absl//absl/status",
     ],
     alwayslink = 1,

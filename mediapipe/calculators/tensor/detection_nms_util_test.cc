@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "mediapipe/framework/formats/detection.pb.h"
+#include "mediapipe/framework/formats/oriented_detection.pb.h"
 #include "mediapipe/framework/port/gtest.h"
 
 namespace mediapipe {
@@ -144,6 +145,66 @@ TEST(GreedyDetectionNmsTest, SingleDetectionKept) {
   auto kept = GreedyDetectionNms(dets, 0.5f, false);
   ASSERT_EQ(kept.size(), 1u);
   EXPECT_NEAR(kept[0].score(0), 0.8f, 1e-6f);
+}
+
+// -------------------------------------------------------------------------
+// GreedyOrientedDetectionNms tests
+// -------------------------------------------------------------------------
+
+OrientedDetection Obb(float score, int label_id, float cx, float cy, float w,
+                      float h, float rot) {
+  OrientedDetection d;
+  d.set_cx(cx);
+  d.set_cy(cy);
+  d.set_width(w);
+  d.set_height(h);
+  d.set_rotation(rot);
+  d.add_score(score);
+  d.add_label_id(label_id);
+  return d;
+}
+
+TEST(GreedyOrientedDetectionNmsTest, BasicDedupSameClass) {
+  std::vector<OrientedDetection> dets = {
+      Obb(0.7f, 0, 0.5f, 0.5f, 0.4f, 0.4f, 0.3f),
+      Obb(0.9f, 0, 0.5f, 0.5f, 0.4f, 0.4f, 0.3f),
+  };
+  auto kept = GreedyOrientedDetectionNms(dets, /*iou_threshold=*/0.5f,
+                                         /*class_agnostic=*/false);
+  ASSERT_EQ(kept.size(), 1u);
+  EXPECT_NEAR(kept[0].score(0), 0.9f, 1e-6f);
+}
+
+TEST(GreedyOrientedDetectionNmsTest, RotationSeparatesCrossedBoxes) {
+  // Two thin boxes crossing at ~90 degrees: rotated IoU is
+  // (0.1*0.1)/(2*0.6*0.1 - 0.01) ~= 0.09, far below the threshold.
+  std::vector<OrientedDetection> dets = {
+      Obb(0.9f, 0, 0.5f, 0.5f, 0.6f, 0.1f, 0.0f),
+      Obb(0.8f, 0, 0.5f, 0.5f, 0.6f, 0.1f, 1.5708f),
+  };
+  auto kept = GreedyOrientedDetectionNms(dets, 0.5f, false);
+  EXPECT_EQ(kept.size(), 2u);
+}
+
+TEST(GreedyOrientedDetectionNmsTest, PerClassDefaultKeepsDifferentClasses) {
+  std::vector<OrientedDetection> dets = {
+      Obb(0.9f, 0, 0.5f, 0.5f, 0.4f, 0.4f, 0.0f),
+      Obb(0.8f, 1, 0.5f, 0.5f, 0.4f, 0.4f, 0.0f),
+  };
+  EXPECT_EQ(GreedyOrientedDetectionNms(dets, 0.5f, false).size(), 2u);
+  EXPECT_EQ(GreedyOrientedDetectionNms(dets, 0.5f, true).size(), 1u);
+}
+
+TEST(GreedyOrientedDetectionNmsTest, OutputIsDescendingScore) {
+  std::vector<OrientedDetection> dets = {
+      Obb(0.4f, 0, 0.1f, 0.1f, 0.1f, 0.1f, 0.0f),
+      Obb(0.9f, 0, 0.8f, 0.8f, 0.1f, 0.1f, 0.0f),
+      Obb(0.7f, 0, 0.5f, 0.5f, 0.1f, 0.1f, 0.0f),
+  };
+  auto kept = GreedyOrientedDetectionNms(dets, 0.5f, false);
+  ASSERT_EQ(kept.size(), 3u);
+  EXPECT_GE(kept[0].score(0), kept[1].score(0));
+  EXPECT_GE(kept[1].score(0), kept[2].score(0));
 }
 
 }  // namespace

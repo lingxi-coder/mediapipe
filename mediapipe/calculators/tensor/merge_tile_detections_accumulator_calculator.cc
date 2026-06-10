@@ -14,10 +14,10 @@
 
 #include <array>
 #include <cmath>
-#include <map>
 #include <vector>
 
 #include "absl/status/status.h"
+#include "mediapipe/calculators/tensor/tile_frame_accumulator.h"
 #include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/node.h"
@@ -69,7 +69,7 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
       RET_CHECK_LE(info.valid_count,
                    static_cast<int>(geom->tile_to_image_matrices.size()));
     }
-    auto& acc = pending_[info.source_frame_timestamp];
+    std::vector<OrientedDetection> projected;
     for (int r = 0; r < info.valid_count; ++r) {
       if (r >= static_cast<int>(batch.size())) continue;
       const std::array<float, 16>& m = geom->tile_to_image_matrices[r];
@@ -107,30 +107,22 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
           out.set_height(d.height() * std::hypot(sx * s, sy * c));
           out.set_rotation(std::atan2(sy * s, sx * c));
         }
-        acc.received_dets.push_back(std::move(out));
+        projected.push_back(std::move(out));
       }
     }
-    acc.batches_seen += 1;
-    acc.total_batches = info.total_batches;
-    if (acc.batches_seen >= acc.total_batches) {
-      std::vector<OrientedDetection> merged = std::move(acc.received_dets);
-      const int64_t src_ts = info.source_frame_timestamp;
-      pending_.erase(info.source_frame_timestamp);
+    auto merged = accumulator_.AddBatch(
+        info.source_frame_timestamp, info.total_batches, std::move(projected));
+    if (merged.has_value()) {
       kOut(cc).Send(
           mediapipe::api2::MakePacket<std::vector<OrientedDetection>>(
-              std::move(merged))
-              .At(::mediapipe::Timestamp(src_ts)));
+              std::move(*merged))
+              .At(::mediapipe::Timestamp(info.source_frame_timestamp)));
     }
     return absl::OkStatus();
   }
 
  private:
-  struct FrameAcc {
-    std::vector<OrientedDetection> received_dets;
-    int batches_seen = 0;
-    int total_batches = 1;
-  };
-  std::map<int64_t, FrameAcc> pending_;
+  TileFrameAccumulator<OrientedDetection> accumulator_;
 };
 
 MEDIAPIPE_REGISTER_NODE(MergeTileDetectionsAccumulatorCalculator);
