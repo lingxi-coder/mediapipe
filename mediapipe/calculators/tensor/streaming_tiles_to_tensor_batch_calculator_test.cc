@@ -465,5 +465,34 @@ TEST(StreamingTilesTest, CacheStatsReportsMatrixHits) {
       << "expected at least one cache hit (second frame, same geometry)";
 }
 
+// A frame whose TILE_PLAN packet is missing (the bound advanced past the
+// image's timestamp without a packet) must behave like an empty plan: emit
+// the empty-frame BATCH_INFO so the merge accumulator still sees the frame,
+// and produce no tensors — instead of dereferencing the missing packet
+// (api2 Get() on an empty packet is fatal).
+TEST(StreamingTilesTest, MissingTilePlanPacketEmitsEmptyFrameInfo) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(4, 8, 8, 3, /*dynamic=*/false));
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(16, 16).release()).At(Timestamp(7)));
+  // No TILE_PLAN packet at Timestamp(7).
+  MP_ASSERT_OK(runner.Run());
+  EXPECT_TRUE(runner.Outputs().Tag("TENSORS").packets.empty());
+  const auto& ipk = runner.Outputs().Tag("BATCH_INFO").packets;
+  ASSERT_EQ(ipk.size(), 1);
+  const auto& info = ipk[0].Get<TensorBatchInfo>();
+  EXPECT_EQ(info.source_frame_timestamp, 7);
+  EXPECT_EQ(info.total_batches, 0);
+  EXPECT_EQ(info.valid_count, 0);
+}
+
 }  // namespace
 }  // namespace mediapipe

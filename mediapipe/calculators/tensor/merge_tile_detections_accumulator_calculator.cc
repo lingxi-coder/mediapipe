@@ -45,7 +45,15 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
                           ::mediapipe::api2::TimestampChange::Arbitrary());
 
   absl::Status Process(CalculatorContext* cc) override {
-    const auto& batch = *kInDets(cc);
+    RET_CHECK(!kInInfo(cc).IsEmpty())
+        << "ORIENTED_DETECTIONS arrived without a paired BATCH_INFO packet";
+    // An empty frame (T==0, e.g. scheduler SKIP) carries a BATCH_INFO packet
+    // with NO paired detections packet: the producer only advances the
+    // TENSORS bound, so inference/decode emit nothing at this timestamp.
+    // Treat the missing packet as an empty batch (api2 Get() on an empty
+    // packet is fatal).
+    const std::vector<std::vector<OrientedDetection>> empty_batch;
+    const auto& batch = kInDets(cc).IsEmpty() ? empty_batch : *kInDets(cc);
     const TensorBatchInfo& info = *kInInfo(cc);
     RET_CHECK(info.geometry != nullptr || info.valid_count == 0);
     const auto& geom = info.geometry;

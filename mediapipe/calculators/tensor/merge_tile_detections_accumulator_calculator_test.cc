@@ -214,5 +214,85 @@ TEST(MergeTileAccumulatorTest, BoundaryTileScalesSizeByEffectiveRoiNotRequested)
   EXPECT_NEAR(merged[0].height(), 0.40f, 1e-4); // 0.4 * 1.0
 }
 
+// The producer's empty-frame protocol (T==0, e.g. scheduler SKIP) sends a
+// BATCH_INFO packet and only advances the detections-side timestamp bound —
+// no ORIENTED_DETECTIONS packet ever exists at that timestamp. The merge must
+// emit the empty source-frame result instead of dereferencing the missing
+// packet (api2 Get() on an empty packet is fatal).
+TEST(MergeTileAccumulatorTest, EmptyFrameWithoutDetectionsPacketEmitsEmptyResult) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+        calculator: "MergeTileDetectionsAccumulatorCalculator"
+        input_stream: "ORIENTED_DETECTIONS:dets"
+        input_stream: "BATCH_INFO:info"
+        output_stream: "ORIENTED_DETECTIONS:merged"
+      )pb"));
+
+  TensorBatchInfo info;
+  info.source_frame_timestamp = 1234;
+  info.total_batches = 0;
+  info.valid_count = 0;  // geometry stays nullptr, like the real producer
+
+  // Only BATCH_INFO carries a packet; the detections stream stays empty (its
+  // bound advances past Timestamp(0) when the runner closes the sources).
+  runner.MutableInputs()->Tag("BATCH_INFO").packets.push_back(
+      MakePacket<TensorBatchInfo>(info).At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& packets = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets;
+  ASSERT_EQ(packets.size(), 1);
+  EXPECT_EQ(packets[0].Timestamp(), Timestamp(1234));
+  EXPECT_TRUE(packets[0].Get<std::vector<OrientedDetection>>().empty());
+}
+
+// A batch whose decoded detections packet is missing (bound-only) must still
+// count toward total_batches so the frame completes with the rows that did
+// arrive, instead of crashing or waiting forever.
+TEST(MergeTileAccumulatorTest, MissingDetectionsPacketStillCountsBatch) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+        calculator: "MergeTileDetectionsAccumulatorCalculator"
+        input_stream: "ORIENTED_DETECTIONS:dets"
+        input_stream: "BATCH_INFO:info"
+        output_stream: "ORIENTED_DETECTIONS:merged"
+      )pb"));
+
+  TileGeometry t;
+  t.tile_index = 0;
+  t.x_center = .5f;
+  t.y_center = .5f;
+  t.width = 1.0f;
+  t.height = 1.0f;
+  auto geom = MakeGeom({t}, 100, 100);
+
+  // Batch 0 of 2: one detection present.
+  auto batch = std::make_unique<std::vector<std::vector<OrientedDetection>>>();
+  batch->push_back({Obb(0.5f, 0.5f, 0.2f, 0.2f)});
+  TensorBatchInfo info0;
+  info0.source_frame_timestamp = 50;
+  info0.batch_index = 0;
+  info0.total_batches = 2;
+  info0.valid_count = 1;
+  info0.tile_indices = {0};
+  info0.geometry = geom;
+  runner.MutableInputs()
+      ->Tag("ORIENTED_DETECTIONS")
+      .packets.push_back(Adopt(batch.release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("BATCH_INFO").packets.push_back(
+      MakePacket<TensorBatchInfo>(info0).At(Timestamp(0)));
+
+  // Batch 1 of 2: BATCH_INFO only — the detections packet was never produced.
+  TensorBatchInfo info1 = info0;
+  info1.batch_index = 1;
+  runner.MutableInputs()->Tag("BATCH_INFO").packets.push_back(
+      MakePacket<TensorBatchInfo>(info1).At(Timestamp(1)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& packets = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets;
+  ASSERT_EQ(packets.size(), 1);
+  EXPECT_EQ(packets[0].Timestamp(), Timestamp(50));
+  EXPECT_EQ(packets[0].Get<std::vector<OrientedDetection>>().size(), 1);
+}
+
 }  // namespace
 }  // namespace mediapipe

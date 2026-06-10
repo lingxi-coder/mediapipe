@@ -16,8 +16,9 @@
 //                  TileSpecToTilePlanCalculator →
 //                  StreamingTilesToTensorBatchCalculator
 //
-// Tests the scheduler↔tiling seam only.  No decoder, tracker, merger, NMS,
-// or loopback is wired here — those are later tasks.
+// Tests the scheduler↔tiling seam, plus the SKIP/empty-frame protocol through
+// the decoder-bound-propagation → merge-accumulator chain (no real inference;
+// the decoder never fires on an empty frame, only its bound advances).
 
 #include <cstring>
 #include <memory>
@@ -29,6 +30,7 @@
 #include "mediapipe/framework/formats/detection.pb.h"
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
+#include "mediapipe/framework/formats/oriented_detection.pb.h"
 #include "mediapipe/framework/formats/rect.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/port/gtest.h"
@@ -149,6 +151,60 @@ constexpr char kCacheGraphConfig[] = R"pb(
         emit_cache_stats: true
       }
     }
+  }
+)pb";
+
+// Graph config for the SKIP/empty-frame e2e. The scheduler is forced to SKIP
+// every frame (no TRACKING wired + detect_without_tracking=false), so the
+// batcher emits a BATCH_INFO-only empty frame (TENSORS bound advance, no
+// packet). That bound must propagate through the never-firing OBB decoder so
+// the merge accumulator emits an EMPTY result at each source timestamp
+// instead of stalling or crashing on the missing detections packet.
+constexpr char kSkipFrameGraphConfig[] = R"pb(
+  input_stream: "image"
+  input_stream: "base_tiles"
+  input_stream: "priors"
+  input_side_packet: "meta"
+  node {
+    calculator: "VideoTileSchedulerCalculator"
+    input_stream: "TILES:base_tiles"
+    input_stream: "PRIOR_DETECTIONS:priors"
+    output_stream: "TILES:sched"
+    output_stream: "REFRESH:refresh"
+    options {
+      [mediapipe.VideoTileSchedulerCalculatorOptions.ext] {
+        detect_without_tracking: false
+      }
+    }
+  }
+  node {
+    calculator: "TileSpecToTilePlanCalculator"
+    input_stream: "TILES:sched"
+    output_stream: "TILE_PLAN:plan"
+  }
+  node {
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  }
+  node {
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 15
+      }
+    }
+  }
+  node {
+    calculator: "MergeTileDetectionsAccumulatorCalculator"
+    input_stream: "ORIENTED_DETECTIONS:dets"
+    input_stream: "BATCH_INFO:info"
+    output_stream: "ORIENTED_DETECTIONS:merged"
   }
 )pb";
 
@@ -314,6 +370,59 @@ TEST(VideoTileSchedulerPipelineTest, CacheHitsOnRepeatedIdenticalFrames) {
   EXPECT_GE(last_matrix_stats.tile_matrix.hits, 1)
       << "StreamingTilesToTensorBatchCalculator: expected at least one "
          "tile_matrix cache hit (second frame with identical geometry)";
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: SKIP/empty-frame e2e through the real chain.
+//
+// Every frame is SKIPped (no TRACKING + detect_without_tracking=false), so
+// the producer emits a BATCH_INFO-only empty frame and advances the TENSORS
+// bound. The decoder never fires (no TENSORS packet); its output bound
+// propagation alone must let the merge accumulator emit an EMPTY merged
+// result at each source timestamp — without stalling and without crashing on
+// the missing detections packet.
+// ---------------------------------------------------------------------------
+TEST(VideoTileSchedulerPipelineTest, SkipFramesEmitEmptyMergedResults) {
+  auto config =
+      ParseTextProtoOrDie<CalculatorGraphConfig>(kSkipFrameGraphConfig);
+
+  std::vector<Packet> merged_packets;
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.Initialize(config));
+  MP_ASSERT_OK(graph.ObserveOutputStream(
+      "merged", [&](const Packet& p) -> absl::Status {
+        merged_packets.push_back(p);
+        return absl::OkStatus();
+      }));
+
+  constexpr int kH = 8, kW = 8, kC = 3;
+  MP_ASSERT_OK(graph.StartRun({{"meta",
+                                MakePacket<InferenceMetadata>(
+                                    Meta(/*batch_capacity=*/2, kH, kW, kC,
+                                         /*dynamic=*/false))}}));
+
+  // Two frames; the scheduler SKIPs both → two empty TilePlans.
+  for (int t = 0; t < 2; ++t) {
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "image", Adopt(WhiteFrame(64, 64).release()).At(Timestamp(t))));
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "base_tiles",
+        Adopt(new std::vector<NormalizedRect>(FiveTiles())).At(Timestamp(t))));
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "priors", Adopt(new std::vector<Detection>()).At(Timestamp(t))));
+  }
+
+  MP_ASSERT_OK(graph.CloseAllPacketSources());
+  MP_ASSERT_OK(graph.WaitUntilDone());
+
+  ASSERT_EQ(merged_packets.size(), 2u);
+  for (int t = 0; t < 2; ++t) {
+    EXPECT_EQ(merged_packets[t].Timestamp(), Timestamp(t))
+        << "merged result must come back at the source frame timestamp";
+    EXPECT_TRUE(
+        merged_packets[t].Get<std::vector<OrientedDetection>>().empty())
+        << "a SKIPped frame must produce an empty detections result";
+  }
 }
 
 }  // namespace

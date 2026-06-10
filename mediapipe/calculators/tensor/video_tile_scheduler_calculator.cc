@@ -52,6 +52,14 @@ class VideoTileSchedulerCalculator : public Node {
   }
 
   absl::Status Process(CalculatorContext* cc) override {
+    // A missing TILES packet (bound advanced without a packet) leaves nothing
+    // to schedule: emit the SKIP outputs (api2 Get() on an empty packet is
+    // fatal).
+    if (kInTiles(cc).IsEmpty()) {
+      kOutTiles(cc).Send(std::vector<NormalizedRect>{});
+      kOutRefresh(cc).Send(false);
+      return absl::OkStatus();
+    }
     const std::vector<NormalizedRect>& base = *kInTiles(cc);
     const bool priors_empty =
         kInPriorDets(cc).IsEmpty() || kInPriorDets(cc)->empty();

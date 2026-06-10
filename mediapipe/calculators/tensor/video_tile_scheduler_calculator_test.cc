@@ -443,5 +443,30 @@ TEST(VideoTileSchedulerTest, DetectWithMaxScheduledTilesCapsTileCount) {
   EXPECT_EQ(sched[0].Get<std::vector<NormalizedRect>>().size(), 1u);
 }
 
+// A frame whose TILES packet is missing (bound advanced without a packet)
+// has nothing to schedule: emit the SKIP outputs (empty tiles, REFRESH=false)
+// instead of dereferencing the missing packet (api2 Get() on empty is fatal).
+TEST(VideoTileSchedulerTest, MissingTilesPacketEmitsSkip) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "VideoTileSchedulerCalculator"
+    input_stream: "TILES:tiles"
+    input_stream: "PRIOR_DETECTIONS:priors"
+    output_stream: "TILES:sched"
+    output_stream: "REFRESH:refresh"
+  )pb"));
+  auto priors = std::make_unique<std::vector<Detection>>();
+  priors->push_back(Det(0.9, .4, .4, .2, .2));
+  runner.MutableInputs()->Tag("PRIOR_DETECTIONS").packets.push_back(
+      Adopt(priors.release()).At(Timestamp(0)));
+  // No TILES packet at Timestamp(0).
+  MP_ASSERT_OK(runner.Run());
+  const auto& sched = runner.Outputs().Tag("TILES").packets;
+  const auto& refresh = runner.Outputs().Tag("REFRESH").packets;
+  ASSERT_EQ(sched.size(), 1u);
+  ASSERT_EQ(refresh.size(), 1u);
+  EXPECT_TRUE(sched[0].Get<std::vector<NormalizedRect>>().empty());
+  EXPECT_FALSE(refresh[0].Get<bool>());
+}
+
 }  // namespace
 }  // namespace mediapipe

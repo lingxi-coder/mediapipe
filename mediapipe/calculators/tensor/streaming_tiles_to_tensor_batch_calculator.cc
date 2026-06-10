@@ -217,6 +217,16 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   }
 
   absl::Status Process(CalculatorContext* cc) override {
+    // A missing TILE_PLAN packet (bound advanced past this timestamp without
+    // a packet) is treated as an empty plan: emit the empty-frame BATCH_INFO
+    // so the downstream merge still sees the frame (api2 Get() on an empty
+    // packet is fatal).
+    if (kInPlan(cc).IsEmpty()) {
+      const int64_t ts = cc->InputTimestamp().Value();
+      EmitEmptyFrameIfNeeded(cc, /*T=*/0, ts);
+      MaybeEmitStats(cc, ts);
+      return absl::OkStatus();
+    }
 #if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
     if (metal_zero_copy_active_ && kInImageGpu(cc).IsConnected() &&
         !kInImageGpu(cc).IsEmpty()) {
