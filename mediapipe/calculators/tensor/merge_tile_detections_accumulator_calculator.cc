@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <array>
+#include <cmath>
 #include <map>
 #include <vector>
 
@@ -33,7 +34,9 @@ namespace api2 {
 // padded rows, and projects tile-local boxes to full-frame coords using the
 // TileBatchGeometry carried on BATCH_INFO. Emits the flattened frame
 // detections at the original source frame timestamp once all batches arrive.
-// Axis-aligned tiles only: rotation is preserved.
+// Axis-aligned tiles only. Rotation passes through unchanged under isotropic
+// tile->frame mapping; an anisotropic mapping (boundary-clamped tile)
+// transforms the box axes, adjusting rotation and w/h accordingly.
 class MergeTileDetectionsAccumulatorCalculator : public Node {
  public:
   static constexpr Input<std::vector<std::vector<OrientedDetection>>> kInDets{
@@ -83,9 +86,27 @@ class MergeTileDetectionsAccumulatorCalculator : public Node {
         ApplyMatrix(m, d.cx(), d.cy(), &fx, &fy);
         out.set_cx(fx);
         out.set_cy(fy);
-        out.set_width(d.width() * m[0]);
-        out.set_height(d.height() * m[5]);
-        // rotation preserved (axis-aligned tile).
+        const float sx = m[0];
+        const float sy = m[5];
+        const float theta = d.rotation();
+        if (sx == sy || theta == 0.0f) {
+          // Isotropic mapping (square-ish tile) or axis-aligned box: per-axis
+          // scaling is exact and the rotation passes through unchanged.
+          out.set_width(d.width() * sx);
+          out.set_height(d.height() * sy);
+        } else {
+          // Anisotropic mapping (e.g. boundary-clamped tile): transform the
+          // box's edge DIRECTIONS through the scale instead of scaling w/h
+          // per-axis with a preserved angle (which corrupts rotated boxes).
+          // Exact for theta in {0, ±pi/2} and isotropic scales; the residual
+          // shear a general anisotropic scale adds to a rotated rect has no
+          // rotated-rect representation and is deliberately dropped.
+          const float c = std::cos(theta);
+          const float s = std::sin(theta);
+          out.set_width(d.width() * std::hypot(sx * c, sy * s));
+          out.set_height(d.height() * std::hypot(sx * s, sy * c));
+          out.set_rotation(std::atan2(sy * s, sx * c));
+        }
         acc.received_dets.push_back(std::move(out));
       }
     }

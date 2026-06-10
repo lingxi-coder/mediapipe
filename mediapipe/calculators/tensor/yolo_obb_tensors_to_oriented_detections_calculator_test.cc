@@ -190,5 +190,33 @@ TEST(YoloObbCalculatorTest, IgnoreClassesDropsByIndex) {
   EXPECT_EQ(batch[0][0].label_id(0), 1);
 }
 
+// Class filtering must restrict the argmax itself: an anchor whose top class
+// is ignored must still be emitted with its best allowed class when that
+// class clears the threshold.
+TEST(YoloObbCalculatorTest, FilteredTopClassDoesNotSuppressAllowedClass) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloObbTensorsToOrientedDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "ORIENTED_DETECTIONS:dets"
+    options {
+      [mediapipe.YoloObbTensorsToOrientedDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.5 ignore_classes: 0
+      }
+    }
+  )pb"));
+  // One anchor: cx,cy,w,h, s0 (ignored) 0.9, s1 0.6, angle 0.3.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 7, 1},
+                       {0.5f, 0.5f, 0.2f, 0.2f, 0.9f, 0.6f, 0.3f}).release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& batch = runner.Outputs().Tag("ORIENTED_DETECTIONS").packets[0]
+                          .Get<BatchOrientedDetections>();
+  ASSERT_EQ(batch[0].size(), 1u) << "the allowed class clears the threshold";
+  EXPECT_EQ(batch[0][0].label_id(0), 1);
+  EXPECT_NEAR(batch[0][0].score(0), 0.6f, 1e-5);
+  EXPECT_NEAR(batch[0][0].rotation(), 0.3f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe

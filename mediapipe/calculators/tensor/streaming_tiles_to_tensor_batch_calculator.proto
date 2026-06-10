@@ -47,31 +47,26 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // ---- GPU zero-copy path (Plan 4). All default off; the CPU path above is
   // byte-identical when enable_gpu_zero_copy is false. ----
 
-  // Cache 5: max GPU/AHWB-backed batch tensor buffers to pool, keyed by GL
-  // context scope. 0 = no pooling (per-batch alloc).
+  // Cache 5: max GPU/AHWB-backed batch tensor buffers to pool. Required (> 0)
+  // when enable_gpu_zero_copy is set. Pooling is effective on AHWB-capable
+  // platforms (Android); on GL-without-AHWB and on Metal the framework has no
+  // buffer pool, so allocation is per batch and this only bounds the config.
   optional int32 max_gpu_tensor_buffers = 5 [default = 0];
-
-  // Cache 4: max compiled GL programs / tile surfaces to cache. 0 = no cache.
-  optional int32 max_tile_surfaces = 6 [default = 0];
 
   // When true AND a GPU input (IMAGE_GPU) is connected, run tiled
   // crop/resize/normalize on the GPU, writing each tile into its row of a
   // GPU/AHWB-backed [N,H,W,C] tensor with no CPU readback. Default off => CPU
-  // path exactly.
+  // path exactly. A frame without a usable GPU input falls back to the CPU
+  // path and is counted in TilingCacheStats.gpu_to_cpu_fallbacks.
   optional bool enable_gpu_zero_copy = 7 [default = false];
 
-  // If a GPU input is not present while enable_gpu_zero_copy is set, fall back
-  // to the CPU path (true) or fail with an actionable error (false).
-  optional bool allow_cpu_input_fallback = 8 [default = true];
-
-  // Bound on GPU batch tensors simultaneously in flight downstream. 0 =
-  // governed solely by max_gpu_tensor_buffers.
-  optional int32 max_in_flight_gpu_batches = 9 [default = 0];
-
-  // If the GPU buffer pool is exhausted in zero-copy mode, allow a CPU-readback
-  // fallback (true) or fail with ResourceExhausted (false). Perf/zero-copy
-  // tests set this false so any readback is a failure.
-  optional bool allow_gpu_readback_fallback = 10 [default = false];
+  // Removed options that promised behavior which was never implemented
+  // (fallback toggles, tile-surface cache cap, in-flight cap):
+  //   6: max_tile_surfaces, 8: allow_cpu_input_fallback,
+  //   9: max_in_flight_gpu_batches, 10: allow_gpu_readback_fallback.
+  reserved 6, 8, 9, 10;
+  reserved "max_tile_surfaces", "allow_cpu_input_fallback",
+      "max_in_flight_gpu_batches", "allow_gpu_readback_fallback";
 
   // Apple/Metal only. When true (and enable_gpu_zero_copy + IMAGE_GPU), emit a
   // PHYSICAL PHWC4 float32 [1,H,W,RoundUp(C,4)] Metal tensor per batch for

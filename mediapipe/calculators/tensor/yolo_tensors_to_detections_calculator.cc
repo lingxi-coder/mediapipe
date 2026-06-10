@@ -16,7 +16,6 @@
 #include <memory>
 #include <vector>
 
-#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/detection_nms_util.h"
 #include "mediapipe/calculators/tensor/yolo_tensors_to_detections_calculator.pb.h"
@@ -54,8 +53,14 @@ class YoloTensorsToDetectionsCalculator : public Node {
     }
     RET_CHECK(options_.allow_classes().empty() || options_.ignore_classes().empty())
         << "allow_classes and ignore_classes are mutually exclusive";
-    for (int c : options_.allow_classes()) allow_classes_.insert(c);
-    for (int c : options_.ignore_classes()) ignore_classes_.insert(c);
+    class_allowed_.assign(options_.num_classes(),
+                          options_.allow_classes().empty());
+    for (int c : options_.allow_classes()) {
+      if (c >= 0 && c < options_.num_classes()) class_allowed_[c] = true;
+    }
+    for (int c : options_.ignore_classes()) {
+      if (c >= 0 && c < options_.num_classes()) class_allowed_[c] = false;
+    }
     return absl::OkStatus();
   }
 
@@ -113,17 +118,20 @@ class YoloTensorsToDetectionsCalculator : public Node {
         cy *= inv_h_;
         h *= inv_h_;
       }
-      int best = 0;
-      float best_score = at(4);
-      for (int c = 1; c < num_classes; ++c) {
+      // Class filtering restricts the argmax itself (TensorsToDetections
+      // semantics): an anchor is scored by its best ALLOWED class, so a
+      // filtered-out top class cannot suppress an allowed runner-up.
+      int best = -1;
+      float best_score = 0.0f;
+      for (int c = 0; c < num_classes; ++c) {
+        if (!class_allowed_[c]) continue;
         const float s = at(4 + c);
-        if (s > best_score) {
+        if (best < 0 || s > best_score) {
           best_score = s;
           best = c;
         }
       }
-      if (!allow_classes_.empty() && !allow_classes_.contains(best)) continue;
-      if (ignore_classes_.contains(best)) continue;
+      if (best < 0) continue;  // every class filtered out
       if (best_score < options_.conf_threshold()) continue;
 
       Detection d;
@@ -176,8 +184,8 @@ class YoloTensorsToDetectionsCalculator : public Node {
   mediapipe::YoloTensorsToDetectionsCalculatorOptions options_;
   float inv_w_ = 0.0f;  // 1/input_width when normalizing pixel-space boxes
   float inv_h_ = 0.0f;  // 1/input_height; 0 => boxes already normalized
-  absl::flat_hash_set<int> allow_classes_;
-  absl::flat_hash_set<int> ignore_classes_;
+  // class_allowed_[c]: c survives allow_classes/ignore_classes filtering.
+  std::vector<bool> class_allowed_;
 };
 
 MEDIAPIPE_REGISTER_NODE(YoloTensorsToDetectionsCalculator);

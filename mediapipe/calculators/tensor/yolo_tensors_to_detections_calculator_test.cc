@@ -542,5 +542,59 @@ TEST(YoloTensorsToDetectionsCalculatorTest, IgnoreClassesDropsByIndex) {
   EXPECT_EQ(out[0][0].label_id(0), 1);   // class 0 dropped
 }
 
+// Class filtering must restrict the argmax itself (TensorsToDetections
+// semantics), not run after an unrestricted argmax: an anchor whose top class
+// is filtered out must still be emitted with its best ALLOWED class when that
+// class clears the threshold.
+TEST(YoloTensorsToDetectionsCalculatorTest,
+     FilteredTopClassDoesNotSuppressAllowedClass) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:dets"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.5 ignore_classes: 0
+      }
+    }
+  )pb"));
+  // One anchor: class0 (ignored) scores 0.9, class1 scores 0.6 (>= 0.5).
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 1},
+                       {0.5f, 0.5f, 0.2f, 0.2f, 0.9f, 0.6f}).release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = runner.Outputs().Tag("DETECTIONS").packets[0]
+                        .Get<std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(out[0].size(), 1u) << "the allowed class clears the threshold";
+  EXPECT_EQ(out[0][0].label_id(0), 1);
+  EXPECT_NEAR(out[0][0].score(0), 0.6f, 1e-5);
+}
+
+TEST(YoloTensorsToDetectionsCalculatorTest,
+     AllowClassesRestrictsArgmaxNotPostFilter) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "YoloTensorsToDetectionsCalculator"
+    input_stream: "TENSORS:tensors"
+    output_stream: "DETECTIONS:dets"
+    options {
+      [mediapipe.YoloTensorsToDetectionsCalculatorOptions.ext] {
+        num_classes: 2 conf_threshold: 0.5 allow_classes: 1
+      }
+    }
+  )pb"));
+  // One anchor: class0 (not allowed) scores 0.9, class1 scores 0.6.
+  runner.MutableInputs()->Tag("TENSORS").packets.push_back(
+      Adopt(MakeTensor(Tensor::Shape{1, 6, 1},
+                       {0.5f, 0.5f, 0.2f, 0.2f, 0.9f, 0.6f}).release())
+          .At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = runner.Outputs().Tag("DETECTIONS").packets[0]
+                        .Get<std::vector<std::vector<Detection>>>();
+  ASSERT_EQ(out[0].size(), 1u);
+  EXPECT_EQ(out[0][0].label_id(0), 1);
+  EXPECT_NEAR(out[0][0].score(0), 0.6f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe

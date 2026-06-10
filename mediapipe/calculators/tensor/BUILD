@@ -2873,8 +2873,10 @@ cc_test(
         "//mediapipe:apple": [
             ":streaming_tiles_to_tensor_batch_calculator",
             ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
+            ":tiling_cache_stats",
             ":tiling_types",
             "//mediapipe/framework:calculator_framework",
+            "//mediapipe/framework/formats:image_frame",
             "//mediapipe/framework/formats:inference_metadata_cc_proto",
             "//mediapipe/framework/formats:tensor",
             "//mediapipe/framework/port:opencv_imgcodecs",

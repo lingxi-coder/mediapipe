@@ -310,7 +310,6 @@ absl::Status RunZeroCopyVariant(std::shared_ptr<GpuResources> gpu_resources,
           enable_gpu_zero_copy: true
           metal_direct_delegate_input: true
           emit_cache_stats: true
-          allow_gpu_readback_fallback: false
           # Required for the zero-copy path: a finite GPU buffer pool. 2 tiles ->
           # 2 single-tile batches; pool 2 so both can be in flight.
           max_gpu_tensor_buffers: 2

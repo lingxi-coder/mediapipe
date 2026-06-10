@@ -30,8 +30,12 @@ namespace api2 {
 
 namespace {
 
-// Rotated IoU of two oriented detections (normalized coords). OpenCV expects
-// the angle in degrees; OrientedDetection.rotation is radians.
+// Rotated IoU of two oriented detections, computed in the frame-normalized
+// coordinate space the OrientedDetection fields are defined in (see
+// oriented_detection.proto). On a non-square frame that space is anisotropic
+// w.r.t. pixels, so this is NOT pixel-space IoU; pixel-accurate suppression
+// would need the frame aspect ratio plumbed in. OpenCV expects the angle in
+// degrees; OrientedDetection.rotation is radians.
 float RotatedIoU(const OrientedDetection& a, const OrientedDetection& b) {
   constexpr float kRadToDeg = 180.0f / static_cast<float>(M_PI);
   cv::RotatedRect ra(cv::Point2f(a.cx(), a.cy()),

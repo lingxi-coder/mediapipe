@@ -22,13 +22,16 @@
 
 #if MEDIAPIPE_METAL_ENABLED
 
+#include <cstring>
 #include <string>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_cache_stats.h"
 #include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/calculator_framework.h"
+#include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/port/gtest.h"
@@ -213,6 +216,79 @@ TEST_F(StreamingTilesMetalTest, DirectDelegateInputEmitsPhysicalPhwc4) {
   EXPECT_EQ(info.valid_count, 1);
   EXPECT_EQ(info.total_batches, 1);
   EXPECT_EQ(info.batch_capacity, 1);
+}
+
+// When zero-copy is enabled (IMAGE_GPU wired, Metal writer initialized) but a
+// frame arrives WITHOUT a GPU packet, the calculator serves it on the CPU
+// path. That silent fallback must be counted in
+// CACHE_STATS.gpu_to_cpu_fallbacks — the zero-copy e2e tests assert "== 0" on
+// this counter, which is only meaningful if real fallbacks increment it.
+TEST_F(StreamingTilesMetalTest, CpuServedFrameCountsGpuToCpuFallback) {
+  InferenceMetadata meta;
+  meta.set_input_height(8);
+  meta.set_input_width(8);
+  meta.set_input_channels(3);
+  meta.set_batch_capacity(2);
+
+  auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+    input_stream: "image"
+    input_stream: "image_gpu"
+    input_stream: "tile_plan"
+    output_stream: "tensors"
+    output_stream: "stats"
+    node {
+      calculator: "StreamingTilesToTensorBatchCalculator"
+      input_stream: "IMAGE:image"
+      input_stream: "IMAGE_GPU:image_gpu"
+      input_stream: "TILE_PLAN:tile_plan"
+      input_side_packet: "METADATA:meta"
+      output_stream: "TENSORS:tensors"
+      output_stream: "BATCH_INFO:info"
+      output_stream: "CACHE_STATS:stats"
+      options {
+        [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+          enable_gpu_zero_copy: true
+          max_gpu_tensor_buffers: 2
+          emit_cache_stats: true
+        }
+      }
+    }
+  )pb");
+
+  std::vector<Packet> tensors;
+  std::vector<Packet> stats;
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.Initialize(config));
+  MP_ASSERT_OK(graph.SetGpuResources(gpu_resources_));
+  MP_ASSERT_OK(graph.ObserveOutputStream("tensors", [&](const Packet& p) {
+    tensors.push_back(p);
+    return absl::OkStatus();
+  }));
+  MP_ASSERT_OK(graph.ObserveOutputStream("stats", [&](const Packet& p) {
+    stats.push_back(p);
+    return absl::OkStatus();
+  }));
+  MP_ASSERT_OK(graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
+
+  // CPU frame only — no IMAGE_GPU packet at this timestamp.
+  auto frame = std::make_unique<ImageFrame>(ImageFormat::SRGB, 32, 32);
+  std::memset(frame->MutablePixelData(), 128,
+              frame->Height() * frame->WidthStep());
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "image", Adopt(frame.release()).At(Timestamp(0))));
+  TilePlan plan;
+  plan.tiles = {NormTile(0, 0.0f, 0.0f, 1.0f, 1.0f)};
+  MP_ASSERT_OK(graph.AddPacketToInputStream(
+      "tile_plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
+  MP_ASSERT_OK(graph.CloseAllInputStreams());
+  MP_ASSERT_OK(graph.WaitUntilDone());
+
+  // The frame was served on the CPU path...
+  ASSERT_EQ(tensors.size(), 1u);
+  EXPECT_TRUE(tensors[0].Get<std::vector<Tensor>>()[0].ready_on_cpu());
+  // ...and the fallback was counted.
+  ASSERT_GE(stats.size(), 1u);
+  EXPECT_EQ(stats.back().Get<TilingCacheStats>().gpu_to_cpu_fallbacks, 1);
 }
 
 }  // namespace

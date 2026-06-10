@@ -214,6 +214,125 @@ TEST(MergeTileAccumulatorTest, BoundaryTileScalesSizeByEffectiveRoiNotRequested)
   EXPECT_NEAR(merged[0].height(), 0.40f, 1e-4); // 0.4 * 1.0
 }
 
+// An anisotropically clamped tile (effective ROI 50x100 of a 100x100 frame:
+// sx=0.5, sy=1.0) must transform a ROTATED box's axes through the scale —
+// not scale w/h per-axis while keeping the angle. For rotation=pi/2 the
+// box's w-axis lies along tile-local Y (so it scales by sy) and its h-axis
+// along X (scales by sx); naive per-axis scaling swaps the two factors.
+TEST(MergeTileAccumulatorTest, AnisotropicTileTransformsRotatedBoxAxes) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+        calculator: "MergeTileDetectionsAccumulatorCalculator"
+        input_stream: "ORIENTED_DETECTIONS:dets"
+        input_stream: "BATCH_INFO:info"
+        output_stream: "ORIENTED_DETECTIONS:merged"
+      )pb"));
+
+  constexpr float kHalfPi = 1.57079632679f;
+  TileGeometry g;
+  g.tile_index = 0;
+  g.x_center = 0.25f;
+  g.y_center = 0.5f;
+  g.width = 0.5f;
+  g.height = 1.0f;
+
+  auto geom = std::make_shared<TileBatchGeometry>();
+  TilePixelRoi roi{/*x=*/0, /*y=*/0, /*width=*/50, /*height=*/100};
+  geom->tile_indices.push_back(0);
+  geom->tile_geometries.push_back(g);
+  geom->effective_pixel_rois.push_back(roi);
+  geom->tile_to_image_matrices.push_back(TileToImageMatrix(roi, 100, 100));
+
+  OrientedDetection d = Obb(0.5f, 0.5f, 0.4f, 0.2f);
+  d.set_rotation(kHalfPi);
+  auto batch = std::make_unique<std::vector<std::vector<OrientedDetection>>>();
+  batch->push_back({d});
+
+  TensorBatchInfo info;
+  info.source_frame_timestamp = 0;
+  info.total_batches = 1;
+  info.batch_capacity = 1;
+  info.valid_count = 1;
+  info.tile_indices = {0};
+  info.geometry = geom;
+
+  runner.MutableInputs()
+      ->Tag("ORIENTED_DETECTIONS")
+      .packets.push_back(Adopt(batch.release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("BATCH_INFO").packets.push_back(
+      MakePacket<TensorBatchInfo>(info).At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& merged = runner.Outputs()
+                           .Tag("ORIENTED_DETECTIONS")
+                           .packets[0]
+                           .Get<std::vector<OrientedDetection>>();
+  ASSERT_EQ(merged.size(), 1);
+  EXPECT_NEAR(merged[0].cx(), 0.25f, 1e-4);
+  EXPECT_NEAR(merged[0].cy(), 0.5f, 1e-4);
+  EXPECT_NEAR(merged[0].width(), 0.4f, 1e-4);    // w-axis along Y -> sy=1.0
+  EXPECT_NEAR(merged[0].height(), 0.1f, 1e-4);   // h-axis along X -> sx=0.5
+  EXPECT_NEAR(merged[0].rotation(), kHalfPi, 1e-4);
+}
+
+// Isotropic tile (sx == sy): per-axis scaling is exact and the rotation must
+// pass through unchanged — pins that the verified square-tile behavior is
+// untouched by the anisotropic-transform branch.
+TEST(MergeTileAccumulatorTest, IsotropicTilePreservesRotationAndScales) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+        calculator: "MergeTileDetectionsAccumulatorCalculator"
+        input_stream: "ORIENTED_DETECTIONS:dets"
+        input_stream: "BATCH_INFO:info"
+        output_stream: "ORIENTED_DETECTIONS:merged"
+      )pb"));
+
+  TileGeometry g;
+  g.tile_index = 0;
+  g.x_center = 0.25f;
+  g.y_center = 0.25f;
+  g.width = 0.5f;
+  g.height = 0.5f;
+
+  auto geom = std::make_shared<TileBatchGeometry>();
+  TilePixelRoi roi{/*x=*/0, /*y=*/0, /*width=*/50, /*height=*/50};
+  geom->tile_indices.push_back(0);
+  geom->tile_geometries.push_back(g);
+  geom->effective_pixel_rois.push_back(roi);
+  geom->tile_to_image_matrices.push_back(TileToImageMatrix(roi, 100, 100));
+
+  OrientedDetection d = Obb(0.5f, 0.5f, 0.4f, 0.2f);
+  d.set_rotation(0.7f);
+  auto batch = std::make_unique<std::vector<std::vector<OrientedDetection>>>();
+  batch->push_back({d});
+
+  TensorBatchInfo info;
+  info.source_frame_timestamp = 0;
+  info.total_batches = 1;
+  info.batch_capacity = 1;
+  info.valid_count = 1;
+  info.tile_indices = {0};
+  info.geometry = geom;
+
+  runner.MutableInputs()
+      ->Tag("ORIENTED_DETECTIONS")
+      .packets.push_back(Adopt(batch.release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("BATCH_INFO").packets.push_back(
+      MakePacket<TensorBatchInfo>(info).At(Timestamp(0)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& merged = runner.Outputs()
+                           .Tag("ORIENTED_DETECTIONS")
+                           .packets[0]
+                           .Get<std::vector<OrientedDetection>>();
+  ASSERT_EQ(merged.size(), 1);
+  EXPECT_NEAR(merged[0].cx(), 0.25f, 1e-4);
+  EXPECT_NEAR(merged[0].cy(), 0.25f, 1e-4);
+  EXPECT_NEAR(merged[0].width(), 0.2f, 1e-4);
+  EXPECT_NEAR(merged[0].height(), 0.1f, 1e-4);
+  EXPECT_NEAR(merged[0].rotation(), 0.7f, 1e-4);
+}
+
 // The producer's empty-frame protocol (T==0, e.g. scheduler SKIP) sends a
 // BATCH_INFO packet and only advances the detections-side timestamp bound —
 // no ORIENTED_DETECTIONS packet ever exists at that timestamp. The merge must

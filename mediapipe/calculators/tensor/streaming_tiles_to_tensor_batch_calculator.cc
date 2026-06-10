@@ -143,20 +143,15 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       memory_manager_ = std::make_shared<MemoryManager>(
           static_cast<size_t>(options_.max_cpu_tensor_workspaces()));
     }
-    // GPU zero-copy option validation (Plan 4). The GPU path itself is added in
-    // later tasks; here we only reject invalid capacities up front so a bad
-    // config fails at Open() rather than mid-stream.
+    // GPU zero-copy option validation: reject invalid capacities up front so
+    // a bad config fails at Open() rather than mid-stream.
     RET_CHECK_GE(options_.max_gpu_tensor_buffers(), 0);
-    RET_CHECK_GE(options_.max_tile_surfaces(), 0);
-    RET_CHECK_GE(options_.max_in_flight_gpu_batches(), 0);
-    // Zero-copy with no finite buffer/in-flight capacity is a config error: an
-    // unbounded GPU buffer pool defeats the in-flight ownership model.
-    if (options_.enable_gpu_zero_copy() &&
-        options_.max_in_flight_gpu_batches() == 0) {
+    // Zero-copy with an unbounded GPU buffer pool defeats the in-flight
+    // ownership model: require a finite capacity up front.
+    if (options_.enable_gpu_zero_copy()) {
       RET_CHECK_GT(options_.max_gpu_tensor_buffers(), 0)
-          << "enable_gpu_zero_copy requires a finite GPU buffer/in-flight "
-             "capacity (set max_gpu_tensor_buffers or max_in_flight_gpu_batches "
-             "> 0)";
+          << "enable_gpu_zero_copy requires a finite GPU buffer capacity "
+             "(set max_gpu_tensor_buffers > 0)";
     }
 #if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
     if (options_.enable_gpu_zero_copy() && kInImageGpu(cc).IsConnected()) {
@@ -210,6 +205,14 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                                         meta_.input_channels(),
                                         BorderMode::kReplicate,
                                         options_.metal_direct_delegate_input()));
+      // Mirror the GLES branch so the configured capacity is actually passed
+      // to the batch tensors. The framework pool is AHWB-only, so on Metal
+      // this is per-batch allocation today — but the option is no longer
+      // silently ignored, and pooling engages if the framework grows it.
+      if (options_.max_gpu_tensor_buffers() > 0) {
+        gpu_memory_manager_ = std::make_shared<MemoryManager>(
+            static_cast<size_t>(options_.max_gpu_tensor_buffers()));
+      }
       metal_zero_copy_active_ = true;
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
@@ -239,6 +242,16 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       return ProcessGpu(cc);
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+#if MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
+    // Zero-copy was requested (the GPU writer initialized) but this frame had
+    // no usable GPU input: it is served on the CPU path below. Count it so
+    // CACHE_STATS.gpu_to_cpu_fallbacks reports the silent fallback honestly.
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+    if (metal_zero_copy_active_) ++gpu_to_cpu_fallbacks_;
+#else
+    if (gpu_zero_copy_active_) ++gpu_to_cpu_fallbacks_;
+#endif
+#endif  // MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
     return ProcessCpu(cc);
   }
 
@@ -404,7 +417,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       ++batch_ts_;
       ++emitted;
     }
-    gpu_batches_in_flight_ = emitted;  // batches emitted from this frame
+    last_frame_gpu_batches_ = emitted;  // batches emitted from this frame
     EmitEmptyFrameIfNeeded(cc, T, ts);
     MaybeEmitStats(cc, ts);
     return absl::OkStatus();
@@ -550,7 +563,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       ++batch_ts_;
       ++emitted;
     }
-    gpu_batches_in_flight_ = emitted;
+    last_frame_gpu_batches_ = emitted;
     EmitEmptyFrameIfNeeded(cc, T, ts);
     MaybeEmitStats(cc, ts);
     return absl::OkStatus();
@@ -628,7 +641,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       // (the single miss) and reused every subsequent frame (a hit per frame).
       stats.tile_surface.misses = (gl_writer_ != nullptr) ? 1 : 0;
       stats.tile_surface.hits = (gpu_frames_ > 0) ? gpu_frames_ - 1 : 0;
-      stats.in_flight_gpu_batches = gpu_batches_in_flight_;
+      stats.last_frame_gpu_batches = last_frame_gpu_batches_;
       stats.gpu_to_cpu_fallbacks = gpu_to_cpu_fallbacks_;
       // gpu_tensor_buffer hit/miss accounting is reported by the framework AHWB
       // pool (Cache 5) on AHWB platforms; the SSBO-pool counters are surfaced
@@ -641,7 +654,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       // Cache 4: the Metal render pipeline is compiled once and reused.
       stats.tile_surface.misses = (metal_writer_ != nullptr) ? 1 : 0;
       stats.tile_surface.hits = (gpu_frames_ > 0) ? gpu_frames_ - 1 : 0;
-      stats.in_flight_gpu_batches = gpu_batches_in_flight_;
+      stats.last_frame_gpu_batches = last_frame_gpu_batches_;
       stats.gpu_to_cpu_fallbacks = gpu_to_cpu_fallbacks_;
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
@@ -693,7 +706,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   // Shared by both GPU branches (Cache 5 AHWB pool + diagnostic counters).
   std::shared_ptr<MemoryManager> gpu_memory_manager_;
   int64_t gpu_frames_ = 0;             // ProcessGpu/Metal() calls = program uses
-  int64_t gpu_batches_in_flight_ = 0;  // batches emitted from the last frame
+  int64_t last_frame_gpu_batches_ = 0;  // gauge: batches emitted from the last GPU frame
   int64_t gpu_to_cpu_fallbacks_ = 0;   // GPU-requested frames served on CPU
 #endif  // MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
 #if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY

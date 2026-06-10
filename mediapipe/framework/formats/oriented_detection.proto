@@ -22,12 +22,22 @@ option java_outer_classname = "OrientedDetectionProto";
 // An oriented (rotated) bounding box detection. Geometry is a center point,
 // size, and rotation angle, all in coordinates normalized to [0, 1] relative
 // to the enclosing image frame (origin at the top-left corner).
+//
+// COORDINATE-SPACE CONVENTION: every field, INCLUDING rotation, describes the
+// box in the frame-normalized space — rotation is the angle of the box's
+// width-axis measured in normalized units, not in pixels. On a non-square
+// frame the normalized space is anisotropic with respect to pixels, so the
+// normalized-space box is not the pixel-space box rotated rect; consumers
+// that need pixel-space geometry (rendering, pixel-accurate IoU) must map
+// through the frame aspect ratio first. All shipped producers/consumers
+// (YoloObb decode, MergeTileDetectionsAccumulator, RotatedNonMaxSuppression,
+// OrientedDetectionProjection) read and write this normalized convention.
 message OrientedDetection {
   optional float cx = 1;        // box center x, normalized [0,1], origin top-left
   optional float cy = 2;        // box center y, normalized [0,1], origin top-left
   optional float width = 3;     // normalized [0,1]
   optional float height = 4;    // normalized [0,1]
-  optional float rotation = 5;  // radians, counter-clockwise
+  optional float rotation = 5;  // radians, counter-clockwise, in normalized space
 
   // Parallel arrays: the i-th label / label_id has its score in score[i].
   // display_name (if present) is the human-readable form of the i-th label.

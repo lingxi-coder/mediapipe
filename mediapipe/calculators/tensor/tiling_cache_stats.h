@@ -32,7 +32,13 @@ struct TilingCacheStats {
   // and whenever enable_gpu_zero_copy is false.
   CacheStats gpu_tensor_buffer;  // Cache 5: GPU/AHWB tensor-buffer pool
   CacheStats tile_surface;       // Cache 4: GL program/tile-surface cache
-  int64_t in_flight_gpu_batches = 0;
+  // Batches emitted from the most recent GPU-served frame. This is a gauge of
+  // the last frame's fan-out, NOT a live in-flight count (nothing decrements
+  // on downstream completion).
+  int64_t last_frame_gpu_batches = 0;
+  // Frames that requested zero-copy (enable_gpu_zero_copy with IMAGE_GPU
+  // wired) but arrived without a usable GPU input and were served on the CPU
+  // path instead. Cumulative.
   int64_t gpu_to_cpu_fallbacks = 0;
 };
 
