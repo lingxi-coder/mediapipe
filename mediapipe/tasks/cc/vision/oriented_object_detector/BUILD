@@ -79,7 +79,7 @@ cc_library(
         "//mediapipe/tasks/cc/core/proto:inference_subgraph_cc_proto",
         "//mediapipe/tasks/cc/vision/oriented_object_detector/proto:oriented_object_detector_options_cc_proto",
         "//mediapipe/tasks/cc/vision/utils:detection_label_resolution",
-        "//mediapipe/tasks/cc/vision/utils:image_tensor_specs",
+        "//mediapipe/tasks/cc/vision/utils:tiled_detection_utils",
         "//mediapipe/tasks/metadata:metadata_schema_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

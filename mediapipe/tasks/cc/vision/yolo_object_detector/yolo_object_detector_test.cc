@@ -62,6 +62,10 @@ constexpr char kYoloModel[] = "yolov8n.tflite";
 // object_detector_test and is always available when the data dep is declared.
 constexpr char kTestImage[] = "cats_and_dogs.jpg";
 
+// Harbor scene used by the tiled e2e test (shared with the OBB twin task;
+// gitignored local fixture shipped alongside the exported models).
+constexpr char kBoatsImage[] = "boats.jpg";
+
 // Returns the absolute path to the YOLO fixture, using the same path
 // convention as the sibling object_detector tests ("./", prefix, filename).
 std::string ModelPath() {
@@ -298,6 +302,170 @@ TEST(YoloObjectDetectorTest, CategoryAllowlistAndDenylistFilterByName) {
   for (const auto& det : r_deny.detections) {
     EXPECT_NE(det.categories[0].index, 16);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tiled-mode e2e: 1x2 grid with 20% overlap on boats.jpg.
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTest, TiledGridDetectsBoatsOnBoats) {
+  const std::string model_path = ModelPath();
+  const std::string image_path = JoinPath("./", kTestDataDirectory, kBoatsImage);
+  if (!mediapipe::file::Exists(model_path).ok() ||
+      !mediapipe::file::Exists(image_path).ok()) {
+    GTEST_SKIP() << "YOLO model or boats.jpg fixture not available; "
+                    "integration assertions gated until yolov8n.tflite and "
+                    "boats.jpg are added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(image_path));
+  const int image_width = image.width();
+  const int image_height = image.height();
+
+  // Options identical between the untiled oracle and the tiled run.
+  // score_threshold is fixture-specific: boats.jpg is an aerial harbor scene
+  // whose boats are tiny in COCO terms — yolov8n only resolves them once the
+  // tiled front upscales each tile (tiled "boat" scores ~0.10; the untiled
+  // path never produces a boat at any threshold). 0.09 sits safely below the
+  // boat scores while still cutting sub-0.09 noise.
+  auto base = [&]() {
+    auto o = std::make_unique<YoloObjectDetectorOptions>();
+    o->base_options.model_asset_path = model_path;
+    o->running_mode = core::RunningMode::IMAGE;
+    o->max_results = 10;
+    o->num_classes = 80;
+    o->score_threshold = 0.09f;
+    o->iou_threshold = 0.45f;
+    return o;
+  };
+
+  // Cross-check oracle: the SAME image through the single-image path.
+  MP_ASSERT_OK_AND_ASSIGN(auto single_detector,
+                          YoloObjectDetector::Create(base()));
+  MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult single_result,
+                          single_detector->Detect(image));
+  MP_ASSERT_OK(single_detector->Close());
+  const int n_single = single_result.detections.size();
+
+  // Tiled detector: 1x2 grid, 20% overlap.
+  auto options = base();
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+  MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
+                          detector->Detect(image));
+  MP_ASSERT_OK(detector->Close());
+
+  ASSERT_GE(result.detections.size(), 1u);
+  EXPECT_LE(result.detections.size(), 10u);  // max_results respected
+
+  // Public result is PIXEL units: every bounding box of each detection must
+  // lie within image pixel bounds (symmetric +/-1px tolerance).
+  bool found_boat = false;
+  for (const auto& d : result.detections) {
+    const auto& bb = d.bounding_box;  // Rect{left,top,right,bottom} in pixels
+    EXPECT_GE(bb.left, -1);
+    EXPECT_LE(bb.right, image_width + 1);
+    EXPECT_GE(bb.top, -1);
+    EXPECT_LE(bb.bottom, image_height + 1);
+    EXPECT_GT(bb.right, bb.left);
+    EXPECT_GT(bb.bottom, bb.top);
+    ASSERT_EQ(d.categories.size(), 1u);
+    const auto& cat = d.categories[0];
+    EXPECT_GE(cat.score, 0.09f);  // matches score_threshold above
+    EXPECT_GE(cat.index, 0);
+    EXPECT_LT(cat.index, 80);
+    ASSERT_TRUE(cat.category_name.has_value());
+    EXPECT_FALSE(cat.category_name->empty());
+    // COCO: boat=8.
+    if (cat.index == 8) {
+      EXPECT_EQ(*cat.category_name, "boat");
+      found_boat = true;
+    }
+  }
+  // boats.jpg -> COCO "boat" (class 8), same as the single-image oracle.
+  EXPECT_TRUE(found_boat) << "expected a boat detection";
+
+  // Detection count must be in the neighborhood of the single-image path.
+  const int n_tiled = result.detections.size();
+  EXPECT_GE(n_tiled, n_single - 1);
+  EXPECT_LE(n_tiled, n_single + 3);
+}
+
+// ---------------------------------------------------------------------------
+// Tiled mode + region-of-interest is rejected (the tiled graph has no
+// NORM_RECT input, so per-call ROI cannot be honored).
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTest, TiledWithRoiRejected) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path
+                 << "; integration assertions gated until yolov8n.tflite is "
+                    "added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::IMAGE;
+  options->max_results = 10;
+  options->num_classes = 80;
+  options->score_threshold = 0.25f;
+  options->iou_threshold = 0.45f;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+
+  core::ImageProcessingOptions image_processing_options;
+  image_processing_options.region_of_interest =
+      components::containers::RectF{/*left=*/0.1f, /*top=*/0.1f,
+                                    /*right=*/0.9f, /*bottom=*/0.9f};
+  auto result = detector->Detect(image, image_processing_options);
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(result.status().message(),
+              testing::HasSubstr("tiling and ROI are mutually exclusive"));
+
+  // Rotation (without ROI) is likewise rejected: the tiled graph has no
+  // NORM_RECT input, so rotation_degrees cannot be honored.
+  core::ImageProcessingOptions rotation_options;
+  rotation_options.rotation_degrees = 90;
+  auto rotated_result = detector->Detect(image, rotation_options);
+  EXPECT_EQ(rotated_result.status().code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(rotated_result.status().message(),
+              testing::HasSubstr("rotation"));
+  MP_ASSERT_OK(detector->Close());
+}
+
+// ---------------------------------------------------------------------------
+// Explicit tiles + a nonzero tile_overlap_fraction is rejected at graph build
+// (overlap only applies to grid mode; silently ignoring it would mislead).
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTest, TiledExplicitTilesWithOverlapRejected) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path
+                 << "; integration assertions gated until yolov8n.tflite is "
+                    "added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::IMAGE;
+  options->max_results = 10;
+  options->num_classes = 80;
+  options->score_threshold = 0.25f;
+  options->iou_threshold = 0.45f;
+  options->tiling.explicit_tiles.push_back(
+      {/*x_center=*/0.5f, /*y_center=*/0.5f, /*width=*/1.0f, /*height=*/1.0f});
+  options->tiling.tile_overlap_fraction = 0.2f;
+
+  auto detector = YoloObjectDetector::Create(std::move(options));
+  EXPECT_EQ(detector.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(detector.status().message(),
+              testing::HasSubstr("tile_overlap_fraction"));
 }
 
 }  // namespace

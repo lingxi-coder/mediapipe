@@ -237,6 +237,13 @@ class YoloObjectDetector : public tasks::vision::core::BaseVisionTaskApi {
 
   // Shuts down the YoloObjectDetector when all works are done.
   absl::Status Close() { return runner_->Close(); }
+
+ private:
+  // Whether the task was created with tiling enabled (set once by Create).
+  // In tiled mode the graph has no NORM_RECT input: Detect* variants must not
+  // send a norm_rect packet, and region-of-interest/rotation requests are
+  // rejected with kInvalidArgument.
+  bool tiling_enabled_ = false;
 };
 
 }  // namespace yolo_object_detector

@@ -194,6 +194,8 @@ filegroup(
             "yolov8n.tflite",
             "yolov8n.onnx",
             "yolov8n_labels.txt",
+            # Harbor scene for the tiled e2e test (shared with the OBB twin).
+            "boats.jpg",
         ],
         allow_empty = True,
     ),

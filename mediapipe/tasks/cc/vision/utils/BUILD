@@ -162,6 +162,22 @@ cc_test(
 )
 
 cc_library(
+    name = "tiled_detection_utils",
+    srcs = ["tiled_detection_utils.cc"],
+    hdrs = ["tiled_detection_utils.h"],
+    deps = [
+        ":image_tensor_specs",
+        "//mediapipe/framework/port:ret_check",
+        "//mediapipe/tasks/cc:common",
+        "//mediapipe/tasks/cc/core:model_resources",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@flatbuffers//:runtime_cc",
+        "@org_tensorflow//tensorflow/lite/schema:schema_fbs",
+    ],
+)
+
+cc_library(
     name = "data_renderer",
     srcs = ["data_renderer.cc"],
     hdrs = ["data_renderer.h"],
