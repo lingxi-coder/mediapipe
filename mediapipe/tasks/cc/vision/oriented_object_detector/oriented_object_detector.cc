@@ -18,6 +18,7 @@ limitations under the License.
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,16 +66,55 @@ using ::mediapipe::tasks::vision::core::GetCoreRunningMode;
 using OrientedObjectDetectorOptionsProto =
     proto::OrientedObjectDetectorOptions;
 
+// Returns true when the options enable the tiled path (grid larger than one
+// tile, or explicit tiles provided).
+// Must match oriented_object_detector_graph.cc's tiling-enabled predicate.
+bool TilingEnabled(const OrientedObjectDetectorOptionsProto& options_proto) {
+  const auto& tiling = options_proto.tiling();
+  return tiling.tile_rows() * tiling.tile_cols() > 1 ||
+         tiling.explicit_tiles_size() > 0;
+}
+
+// In tiled mode the task graph has no NORM_RECT input, so per-call
+// ImageProcessingOptions cannot be honored: ROI is mutually exclusive with
+// tiling, and rotation is unsupported (it would be silently ignored
+// otherwise).
+absl::Status CheckTiledImageProcessingOptions(
+    const std::optional<core::ImageProcessingOptions>&
+        image_processing_options) {
+  if (!image_processing_options.has_value()) {
+    return absl::OkStatus();
+  }
+  if (image_processing_options->region_of_interest.has_value()) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling and ROI are mutually exclusive",
+        MediaPipeTasksStatus::kImageProcessingInvalidArgumentError);
+  }
+  if (image_processing_options->rotation_degrees != 0) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling does not support rotation_degrees",
+        MediaPipeTasksStatus::kImageProcessingInvalidArgumentError);
+  }
+  return absl::OkStatus();
+}
+
 // Creates a MediaPipe graph config that contains a subgraph node of
 // "mediapipe.tasks.vision.oriented_object_detector.OrientedObjectDetectorGraph".
 // If the task is running in the live stream mode, a "FlowLimiterCalculator"
 // will be added to limit the number of frames in flight.
+// When `tiling_enabled` is true, the NORM_RECT graph input is neither declared
+// nor connected (the tiled task subgraph has no such input); only IMAGE is
+// fed. The outputs are identical in both modes.
 CalculatorGraphConfig CreateGraphConfig(
     std::unique_ptr<OrientedObjectDetectorOptionsProto> options_proto,
-    bool enable_flow_limiting) {
+    bool enable_flow_limiting, bool tiling_enabled) {
   api2::builder::Graph graph;
   graph.In(kImageTag).SetName(kImageInStreamName);
-  graph.In(kNormRectTag).SetName(kNormRectName);
+  if (!tiling_enabled) {
+    graph.In(kNormRectTag).SetName(kNormRectName);
+  }
   auto& task_subgraph = graph.AddNode(kSubgraphTypeName);
   task_subgraph.GetOptions<OrientedObjectDetectorOptionsProto>().Swap(
       options_proto.get());
@@ -84,10 +124,15 @@ CalculatorGraphConfig CreateGraphConfig(
       graph.Out(kImageTag);
   if (enable_flow_limiting) {
     return tasks::core::AddFlowLimiterCalculator(
-        graph, task_subgraph, {kImageTag, kNormRectTag}, kOrientedDetectionsTag);
+        graph, task_subgraph,
+        tiling_enabled ? std::vector<std::string>{kImageTag}
+                       : std::vector<std::string>{kImageTag, kNormRectTag},
+        kOrientedDetectionsTag);
   }
   graph.In(kImageTag) >> task_subgraph.In(kImageTag);
-  graph.In(kNormRectTag) >> task_subgraph.In(kNormRectTag);
+  if (!tiling_enabled) {
+    graph.In(kNormRectTag) >> task_subgraph.In(kNormRectTag);
+  }
   return graph.GetConfig();
 }
 
@@ -176,19 +221,27 @@ OrientedObjectDetector::Create(
                   kMicroSecondsPerMilliSecond);
         };
   }
-  return core::VisionTaskApiFactory::Create<OrientedObjectDetector,
-                                            OrientedObjectDetectorOptionsProto>(
-      {.config = CreateGraphConfig(
-           std::move(options_proto),
-           options->running_mode == core::RunningMode::LIVE_STREAM),
-       .task_name = kTaskName,
-       .task_running_mode = GetCoreRunningMode(options->running_mode),
-       .op_resolver = std::move(options->base_options.op_resolver),
-       .packets_callback = std::move(packets_callback),
-       .disable_default_service = options->base_options.disable_default_service,
-       .host_environment = options->base_options.host_environment,
-       .host_system = options->base_options.host_system,
-       .host_version = options->base_options.host_version});
+  const bool tiling_enabled = TilingEnabled(*options_proto);
+  auto detector =
+      core::VisionTaskApiFactory::Create<OrientedObjectDetector,
+                                         OrientedObjectDetectorOptionsProto>(
+          {.config = CreateGraphConfig(
+               std::move(options_proto),
+               options->running_mode == core::RunningMode::LIVE_STREAM,
+               tiling_enabled),
+           .task_name = kTaskName,
+           .task_running_mode = GetCoreRunningMode(options->running_mode),
+           .op_resolver = std::move(options->base_options.op_resolver),
+           .packets_callback = std::move(packets_callback),
+           .disable_default_service =
+               options->base_options.disable_default_service,
+           .host_environment = options->base_options.host_environment,
+           .host_system = options->base_options.host_system,
+           .host_version = options->base_options.host_version});
+  if (detector.ok()) {
+    (*detector)->tiling_enabled_ = tiling_enabled;
+  }
+  return detector;
 }
 
 absl::StatusOr<OrientedObjectDetectorResult> OrientedObjectDetector::Detect(
@@ -200,14 +253,21 @@ absl::StatusOr<OrientedObjectDetectorResult> OrientedObjectDetector::Detect(
         absl::StrCat("GPU input images are currently not supported."),
         MediaPipeTasksStatus::kRunnerUnexpectedInputError);
   }
-  MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
-                      ConvertToNormalizedRect(image_processing_options, image,
-                                             /*roi_allowed=*/false));
-  MP_ASSIGN_OR_RETURN(
-      auto output_packets,
-      ProcessImageData(
-          {{kImageInStreamName, MakePacket<Image>(std::move(image))},
-           {kNormRectName, MakePacket<NormalizedRect>(std::move(norm_rect))}}));
+  tasks::core::PacketMap input_packets;
+  if (tiling_enabled_) {
+    MP_RETURN_IF_ERROR(
+        CheckTiledImageProcessingOptions(image_processing_options));
+    input_packets = {{kImageInStreamName, MakePacket<Image>(std::move(image))}};
+  } else {
+    MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
+                        ConvertToNormalizedRect(image_processing_options, image,
+                                                /*roi_allowed=*/false));
+    input_packets = {
+        {kImageInStreamName, MakePacket<Image>(std::move(image))},
+        {kNormRectName, MakePacket<NormalizedRect>(std::move(norm_rect))}};
+  }
+  MP_ASSIGN_OR_RETURN(auto output_packets,
+                      ProcessImageData(std::move(input_packets)));
   if (output_packets[kOrientedDetectionsOutStreamName].IsEmpty()) {
     return {ConvertToOrientedObjectDetectionResult({}, {0, 0})};
   }
@@ -228,18 +288,28 @@ OrientedObjectDetector::DetectForVideo(
         absl::StrCat("GPU input images are currently not supported."),
         MediaPipeTasksStatus::kRunnerUnexpectedInputError);
   }
-  MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
-                      ConvertToNormalizedRect(image_processing_options, image,
-                                             /*roi_allowed=*/false));
-  MP_ASSIGN_OR_RETURN(
-      auto output_packets,
-      ProcessVideoData(
-          {{kImageInStreamName,
-            MakePacket<Image>(std::move(image))
-                .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))},
-           {kNormRectName,
-            MakePacket<NormalizedRect>(std::move(norm_rect))
-                .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}}));
+  tasks::core::PacketMap input_packets;
+  if (tiling_enabled_) {
+    MP_RETURN_IF_ERROR(
+        CheckTiledImageProcessingOptions(image_processing_options));
+    input_packets = {
+        {kImageInStreamName,
+         MakePacket<Image>(std::move(image))
+             .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}};
+  } else {
+    MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
+                        ConvertToNormalizedRect(image_processing_options, image,
+                                                /*roi_allowed=*/false));
+    input_packets = {
+        {kImageInStreamName,
+         MakePacket<Image>(std::move(image))
+             .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))},
+        {kNormRectName,
+         MakePacket<NormalizedRect>(std::move(norm_rect))
+             .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}};
+  }
+  MP_ASSIGN_OR_RETURN(auto output_packets,
+                      ProcessVideoData(std::move(input_packets)));
   if (output_packets[kOrientedDetectionsOutStreamName].IsEmpty()) {
     return {ConvertToOrientedObjectDetectionResult({}, {0, 0})};
   }
@@ -258,6 +328,14 @@ absl::Status OrientedObjectDetector::DetectAsync(
         absl::StatusCode::kInvalidArgument,
         absl::StrCat("GPU input images are currently not supported."),
         MediaPipeTasksStatus::kRunnerUnexpectedInputError);
+  }
+  if (tiling_enabled_) {
+    MP_RETURN_IF_ERROR(
+        CheckTiledImageProcessingOptions(image_processing_options));
+    return SendLiveStreamData(
+        {{kImageInStreamName,
+          MakePacket<Image>(std::move(image))
+              .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}});
   }
   MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
                       ConvertToNormalizedRect(image_processing_options, image,

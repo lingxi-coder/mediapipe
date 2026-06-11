@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cmath>
+#include <optional>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -27,6 +29,7 @@ limitations under the License.
 #include "mediapipe/framework/formats/oriented_detection.pb.h"
 #include "mediapipe/framework/formats/rect.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
+#include "mediapipe/graphs/tiled_detection/tiled_detection_graphs.pb.h"
 #include "mediapipe/tasks/cc/common.h"
 #include "mediapipe/tasks/cc/components/processors/image_preprocessing_graph.h"
 #include "mediapipe/tasks/cc/core/model_resources.h"
@@ -34,6 +37,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/core/proto/inference_subgraph.pb.h"
 #include "mediapipe/tasks/cc/vision/oriented_object_detector/proto/oriented_object_detector_options.pb.h"
 #include "mediapipe/tasks/cc/vision/utils/detection_label_resolution.h"
+#include "mediapipe/tasks/cc/vision/utils/image_tensor_specs.h"
 #include "mediapipe/tasks/metadata/metadata_schema_generated.h"
 
 namespace mediapipe {
@@ -53,7 +57,9 @@ using OrientedObjectDetectorOptionsProto =
 using TensorsSource =
     mediapipe::api2::builder::Source<std::vector<mediapipe::Tensor>>;
 
+constexpr char kBatchInfoTag[] = "BATCH_INFO";
 constexpr char kImageTag[] = "IMAGE";
+constexpr char kImageCpuTag[] = "IMAGE_CPU";
 constexpr char kMatrixTag[] = "MATRIX";
 constexpr char kNormRectTag[] = "NORM_RECT";
 constexpr char kOrientedDetectionsTag[] = "ORIENTED_DETECTIONS";
@@ -83,7 +89,51 @@ absl::Status SanityCheckOptions(
         "exclusive options.",
         MediaPipeTasksStatus::kInvalidArgumentError);
   }
+  if (options.tiling().explicit_tiles_size() > 0 &&
+      options.tiling().tile_overlap_fraction() != 0.0f) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling.tile_overlap_fraction is ignored with tiling.explicit_tiles; "
+        "do not set both",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
   return absl::OkStatus();
+}
+
+// Validates the model input tensor for the tiled front and returns its
+// [N,H,W,C] shape dims. The tiled front supports float32 BHWC only.
+// Normalization criterion (spec §2): float32 + 4D are hard requirements; if
+// TFLite Metadata NormalizationOptions exist and differ from (mean 0, std 255)
+// -> InvalidArgument; if absent -> assume /255 (same implicit assumption as
+// the single-image path for this model family).
+// NOTE: the YOLO (axis-aligned) detector twin will reuse this same validation
+// shape when it grows its tiled branch.
+absl::StatusOr<const flatbuffers::Vector<int32_t>*>
+ValidateTiledModelInputAndGetDims(const core::ModelResources& model_resources) {
+  const auto& model = *model_resources.GetTfLiteModel();
+  const tflite::SubGraph* sg = model.subgraphs()->Get(0);
+  const auto* input_tensor = sg->tensors()->Get(sg->inputs()->Get(0));
+  const auto* dims = input_tensor->shape();
+  RET_CHECK(dims != nullptr && dims->size() == 4)
+      << "tiled mode expects a [N,H,W,C] image input tensor";
+  RET_CHECK_EQ(input_tensor->type(), tflite::TensorType_FLOAT32)
+      << "tiled mode currently supports float32 image input only";
+  auto specs_or = BuildInputImageTensorSpecs(model_resources);
+  if (specs_or.ok() && specs_or->normalization_options.has_value()) {
+    const auto& norm = *specs_or->normalization_options;
+    for (int i = 0; i < norm.num_values; ++i) {
+      if (std::abs(norm.mean_values[i]) > 1e-3f ||
+          std::abs(norm.std_values[i] - 255.0f) > 1e-3f) {
+        return CreateStatusWithPayload(
+            absl::StatusCode::kInvalidArgument,
+            "tiled mode supports only (mean=0, std=255) input "
+            "normalization (implicit x/255), but the model metadata "
+            "requests a different normalization",
+            MediaPipeTasksStatus::kInvalidArgumentError);
+      }
+    }
+  }
+  return dims;
 }
 
 }  // namespace
@@ -98,6 +148,9 @@ absl::Status SanityCheckOptions(
 //   NORM_RECT - NormalizedRect @Optional
 //     Describes image rotation and region of image to perform detection on.
 //     @Optional: rect covering the whole image is used if not specified.
+//     NOTE: when tiling is enabled in the options (tile_rows * tile_cols > 1
+//     or explicit_tiles non-empty), this input is NOT declared by the graph
+//     and must not be connected.
 //
 // Outputs:
 //   ORIENTED_DETECTIONS - std::vector<OrientedDetection>
@@ -138,8 +191,7 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
         auto output_streams,
         BuildOrientedObjectDetectionTask(
             sc->Options<OrientedObjectDetectorOptionsProto>(), *model_resources,
-            graph[Input<Image>(kImageTag)],
-            graph[Input<NormalizedRect>::Optional(kNormRectTag)], graph));
+            graph[Input<Image>(kImageTag)], graph));
     output_streams.oriented_detections >>
         graph[Output<std::vector<OrientedDetection>>(kOrientedDetectionsTag)];
     output_streams.image >> graph[Output<Image>(kImageTag)];
@@ -158,12 +210,14 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
   // model_resources: the ModelSources object initialized from an OBB model
   //                  file with model metadata.
   // image_in: (mediapipe::Image) stream to run object detection on.
-  // graph: the mediapipe builder::Graph instance to be updated.
+  // graph: the mediapipe builder::Graph instance to be updated. The optional
+  //        NORM_RECT graph input is only declared (accessed) on the
+  //        single-image path; the tiled path never references it.
   absl::StatusOr<OrientedObjectDetectionOutputStreams>
   BuildOrientedObjectDetectionTask(
       const OrientedObjectDetectorOptionsProto& task_options,
       const core::ModelResources& model_resources, Source<Image> image_in,
-      Source<NormalizedRect> norm_rect_in, Graph& graph) {
+      Graph& graph) {
     MP_RETURN_IF_ERROR(SanityCheckOptions(task_options));
     auto& model = *model_resources.GetTfLiteModel();
     if (model.subgraphs()->size() != 1) {
@@ -193,32 +247,16 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
         GetLabelItemsFromMetadata(model_resources,
                                   task_options.display_names_locale()));
 
-    // Adds preprocessing calculators and connects them to the graph input image
-    // stream.
-    auto& preprocessing = graph.AddNode(
-        "mediapipe.tasks.components.processors.ImagePreprocessingGraph");
-    bool use_gpu =
-        components::processors::DetermineImagePreprocessingGpuBackend(
-            task_options.base_options().acceleration());
-    MP_RETURN_IF_ERROR(components::processors::ConfigureImagePreprocessingGraph(
-        model_resources, use_gpu, task_options.base_options().gpu_origin(),
-        &preprocessing.GetOptions<tasks::components::processors::proto::
-                                      ImagePreprocessingGraphOptions>()));
-    image_in >> preprocessing.In(kImageTag);
-    norm_rect_in >> preprocessing.In(kNormRectTag);
+    const auto& tiling = task_options.tiling();
+    // Must match oriented_object_detector.cc's tiling-enabled predicate.
+    const bool tiling_enabled = tiling.tile_rows() * tiling.tile_cols() > 1 ||
+                                tiling.explicit_tiles_size() > 0;
 
-    // Adds inference subgraph and connects its input stream to the output
-    // tensors produced by the ImageToTensorCalculator.
-    auto& inference = AddInference(
-        model_resources, task_options.base_options().acceleration(), graph);
-    preprocessing.Out(kTensorTag) >> inference.In(kTensorTag);
-    TensorsSource model_output_tensors =
-        inference.Out(kTensorTag).Cast<std::vector<Tensor>>();
-
-    // OBB decode: raw tensors -> batched oriented detections.
-    auto& obb_decode =
-        graph.AddNode("YoloObbTensorsToOrientedDetectionsCalculator");
-    {
+    // Configures the OBB decode node (raw tensors -> batched oriented
+    // detections) IDENTICALLY for both branches; the tiled branch additionally
+    // sets the tile-local NMS options afterwards.
+    auto configure_obb_decode =
+        [&](mediapipe::api2::builder::GenericNode& obb_decode) -> absl::Status {
       auto& opts = obb_decode.GetOptions<
           ::mediapipe::YoloObbTensorsToOrientedDetectionsCalculatorOptions>();
       const int num_classes = task_options.num_classes();
@@ -246,32 +284,167 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
       } else {
         for (int c : allow_idx) opts.add_ignore_classes(c);
       }
+      return absl::OkStatus();
+    };
+
+    // Filled by exactly one of the two branches below, then fed into the
+    // shared label_id_to_text tail. Both are original-image-normalized.
+    std::optional<Source<std::vector<OrientedDetection>>> detections_pre_label;
+    std::optional<Source<Image>> image_out;
+
+    if (!tiling_enabled) {
+      // ======================= Single-image path (UNCHANGED wiring:
+      // preprocessing -> inference -> decode -> flatten -> RotatedNMS ->
+      // projection) =======================
+
+      // Adds preprocessing calculators and connects them to the graph input
+      // image stream.
+      auto& preprocessing = graph.AddNode(
+          "mediapipe.tasks.components.processors.ImagePreprocessingGraph");
+      bool use_gpu =
+          components::processors::DetermineImagePreprocessingGpuBackend(
+              task_options.base_options().acceleration());
+      MP_RETURN_IF_ERROR(
+          components::processors::ConfigureImagePreprocessingGraph(
+              model_resources, use_gpu, task_options.base_options().gpu_origin(),
+              &preprocessing.GetOptions<tasks::components::processors::proto::
+                                            ImagePreprocessingGraphOptions>()));
+      image_in >> preprocessing.In(kImageTag);
+      graph[Input<NormalizedRect>::Optional(kNormRectTag)] >>
+          preprocessing.In(kNormRectTag);
+
+      // Adds inference subgraph and connects its input stream to the output
+      // tensors produced by the ImageToTensorCalculator.
+      auto& inference = AddInference(
+          model_resources, task_options.base_options().acceleration(), graph);
+      preprocessing.Out(kTensorTag) >> inference.In(kTensorTag);
+      TensorsSource model_output_tensors =
+          inference.Out(kTensorTag).Cast<std::vector<Tensor>>();
+
+      // OBB decode: raw tensors -> batched oriented detections.
+      auto& obb_decode =
+          graph.AddNode("YoloObbTensorsToOrientedDetectionsCalculator");
+      MP_RETURN_IF_ERROR(configure_obb_decode(obb_decode));
+      model_output_tensors >> obb_decode.In(kTensorTag);
+
+      // Flatten batch (single-image Task: N==1) ->
+      // std::vector<OrientedDetection>.
+      auto& flatten = graph.AddNode("YoloObbBatchDetectionsToSingleCalculator");
+      obb_decode.Out(kOrientedDetectionsTag) >>
+          flatten.In(kOrientedDetectionsTag);
+
+      // Rotated NMS in model-input-normalized space (Group-1 calc, UNCHANGED).
+      auto& nms = graph.AddNode("RotatedNonMaxSuppressionCalculator");
+      {
+        auto& nms_opts =
+            nms.GetOptions<
+                ::mediapipe::RotatedNonMaxSuppressionCalculatorOptions>();
+        nms_opts.set_iou_threshold(task_options.iou_threshold());
+        nms_opts.set_max_detections(task_options.max_results());
+        nms_opts.set_class_agnostic(task_options.class_agnostic_nms());
+      }
+      flatten.Out(kOrientedDetectionsTag) >> nms.In(kOrientedDetectionsTag);
+
+      // Project to original-image-normalized coords (using preprocessing
+      // matrix).
+      auto& projection = graph.AddNode("OrientedDetectionProjectionCalculator");
+      nms.Out(kOrientedDetectionsTag) >> projection.In(kOrientedDetectionsTag);
+      preprocessing.Out(kMatrixTag) >> projection.In(kProjectionMatrixTag);
+
+      detections_pre_label = projection.Out(kOrientedDetectionsTag)
+                                 .Cast<std::vector<OrientedDetection>>();
+      image_out = preprocessing[Output<Image>(kImageTag)];
+    } else {
+      // ======================= Tiled path: FromImage -> TiledDetectionFront
+      // -> inference -> decode (+ tile-local NMS) -> TiledObbMerge
+      // =======================
+
+      // Model input dims [N,H,W,C]; validation (float32/4D/normalization)
+      // lives in ValidateTiledModelInputAndGetDims above.
+      MP_ASSIGN_OR_RETURN(const flatbuffers::Vector<int32_t>* dims,
+                          ValidateTiledModelInputAndGetDims(model_resources));
+
+      // mediapipe::Image -> ImageFrame (the tiled front consumes ImageFrame).
+      auto& to_frame = graph.AddNode("FromImageCalculator");
+      image_in >> to_frame.In(kImageTag);
+
+      // Tile + batch front: IMAGE -> TENSORS (one packet per batch, synthetic
+      // timestamps) + BATCH_INFO (per-batch tile geometry / source timestamp).
+      auto& front =
+          graph.AddNode("mediapipe.tiled_detection.TiledDetectionFrontGraph");
+      auto& fo = front.GetOptions<::mediapipe::TiledDetectionFrontGraphOptions>();
+      auto* tg = fo.mutable_tile_grid();
+      tg->set_rows(tiling.tile_rows());
+      tg->set_cols(tiling.tile_cols());
+      if (tiling.explicit_tiles_size() > 0) {
+        // TileGridCalculator rejects a SET overlap_fraction (presence check)
+        // alongside explicit tiles, so only forward it in grid mode.
+        for (const auto& e : tiling.explicit_tiles()) {
+          auto* t = tg->add_explicit_tiles();
+          t->set_x_center(e.x_center());
+          t->set_y_center(e.y_center());
+          t->set_width(e.width());
+          t->set_height(e.height());
+        }
+      } else {
+        tg->set_overlap_fraction(tiling.tile_overlap_fraction());
+      }
+      fo.set_batch_capacity(dims->Get(0));
+      fo.set_input_height(dims->Get(1));
+      fo.set_input_width(dims->Get(2));
+      fo.set_input_channels(dims->Get(3));
+      to_frame.Out(kImageCpuTag) >> front.In(kImageTag);
+
+      auto& inference = AddInference(
+          model_resources, task_options.base_options().acceleration(), graph);
+      front.Out(kTensorTag) >> inference.In(kTensorTag);
+
+      // OBB decode configured identically to the single-image branch PLUS the
+      // tile-local (in-decoder, per batch row) rotated NMS options. The merge
+      // graph consumes the BATCHED decode output directly (no flatten).
+      auto& obb_decode =
+          graph.AddNode("YoloObbTensorsToOrientedDetectionsCalculator");
+      MP_RETURN_IF_ERROR(configure_obb_decode(obb_decode));
+      {
+        auto& opts = obb_decode.GetOptions<
+            ::mediapipe::YoloObbTensorsToOrientedDetectionsCalculatorOptions>();
+        opts.set_tile_local_nms_iou_threshold(
+            tiling.tile_local_nms_iou_threshold());
+        opts.set_max_detections_after_tile_nms(
+            tiling.max_detections_after_tile_nms());
+      }
+      inference.Out(kTensorTag) >> obb_decode.In(kTensorTag);
+
+      // Merge tile-local detections back to frame space + global rotated NMS;
+      // emits one packet per source frame at the source frame timestamp.
+      auto& merge =
+          graph.AddNode("mediapipe.tiled_detection.TiledObbMergeGraph");
+      auto& mo = merge.GetOptions<::mediapipe::TiledObbMergeGraphOptions>();
+      mo.set_iou_threshold(task_options.iou_threshold());
+      mo.set_class_agnostic(task_options.class_agnostic_nms());
+      mo.set_max_detections(task_options.max_results());
+      obb_decode.Out(kOrientedDetectionsTag) >>
+          merge.In(kOrientedDetectionsTag);
+      front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
+
+      detections_pre_label = merge.Out(kOrientedDetectionsTag)
+                                 .Cast<std::vector<OrientedDetection>>();
+
+      // The tiled path has no preprocessing node to forward the input image,
+      // so pass it through explicitly as the IMAGE output.
+      auto& pass = graph.AddNode("PassThroughCalculator");
+      image_in >> pass.In("");
+      image_out = pass.Out("").Cast<Image>();
     }
-    model_output_tensors >> obb_decode.In(kTensorTag);
 
-    // Flatten batch (single-image Task: N==1) -> std::vector<OrientedDetection>.
-    auto& flatten = graph.AddNode("YoloObbBatchDetectionsToSingleCalculator");
-    obb_decode.Out(kOrientedDetectionsTag) >>
-        flatten.In(kOrientedDetectionsTag);
-
-    // Rotated NMS in model-input-normalized space (Group-1 calc, UNCHANGED).
-    auto& nms = graph.AddNode("RotatedNonMaxSuppressionCalculator");
-    {
-      auto& nms_opts =
-          nms.GetOptions<
-              ::mediapipe::RotatedNonMaxSuppressionCalculatorOptions>();
-      nms_opts.set_iou_threshold(task_options.iou_threshold());
-      nms_opts.set_max_detections(task_options.max_results());
-      nms_opts.set_class_agnostic(task_options.class_agnostic_nms());
-    }
-    flatten.Out(kOrientedDetectionsTag) >> nms.In(kOrientedDetectionsTag);
-
+    // ======================= Shared tail =======================
     // Map integer class ids -> category-name strings from the model metadata.
     // keep_label_id=true preserves label_id so Category.index survives
     // (ConvertToOrientedObjectDetectionResult would otherwise emit index = -1).
     // With an empty label_items map this is a safe pass-through: no labels are
     // added and label_id is untouched, so a model without metadata labels
-    // behaves exactly as before.
+    // behaves exactly as before. Label mapping is geometry-independent, so
+    // running it after projection/merge is equivalent.
     auto& label_id_to_text =
         graph.AddNode("OrientedDetectionLabelIdToTextCalculator");
     {
@@ -280,21 +453,14 @@ class OrientedObjectDetectorGraph : public core::ModelTaskGraph {
       label_opts.set_keep_label_id(true);
       *label_opts.mutable_label_items() = label_items;
     }
-    nms.Out(kOrientedDetectionsTag) >> label_id_to_text.In("");
-
-    // Project to original-image-normalized coords (using preprocessing matrix).
-    auto& projection = graph.AddNode("OrientedDetectionProjectionCalculator");
-    label_id_to_text.Out("") >> projection.In(kOrientedDetectionsTag);
-    preprocessing.Out(kMatrixTag) >> projection.In(kProjectionMatrixTag);
-    auto oriented_detections = projection.Out(kOrientedDetectionsTag);
+    *detections_pre_label >> label_id_to_text.In("");
 
     // Outputs the oriented detections and the processed image as the subgraph
     // output streams.
     return {{
         /* oriented_detections= */
-        oriented_detections
-            .Cast<std::vector<OrientedDetection>>(),
-        /* image= */ preprocessing[Output<Image>(kImageTag)],
+        label_id_to_text.Out("").Cast<std::vector<OrientedDetection>>(),
+        /* image= */ *image_out,
     }};
   }
 };

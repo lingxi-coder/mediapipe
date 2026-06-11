@@ -27,10 +27,12 @@ limitations under the License.
 
 #include "mediapipe/tasks/cc/vision/oriented_object_detector/oriented_object_detector.h"
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mediapipe/framework/deps/file_path.h"
@@ -71,6 +73,27 @@ std::string ModelPath() {
 // Returns the absolute path to the test input image.
 std::string ImagePath() {
   return JoinPath("./", kTestDataDirectory, kTestImage);
+}
+
+// Returns the 4 rotated corners (x, y) of an oriented box given center
+// (cx, cy), full extents (w, h), and rotation theta in radians:
+//   x = cx + (±w/2)·cosθ − (±h/2)·sinθ
+//   y = cy + (±w/2)·sinθ + (±h/2)·cosθ
+std::array<std::pair<float, float>, 4> ObbCorners(float cx, float cy, float w,
+                                                  float h, float theta) {
+  const float cos_t = std::cos(theta);
+  const float sin_t = std::sin(theta);
+  std::array<std::pair<float, float>, 4> corners;
+  int i = 0;
+  for (float sx : {-0.5f, 0.5f}) {
+    for (float sy : {-0.5f, 0.5f}) {
+      const float dx = sx * w;
+      const float dy = sy * h;
+      corners[i++] = {cx + dx * cos_t - dy * sin_t,
+                      cy + dx * sin_t + dy * cos_t};
+    }
+  }
+  return corners;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +284,165 @@ TEST(OrientedObjectDetectorTest, CategoryAllowlistAndDenylistFilterByName) {
   for (const auto& det : r_deny.detections) {
     EXPECT_NE(det.categories[0].index, 1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tiled-mode e2e: 1x2 grid with 20% overlap on boats.jpg.
+// ---------------------------------------------------------------------------
+TEST(OrientedObjectDetectorTest, TiledGridDetectsShipsOnBoats) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path
+                 << "; integration assertions gated until yolov8n-obb.tflite is "
+                    "added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+  const float image_width = image.width();
+  const float image_height = image.height();
+
+  // Options identical to the adjacent single-image boats test.
+  auto base = [&]() {
+    auto o = std::make_unique<OrientedObjectDetectorOptions>();
+    o->base_options.model_asset_path = model_path;
+    o->running_mode = core::RunningMode::IMAGE;
+    o->max_results = 10;
+    o->num_classes = 15;
+    o->score_threshold = 0.25f;
+    o->iou_threshold = 0.45f;
+    return o;
+  };
+
+  // Cross-check oracle: the SAME image through the single-image path.
+  MP_ASSERT_OK_AND_ASSIGN(auto single_detector,
+                          OrientedObjectDetector::Create(base()));
+  MP_ASSERT_OK_AND_ASSIGN(OrientedObjectDetectorResult single_result,
+                          single_detector->Detect(image));
+  MP_ASSERT_OK(single_detector->Close());
+  const int n_single = single_result.detections.size();
+
+  // Tiled detector: 1x2 grid, 20% overlap.
+  auto options = base();
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          OrientedObjectDetector::Create(std::move(options)));
+  MP_ASSERT_OK_AND_ASSIGN(OrientedObjectDetectorResult result,
+                          detector->Detect(image));
+  MP_ASSERT_OK(detector->Close());
+
+  ASSERT_GE(result.detections.size(), 1u);
+  EXPECT_LE(result.detections.size(), 10u);  // max_results respected
+
+  // Public result is PIXEL units: every rotated corner of each OBB must lie
+  // within image pixel bounds (symmetric +/-1px tolerance).
+  bool found_ship = false;
+  for (const auto& d : result.detections) {
+    for (const auto& [corner_x, corner_y] :
+         ObbCorners(d.cx, d.cy, d.width, d.height, d.rotation)) {
+      EXPECT_GE(corner_x, -1.0f);
+      EXPECT_LE(corner_x, image_width + 1.0f);
+      EXPECT_GE(corner_y, -1.0f);
+      EXPECT_LE(corner_y, image_height + 1.0f);
+    }
+    EXPECT_GT(d.width, 0.0f);
+    EXPECT_GT(d.height, 0.0f);
+    EXPECT_TRUE(std::isfinite(d.rotation));
+    ASSERT_EQ(d.categories.size(), 1u);
+    const auto& cat = d.categories[0];
+    EXPECT_GE(cat.score, 0.25f);
+    EXPECT_GE(cat.index, 0);
+    EXPECT_LT(cat.index, 15);
+    ASSERT_TRUE(cat.category_name.has_value());
+    EXPECT_FALSE(cat.category_name->empty());
+    if (cat.index == 1) {
+      EXPECT_EQ(*cat.category_name, "ship");
+      found_ship = true;
+    }
+  }
+  // boats.jpg -> DOTA "ship" (class 1), same as the single-image oracle.
+  EXPECT_TRUE(found_ship) << "expected a ship detection";
+
+  // Detection count must be in the neighborhood of the single-image path.
+  const int n_tiled = result.detections.size();
+  EXPECT_GE(n_tiled, n_single - 1);
+  EXPECT_LE(n_tiled, n_single + 3);
+}
+
+// ---------------------------------------------------------------------------
+// Tiled mode + region-of-interest is rejected (the tiled graph has no
+// NORM_RECT input, so per-call ROI cannot be honored).
+// ---------------------------------------------------------------------------
+TEST(OrientedObjectDetectorTest, TiledWithRoiRejected) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path
+                 << "; integration assertions gated until yolov8n-obb.tflite is "
+                    "added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  auto options = std::make_unique<OrientedObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::IMAGE;
+  options->max_results = 10;
+  options->num_classes = 15;
+  options->score_threshold = 0.25f;
+  options->iou_threshold = 0.45f;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          OrientedObjectDetector::Create(std::move(options)));
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+
+  core::ImageProcessingOptions image_processing_options;
+  image_processing_options.region_of_interest =
+      components::containers::RectF{/*left=*/0.1f, /*top=*/0.1f,
+                                    /*right=*/0.9f, /*bottom=*/0.9f};
+  auto result = detector->Detect(image, image_processing_options);
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(result.status().message(),
+              testing::HasSubstr("tiling and ROI are mutually exclusive"));
+
+  // Rotation (without ROI) is likewise rejected: the tiled graph has no
+  // NORM_RECT input, so rotation_degrees cannot be honored.
+  core::ImageProcessingOptions rotation_options;
+  rotation_options.rotation_degrees = 90;
+  auto rotated_result = detector->Detect(image, rotation_options);
+  EXPECT_EQ(rotated_result.status().code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(rotated_result.status().message(),
+              testing::HasSubstr("rotation"));
+  MP_ASSERT_OK(detector->Close());
+}
+
+// ---------------------------------------------------------------------------
+// Explicit tiles + a nonzero tile_overlap_fraction is rejected at graph build
+// (overlap only applies to grid mode; silently ignoring it would mislead).
+// ---------------------------------------------------------------------------
+TEST(OrientedObjectDetectorTest, TiledExplicitTilesWithOverlapRejected) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path
+                 << "; integration assertions gated until yolov8n-obb.tflite is "
+                    "added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  auto options = std::make_unique<OrientedObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::IMAGE;
+  options->max_results = 10;
+  options->num_classes = 15;
+  options->score_threshold = 0.25f;
+  options->iou_threshold = 0.45f;
+  options->tiling.explicit_tiles.push_back(
+      {/*x_center=*/0.5f, /*y_center=*/0.5f, /*width=*/1.0f, /*height=*/1.0f});
+  options->tiling.tile_overlap_fraction = 0.2f;
+
+  auto detector = OrientedObjectDetector::Create(std::move(options));
+  EXPECT_EQ(detector.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(detector.status().message(),
+              testing::HasSubstr("tile_overlap_fraction"));
 }
 
 }  // namespace
