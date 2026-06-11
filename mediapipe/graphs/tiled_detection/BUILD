@@ -64,18 +64,39 @@ cc_library(
     alwayslink = 1,
 )
 
+cc_library(
+    name = "tiled_box_merge_graph",
+    srcs = ["tiled_box_merge_graph.cc"],
+    deps = [
+        ":tiled_detection_graphs_cc_proto",
+        "//mediapipe/calculators/core:clip_vector_size_calculator",
+        "//mediapipe/calculators/core:clip_vector_size_calculator_cc_proto",
+        "//mediapipe/calculators/tensor:merge_tile_box_detections_accumulator_calculator",
+        "//mediapipe/calculators/tensor:tiled_frame_suppression_calculator",
+        "//mediapipe/calculators/tensor:tiled_frame_suppression_calculator_cc_proto",
+        "//mediapipe/framework:calculator_cc_proto",
+        "//mediapipe/framework:subgraph",
+        "//mediapipe/framework/api2:builder",
+        "@com_google_absl//absl/status:statusor",
+    ],
+    alwayslink = 1,
+)
+
 cc_test(
     name = "tiled_detection_graphs_test",
     size = "small",
     srcs = ["tiled_detection_graphs_test.cc"],
     deps = [
+        ":tiled_box_merge_graph",
         ":tiled_detection_front_graph",
         ":tiled_detection_graphs_cc_proto",
         ":tiled_obb_merge_graph",
         "//mediapipe/calculators/tensor:tiling_matrix_utils",
         "//mediapipe/calculators/tensor:tiling_types",
         "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/formats:detection_cc_proto",
         "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:location_data_cc_proto",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/framework/port:gtest_main",

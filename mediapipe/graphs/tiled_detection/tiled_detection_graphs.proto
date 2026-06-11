@@ -61,6 +61,7 @@ message TiledBoxMergeGraphOptions {
   optional float iou_threshold = 1 [default = 0.45];
   // If true, NMS suppresses across classes (class labels are ignored).
   optional bool class_agnostic = 2 [default = false];
-  // Cap on the number of kept detections after NMS; -1 means uncapped.
+  // Cap on the number of kept detections after NMS; -1 means uncapped. 0 is
+  // rejected at graph init (note: TiledObbMergeGraph treats 0 as keep-none).
   optional int32 max_detections = 3 [default = -1];
 }
