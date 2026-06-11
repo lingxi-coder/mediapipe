@@ -117,6 +117,21 @@ ConvertOrientedObjectDetectorOptionsToProto(
     options_proto->add_category_allowlist(c);
   for (const std::string& c : options->category_denylist)
     options_proto->add_category_denylist(c);
+  auto* tiling = options_proto->mutable_tiling();
+  tiling->set_tile_rows(options->tiling.tile_rows);
+  tiling->set_tile_cols(options->tiling.tile_cols);
+  tiling->set_tile_overlap_fraction(options->tiling.tile_overlap_fraction);
+  for (const auto& e : options->tiling.explicit_tiles) {
+    auto* t = tiling->add_explicit_tiles();
+    t->set_x_center(e.x_center);
+    t->set_y_center(e.y_center);
+    t->set_width(e.width);
+    t->set_height(e.height);
+  }
+  tiling->set_tile_local_nms_iou_threshold(
+      options->tiling.tile_local_nms_iou_threshold);
+  tiling->set_max_detections_after_tile_nms(
+      options->tiling.max_detections_after_tile_nms);
   return options_proto;
 }
 
