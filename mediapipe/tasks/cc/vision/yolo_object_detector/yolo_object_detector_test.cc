@@ -396,7 +396,7 @@ TEST(YoloObjectDetectorTest, TiledGridDetectsBoatsOnBoats) {
 // Tiled mode + region-of-interest is rejected (the tiled graph has no
 // NORM_RECT input, so per-call ROI cannot be honored).
 // ---------------------------------------------------------------------------
-TEST(YoloObjectDetectorTest, TiledWithRoiRejected) {
+TEST(YoloObjectDetectorTest, TiledRoiAndRotationRejected) {
   const std::string model_path = ModelPath();
   if (!mediapipe::file::Exists(model_path).ok()) {
     GTEST_SKIP() << "YOLO model fixture not available at " << model_path

@@ -39,6 +39,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/cc/vision/core/running_mode.h"
 #include "mediapipe/tasks/cc/vision/core/vision_task_api_factory.h"
+#include "mediapipe/tasks/cc/vision/utils/tiled_detection_utils.h"
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/proto/yolo_object_detector_options.pb.h"
 #include "tensorflow/lite/core/api/op_resolver.h"
 
@@ -66,39 +67,8 @@ using ::mediapipe::tasks::vision::core::GetCoreRunningMode;
 using YoloObjectDetectorOptionsProto =
     proto::YoloObjectDetectorOptions;
 
-// Returns true when the options enable the tiled path (grid larger than one
-// tile, or explicit tiles provided).
-// Must match yolo_object_detector_graph.cc's tiling-enabled predicate.
-bool TilingEnabled(const YoloObjectDetectorOptionsProto& options_proto) {
-  const auto& tiling = options_proto.tiling();
-  return tiling.tile_rows() * tiling.tile_cols() > 1 ||
-         tiling.explicit_tiles_size() > 0;
-}
-
-// In tiled mode the task graph has no NORM_RECT input, so per-call
-// ImageProcessingOptions cannot be honored: ROI is mutually exclusive with
-// tiling, and rotation is unsupported (it would be silently ignored
-// otherwise).
-absl::Status CheckTiledImageProcessingOptions(
-    const std::optional<core::ImageProcessingOptions>&
-        image_processing_options) {
-  if (!image_processing_options.has_value()) {
-    return absl::OkStatus();
-  }
-  if (image_processing_options->region_of_interest.has_value()) {
-    return CreateStatusWithPayload(
-        absl::StatusCode::kInvalidArgument,
-        "tiling and ROI are mutually exclusive",
-        MediaPipeTasksStatus::kImageProcessingInvalidArgumentError);
-  }
-  if (image_processing_options->rotation_degrees != 0) {
-    return CreateStatusWithPayload(
-        absl::StatusCode::kInvalidArgument,
-        "tiling does not support rotation_degrees",
-        MediaPipeTasksStatus::kImageProcessingInvalidArgumentError);
-  }
-  return absl::OkStatus();
-}
+// TilingEnabled and CheckTiledImageProcessingOptions are shared with the
+// graph builder via //mediapipe/tasks/cc/vision/utils:tiled_detection_utils.
 
 // Creates a MediaPipe graph config that contains a subgraph node of
 // "mediapipe.tasks.vision.yolo_object_detector.YoloObjectDetectorGraph". If
@@ -216,7 +186,7 @@ absl::StatusOr<std::unique_ptr<YoloObjectDetector>> YoloObjectDetector::Create(
                               kMicroSecondsPerMilliSecond);
         };
   }
-  const bool tiling_enabled = TilingEnabled(*options_proto);
+  const bool tiling_enabled = TilingEnabled(options_proto->tiling());
   auto detector =
       core::VisionTaskApiFactory::Create<YoloObjectDetector,
                                          YoloObjectDetectorOptionsProto>(

@@ -39,6 +39,7 @@ cc_library(
         "//mediapipe/tasks/cc/vision/core:image_processing_options",
         "//mediapipe/tasks/cc/vision/core:running_mode",
         "//mediapipe/tasks/cc/vision/core:vision_task_api_factory",
+        "//mediapipe/tasks/cc/vision/utils:tiled_detection_utils",
         "//mediapipe/tasks/cc/vision/yolo_object_detector/proto:yolo_object_detector_options_cc_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -86,7 +87,6 @@ cc_library(
         "//mediapipe/tasks/metadata:metadata_schema_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@flatbuffers//:runtime_cc",
     ],
     alwayslink = 1,
 )

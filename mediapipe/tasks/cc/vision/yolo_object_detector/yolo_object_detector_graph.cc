@@ -145,7 +145,7 @@ absl::Status SanityCheckOptions(
 //     }
 //   }
 // }
-class YoloObjectDetectorGraph : public core::ModelTaskGraph {
+class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
  public:
   absl::StatusOr<CalculatorGraphConfig> GetConfig(
       SubgraphContext* sc) override {
@@ -181,7 +181,8 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
   //        single-image path; the tiled path never references it.
   absl::StatusOr<YoloObjectDetectionOutputStreams> BuildYoloObjectDetectionTask(
       const YoloObjectDetectorOptionsProto& task_options,
-      const core::ModelResources& model_resources, Source<Image> image_in,
+      const tasks::core::ModelResources& model_resources,
+      Source<Image> image_in,
       Graph& graph) {
     MP_RETURN_IF_ERROR(SanityCheckOptions(task_options));
     auto& model = *model_resources.GetTfLiteModel();
@@ -213,9 +214,10 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
                                   task_options.display_names_locale()));
 
     const auto& tiling = task_options.tiling();
-    // Must match yolo_object_detector.cc's tiling-enabled predicate.
-    const bool tiling_enabled = tiling.tile_rows() * tiling.tile_cols() > 1 ||
-                                tiling.explicit_tiles_size() > 0;
+    // Shared predicate (//mediapipe/tasks/cc/vision/utils:
+    // tiled_detection_utils TilingEnabled), also used by the
+    // yolo_object_detector.cc wrapper.
+    const bool tiling_enabled = TilingEnabled(tiling);
 
     // Configures the YOLO decode node (raw tensors -> batched axis-aligned
     // Detections) IDENTICALLY for both branches; the tiled branch additionally
@@ -368,7 +370,7 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
       // Model input dims [N,H,W,C]; validation (float32/4D/normalization)
       // lives in the shared //mediapipe/tasks/cc/vision/utils:
       // tiled_detection_utils ValidateTiledModelInputAndGetDims.
-      MP_ASSIGN_OR_RETURN(const flatbuffers::Vector<int32_t>* dims,
+      MP_ASSIGN_OR_RETURN(const TiledModelInputDims dims,
                           ValidateTiledModelInputAndGetDims(model_resources));
 
       // mediapipe::Image -> ImageFrame (the tiled front consumes ImageFrame).
@@ -397,10 +399,10 @@ class YoloObjectDetectorGraph : public core::ModelTaskGraph {
       } else {
         tg->set_overlap_fraction(tiling.tile_overlap_fraction());
       }
-      fo.set_batch_capacity(dims->Get(0));
-      fo.set_input_height(dims->Get(1));
-      fo.set_input_width(dims->Get(2));
-      fo.set_input_channels(dims->Get(3));
+      fo.set_batch_capacity(dims.batch);
+      fo.set_input_height(dims.height);
+      fo.set_input_width(dims.width);
+      fo.set_input_channels(dims.channels);
       to_frame.Out(kImageCpuTag) >> front.In(kImageTag);
 
       auto& inference = AddInference(

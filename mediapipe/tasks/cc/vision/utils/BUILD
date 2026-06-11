@@ -167,9 +167,9 @@ cc_library(
     hdrs = ["tiled_detection_utils.h"],
     deps = [
         ":image_tensor_specs",
-        "//mediapipe/framework/port:ret_check",
         "//mediapipe/tasks/cc:common",
         "//mediapipe/tasks/cc/core:model_resources",
+        "//mediapipe/tasks/cc/vision/core:image_processing_options",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@flatbuffers//:runtime_cc",
