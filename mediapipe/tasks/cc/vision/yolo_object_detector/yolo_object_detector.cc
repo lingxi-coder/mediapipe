@@ -91,8 +91,11 @@ CalculatorGraphConfig CreateGraphConfig(
   return graph.GetConfig();
 }
 
+}  // namespace
+
 // Converts the user-facing YoloObjectDetectorOptions struct to the internal
-// YoloObjectDetectorOptions proto.
+// YoloObjectDetectorOptions proto.  Defined outside the anonymous namespace
+// so that unit tests can call it directly to verify options→proto mapping.
 std::unique_ptr<YoloObjectDetectorOptionsProto>
 ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options) {
   auto options_proto = std::make_unique<YoloObjectDetectorOptionsProto>();
@@ -114,10 +117,23 @@ ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options) {
   options_proto->set_layout(
       static_cast<YoloObjectDetectorOptionsProto::Layout>(options->layout));
   options_proto->set_num_classes(options->num_classes);
+  auto* tiling = options_proto->mutable_tiling();
+  tiling->set_tile_rows(options->tiling.tile_rows);
+  tiling->set_tile_cols(options->tiling.tile_cols);
+  tiling->set_tile_overlap_fraction(options->tiling.tile_overlap_fraction);
+  for (const auto& e : options->tiling.explicit_tiles) {
+    auto* t = tiling->add_explicit_tiles();
+    t->set_x_center(e.x_center);
+    t->set_y_center(e.y_center);
+    t->set_width(e.width);
+    t->set_height(e.height);
+  }
+  tiling->set_tile_local_nms_iou_threshold(
+      options->tiling.tile_local_nms_iou_threshold);
+  tiling->set_max_detections_after_tile_nms(
+      options->tiling.max_detections_after_tile_nms);
   return options_proto;
 }
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<YoloObjectDetector>> YoloObjectDetector::Create(
     std::unique_ptr<YoloObjectDetectorOptions> options) {

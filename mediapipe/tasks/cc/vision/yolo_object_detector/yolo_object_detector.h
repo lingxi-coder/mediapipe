@@ -32,6 +32,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/vision/core/base_vision_task_api.h"
 #include "mediapipe/tasks/cc/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/cc/vision/core/running_mode.h"
+#include "mediapipe/tasks/cc/vision/yolo_object_detector/proto/yolo_object_detector_options.pb.h"
 
 namespace mediapipe {
 namespace tasks {
@@ -101,6 +102,28 @@ struct YoloObjectDetectorOptions {
   // Number of classes. If 0, derived from model metadata at graph build time.
   int num_classes = 0;
 
+  // Static tiling configuration. Tiling is enabled when
+  // tile_rows * tile_cols > 1 or explicit_tiles is non-empty.
+  struct TilingOptions {
+    int tile_rows = 1;
+    int tile_cols = 1;
+    float tile_overlap_fraction = 0.0f;
+    // A frame-normalized tile given by its CENTER point and size (NOT
+    // corner-based like RectF). Mutually exclusive with the grid params.
+    struct TileRect {
+      float x_center = 0.0f;
+      float y_center = 0.0f;
+      float width = 0.0f;
+      float height = 0.0f;
+    };
+    std::vector<TileRect> explicit_tiles;
+    // Per-tile (in-decoder) NMS; <= 0 disables.
+    float tile_local_nms_iou_threshold = 0.0f;
+    // Per-tile cap after tile-local NMS; <= 0 disables.
+    int max_detections_after_tile_nms = 0;
+  };
+  TilingOptions tiling;
+
   // The user-defined result callback for processing live stream data.
   // The result callback should only be specified when the running mode is set
   // to RunningMode::LIVE_STREAM.
@@ -108,6 +131,12 @@ struct YoloObjectDetectorOptions {
                      int64_t)>
       result_callback = nullptr;
 };
+
+// Converts a public YoloObjectDetectorOptions struct into the corresponding
+// proto. Exposed here (outside the anonymous namespace in the .cc) so that unit
+// tests can verify the options→proto mapping without constructing a live graph.
+std::unique_ptr<proto::YoloObjectDetectorOptions>
+ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options);
 
 // Performs YOLO object detection on single images, video frames, or live
 // stream.

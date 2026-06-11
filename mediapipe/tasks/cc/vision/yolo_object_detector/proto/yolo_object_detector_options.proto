@@ -66,4 +66,28 @@ message YoloObjectDetectorOptions {
 
   // Number of classes. If unset (0), derived from model metadata at build time.
   optional int32 num_classes = 9 [default = 0];
+
+  // Static tiling configuration. Tiling is ENABLED when
+  // tile_rows * tile_cols > 1 or explicit_tiles is non-empty; otherwise the
+  // single-image path is used unchanged.
+  message TilingOptions {
+    // Uniform grid of tile_rows x tile_cols tiles, neighbors overlapping by
+    // tile_overlap_fraction of the tile side length, in [0, 1).
+    optional int32 tile_rows = 1 [default = 1];
+    optional int32 tile_cols = 2 [default = 1];
+    optional float tile_overlap_fraction = 3 [default = 0.0];
+    message TileRect {
+      optional float x_center = 1;
+      optional float y_center = 2;
+      optional float width = 3;
+      optional float height = 4;
+    }
+    // Frame-normalized explicit tiles; mutually exclusive with the grid params.
+    repeated TileRect explicit_tiles = 4;
+    // Per-tile (in-decoder) NMS; <= 0 disables.
+    optional float tile_local_nms_iou_threshold = 5 [default = 0.0];
+    // Per-tile cap after tile-local NMS; <= 0 disables.
+    optional int32 max_detections_after_tile_nms = 6 [default = 0];
+  }
+  optional TilingOptions tiling = 10;
 }

@@ -74,6 +74,35 @@ std::string ImagePath() {
 }
 
 // ---------------------------------------------------------------------------
+// Options passthrough test — no model fixture required.
+// Verifies that the nested TilingOptions struct is copied correctly into the
+// options proto by ConvertYoloObjectDetectorOptionsToProto.
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorOptionsTest, TilingOptionsConvertToProto) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  // The converter is a dumb mapper: it intentionally performs no grid/explicit
+  // mutual-exclusion validation (that happens at graph build), so this fixture
+  // sets both.
+  options->tiling.tile_rows = 2;
+  options->tiling.tile_cols = 3;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  options->tiling.explicit_tiles.push_back({0.3f, 0.4f, 0.2f, 0.6f});
+  options->tiling.tile_local_nms_iou_threshold = 0.5f;
+  options->tiling.max_detections_after_tile_nms = 50;
+  auto proto = ConvertYoloObjectDetectorOptionsToProto(options.get());
+  EXPECT_EQ(proto->tiling().tile_rows(), 2);
+  EXPECT_EQ(proto->tiling().tile_cols(), 3);
+  EXPECT_NEAR(proto->tiling().tile_overlap_fraction(), 0.2f, 1e-6);
+  ASSERT_EQ(proto->tiling().explicit_tiles_size(), 1);
+  EXPECT_NEAR(proto->tiling().explicit_tiles(0).x_center(), 0.3f, 1e-6);
+  EXPECT_NEAR(proto->tiling().explicit_tiles(0).y_center(), 0.4f, 1e-6);
+  EXPECT_NEAR(proto->tiling().explicit_tiles(0).width(), 0.2f, 1e-6);
+  EXPECT_NEAR(proto->tiling().explicit_tiles(0).height(), 0.6f, 1e-6);
+  EXPECT_NEAR(proto->tiling().tile_local_nms_iou_threshold(), 0.5f, 1e-6);
+  EXPECT_EQ(proto->tiling().max_detections_after_tile_nms(), 50);
+}
+
+// ---------------------------------------------------------------------------
 // Image-mode test
 // ---------------------------------------------------------------------------
 TEST(YoloObjectDetectorTest, DetectOnImage) {
