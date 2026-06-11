@@ -2,13 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 用户通过 `YoloObjectDetector` / `OrientedObjectDetector` 的 C++ Tasks options 配置静态 tiling(网格或显式 rect),检测器内部切 tile → 批推理 → 合并回帧坐标 → 全局 NMS。
+**Goal:** 用户通过 `YoloObjectDetector` / `OrientedObjectDetector` 的 C++ Tasks options 配置静态 tiling(网格或显式 rect),检测器内部切 tile → 批推理 → 合并回帧坐标 → 全局 NMS。保持现有 Tasks public API 坐标单位不变:graph 内部 merge 输出帧归一化坐标,但 C++ result 仍是 pixel units。
 
-**Architecture:** subgraph 中间层(共享 `TiledDetectionFrontGraph` + 两个 Merge 后半 subgraph),推理留给调用方;Tasks graph builder 在 tiling 启用时走 tiled 分支(无 projection 步骤,merge 直接输出帧归一化坐标)。Spec: `docs/superpowers/specs/2026-06-11-tasks-tiled-detection-design.md`(实现前先通读)。
+**Architecture:** subgraph 中间层(共享 `TiledDetectionFrontGraph` + 两个 Merge 后半 subgraph),推理留给调用方;Tasks graph builder 在 tiling 启用时走 tiled 分支。tiled 分支不接 projection 矩阵,merge 直接输出源帧归一化坐标;随后 OBB 保持归一化 proto 输出(容器转换阶段乘 image size 得到 pixel result),YOLO/axis-aligned 必须继续接 `DetectionTransformationCalculator` 转 pixel bbox 再输出。Spec: `docs/superpowers/specs/2026-06-11-tasks-tiled-detection-design.md`(实现前先通读)。
 
 **Tech Stack:** MediaPipe Bazel(C++20),api2 calculator/builder,proto2。所有测试命令均带 `--define MEDIAPIPE_DISABLE_GPU=1`。commit 信息结尾必须带 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。**每个任务严格 TDD:先写测试、跑一次确认按预期原因失败、再实现。**
 
-**已存在可直接复用的组件(不要重写)**:`TileSpecToTilePlanCalculator`、`StreamingTilesToTensorBatchCalculator`、`YoloTensorsToDetectionsCalculator`/`YoloObbTensorsToOrientedDetectionsCalculator`(含 tile-local NMS 选项)、`MergeTileDetectionsAccumulatorCalculator`(OBB)、`MergeTileBoxDetectionsAccumulatorCalculator`、`RotatedNonMaxSuppressionCalculator`、`TiledFrameSuppressionCalculator`、上游 `FromImageCalculator`(mediapipe/calculators/util)与 `ClipDetectionVectorSizeCalculator`(mediapipe/calculators/core/clip_vector_size_calculator.cc 内注册)。
+**已存在可直接复用的组件(不要重写)**:`TileSpecToTilePlanCalculator`、`StreamingTilesToTensorBatchCalculator`、`YoloTensorsToDetectionsCalculator`/`YoloObbTensorsToOrientedDetectionsCalculator`(含 tile-local NMS 选项)、`MergeTileDetectionsAccumulatorCalculator`(OBB)、`MergeTileBoxDetectionsAccumulatorCalculator`、`RotatedNonMaxSuppressionCalculator`、`TiledFrameSuppressionCalculator`、上游 `FromImageCalculator`(mediapipe/calculators/util)、`ImagePropertiesCalculator`(mediapipe/calculators/image)与 `ClipDetectionVectorSizeCalculator`(target `//mediapipe/calculators/core:clip_vector_size_calculator`)。
+
+**坐标/预处理硬约束:** merge graph 输出的是 frame-normalized proto;Tasks public C++ result 必须继续是 pixel units。当前 `StreamingTilesToTensorBatchCalculator` 只实现 uint8 RGB → float32 `[0,1]`(`/255`)预处理,Tasks tiled builder 构建期校验判据:**输入张量 float32 + 4D 硬性;TFLite Metadata 的 NormalizationOptions 存在且不等价 (mean 0, std 255) → InvalidArgument;缺失 → 按 /255 假设放行**(fork 导出脚本不写 normalization metadata,硬卡"必须存在"会拒掉自家 e2e fixtures)。不要静默绕过 `ImagePreprocessingGraph` 的 normalization 语义。
 
 ---
 
@@ -307,6 +309,7 @@ message TiledDetectionFrontGraphOptions {
   optional int32 input_height = 3 [default = 0];
   optional int32 input_width = 4 [default = 0];
   optional int32 input_channels = 5 [default = 0];
+  optional bool is_dynamic_batch = 6 [default = false];
 }
 
 message TiledObbMergeGraphOptions {
@@ -414,6 +417,7 @@ class TiledDetectionFrontGraph : public Subgraph {
     bo.set_metadata_input_height(options.input_height());
     bo.set_metadata_input_width(options.input_width());
     bo.set_metadata_input_channels(options.input_channels());
+    bo.set_metadata_is_dynamic_batch(options.is_dynamic_batch());
     image >> batcher.In("IMAGE");
     plan.Out("TILE_PLAN") >> batcher.In("TILE_PLAN");
 
@@ -441,6 +445,8 @@ BUILD:`cc_library(name="tiled_detection_front_graph", alwayslink=1, deps=[graphs
 - Create: `mediapipe/graphs/tiled_detection/tiled_obb_merge_graph.cc`
 - Modify: `mediapipe/graphs/tiled_detection/tiled_detection_graphs_test.cc`、BUILD
 
+(**设计决定:不做 NUM_TILES/bypass_single_tile**——tile-local NMS 在 TilingOptions 默认关闭,单显式 tile 配置下 bypass 会把未去重的原始检测返回给用户;而对已 tile-local NMS 的集合再跑同阈值贪心 NMS 是幂等 no-op,省它不值得改两个 calculator 契约。全局 NMS 恒执行。)
+
 - [ ] **Step 1: 失败测试**(合成两批、各 1 tile;几何构造照抄 `merge_tile_detections_accumulator_calculator_test.cc` 的 `MakeGeom`/`Obb` helper——graph 级测试用 `AddPacketToInputStream` 喂 `std::vector<std::vector<OrientedDetection>>` 与 `TensorBatchInfo`)
 
 ```cpp
@@ -465,8 +471,10 @@ TEST(TiledObbMergeGraphTest, MergesBatchesAndRunsGlobalNms) {
 
 (测试体写全:左右两半 tile 的 geom、两个 info(batch_index 0/1)、dets packet;重复目标用全帧中心同一框即可——两 tile overlap 区内。)
 
+追加单 tile 用例:`SingleTileStillRunsGlobalNms`:一个 source frame `valid_count=1,total_batches=1`,该 tile row 内放两个会被 rotated NMS 互相 suppress 的 OBB(模拟 tile-local NMS 关闭的默认配置)→ 输出 **1 个**。钉死"全局 NMS 恒执行,单 tile 不 bypass"的设计决定。
+
 - [ ] **Step 2: 跑确认失败。**
-- [ ] **Step 3: 实现**(GetConfig:`MergeTileDetectionsAccumulatorCalculator` → `RotatedNonMaxSuppressionCalculator`,NMS options 从 subgraph options 三字段透传;In/Out tag 同测试 pbtxt)。
+- [ ] **Step 3: 实现**:`TiledObbMergeGraph` GetConfig:`MergeTileDetectionsAccumulatorCalculator` → `RotatedNonMaxSuppressionCalculator`,NMS options 从 subgraph options 三字段(iou_threshold/max_detections/class_agnostic)透传;In/Out tag 同测试 pbtxt。不修改任何既有 calculator。
 - [ ] **Step 4: 跑确认通过;Commit** `feat(tiling): TiledObbMergeGraph subgraph`。
 
 ---
@@ -477,9 +485,11 @@ TEST(TiledObbMergeGraphTest, MergesBatchesAndRunsGlobalNms) {
 - Create: `mediapipe/graphs/tiled_detection/tiled_box_merge_graph.cc`
 - Modify: 同上 test/BUILD
 
-- [ ] **Step 1: 失败测试**:同 Task 5 形态,Detection 版(helper 照抄 `merge_tile_box_detections_accumulator_calculator_test.cc` 的 `Box`/`MakeGeom`);额外用例 `MaxDetectionsCaps`:3 个互不重叠 det + `max_detections: 2` → 输出 2 个且为最高分两个。
+- [ ] **Step 1: 失败测试**:同 Task 5 形态,Detection 版(helper 照抄 `merge_tile_box_detections_accumulator_calculator_test.cc` 的 `Box`/`MakeGeom`);额外用例 `MaxDetectionsCaps`:3 个互不重叠 det + `max_detections: 2` → 输出 2 个且为最高分两个。追加 `SingleTileStillRunsGlobalNms`:一个 tile row 内两个会被 NMS suppress 的框 → 输出 **1 个**(全局 NMS 恒执行,理由同 Task 5)。
 - [ ] **Step 2: 跑确认失败。**
-- [ ] **Step 3: 实现**:`MergeTileBoxDetectionsAccumulatorCalculator` → `TiledFrameSuppressionCalculator`(iou_threshold/class_agnostic 透传;TRACKER_DETECTIONS/NUM_TILES 不连接)→ `options.max_detections()>=0` 时追加 `ClipDetectionVectorSizeCalculator` 节点(`GetOptions<mediapipe::ClipVectorSizeCalculatorOptions>().set_max_vec_size(...)`,该 calculator 在 `//mediapipe/calculators/core:clip_detection_vector_size_calculator`)。
+- [ ] **Step 3: 实现**:
+  - `TiledBoxMergeGraph`: `MergeTileBoxDetectionsAccumulatorCalculator` → `TiledFrameSuppressionCalculator`(`NUM_TILES`/`TRACKER_DETECTIONS` 均不连接,`bypass_single_tile` 保持默认 false → 恒执行全局 NMS);iou_threshold/class_agnostic 透传。不修改任何既有 calculator。
+  - `options.max_detections()>=0` 时追加 `ClipDetectionVectorSizeCalculator` 节点(`GetOptions<mediapipe::ClipVectorSizeCalculatorOptions>().set_max_vec_size(...)`,target `//mediapipe/calculators/core:clip_vector_size_calculator`)。
 - [ ] **Step 4: 跑确认通过;Commit** `feat(tiling): TiledBoxMergeGraph subgraph`。
 
 ---
@@ -548,8 +558,10 @@ TEST_F(/*同文件既有 fixture*/, TiledGridDetectsShipsOnBoats) {
   // 硬断言(spec §5.3):
   ASSERT_GE(result.detections.size(), 1u);
   for (const auto& d : result.detections) {
-    EXPECT_GE(d.cx - d.width / 2, -1e-3); EXPECT_LE(d.cx + d.width / 2, 1.001);
-    EXPECT_GE(d.cy - d.height / 2, -1e-3); EXPECT_LE(d.cy + d.height / 2, 1.001);
+    EXPECT_GE(d.cx - d.width / 2, -1e-3);
+    EXPECT_LE(d.cx + d.width / 2, image.width() + 1e-3);
+    EXPECT_GE(d.cy - d.height / 2, -1e-3);
+    EXPECT_LE(d.cy + d.height / 2, image.height() + 1e-3);
   }
   // 与单图路径对照:N_single 来自同文件相邻用例同配置再跑一次(无 tiling),
   // EXPECT_GE(tiled_n, N_single - 1); EXPECT_LE(tiled_n, N_single + 3);
@@ -557,10 +569,18 @@ TEST_F(/*同文件既有 fixture*/, TiledGridDetectsShipsOnBoats) {
 }
 ```
 
-(检测结果字段名以 `OrientedObjectDetectionResult` 实际定义为准——实现者先读 `tasks/cc/components/containers/oriented_object_detection_result.h`。)
+(检测结果字段名以 `OrientedObjectDetectionResult` 实际定义为准——实现者先读 `tasks/cc/components/containers/oriented_object_detection_result.h`。注意 public result 是 pixel units,不是 `[0,1]`:断言 `cx/width/height` 在 image pixel bounds 内,不要用归一化范围断言。)
+
+追加 negative 用例:tiling 启用但模型输入 dtype/normalization 不受支持时 `Create()` 返回 InvalidArgument;如果当前 test harness 能传 ROI/NORM_RECT,tiling+ROI 也必须返回 InvalidArgument。
 
 - [ ] **Step 2: 跑确认失败**(tiling 字段未被 builder 消费 → 行为同单图;对照断言不致失败,**所以失败信号靠 Step 3 前的中间断言**:在 builder 实现前,tiled 用例应当与单图结果完全一致——为获得真 RED,先断言 `tiled_n != N_single || HasTiledNodes(graph)` 不可行;改用更可靠的 RED:**builder 在 tiling 启用但未实现时应显式报错**。即 Step 3 实现前,先在 builder 加 `if (tiling enabled) return InvalidArgument("tiling not implemented")`?——不,直接以"未知 proto 字段"为 RED:Step 1 的转换器已在 Task 7 落地,字段存在;因此本任务 RED = e2e 在 builder 未消费 tiling 时输出与单图全等,而用例断言 `result 来自 tiled 分支独有的性质`。最实际的 RED 信号:**先只写用例骨架 + `FAIL() << "tiled branch not wired"` 哨兵**,Step 3 完成后删哨兵补全断言再跑 GREEN。)
-- [ ] **Step 3: 实现 builder 分支**(在 `BuildOrientedObjectDetectorTask`(含 AddInference 的函数)开头计算:)
+- [ ] **Step 3: 实现 builder 分支 + wrapper 三处改动**:
+  - **wrapper 层(`oriented_object_detector.cc`,三处;它目前无条件声明 NORM_RECT graph input 且每次 Detect 发包,见 :77-90/:195)**:
+    (a) `CreateGraphConfig`(或同职责函数)接收 `tiling_enabled`:tiled 时不声明、不连接 NORM_RECT graph input(否则 wrapper 对 task subgraph 的 `In(kNormRectTag)` 连接会在图展开期失败);
+    (b) `Detect`/`DetectForVideo`/`DetectAsync` 的输入 packet map:tiled 时只发 image 包,不发 norm_rect 包;
+    (c) 三个 Detect 变体开头:`image_processing_options` 含 region_of_interest 且 tiling 启用 → `InvalidArgument("tiling and ROI are mutually exclusive")`。
+  - **task subgraph(graph builder)**:在 `GetConfig()` 里先读取 `task_options` 并计算 `tiling_enabled`,再决定是否引用 `NORM_RECT` 输入(api2 builder 不引用即不声明)。非 tiled 路径保持现状;不要使用不存在的 `Source::IsConnected()` 伪 API。
+  - 在 `BuildOrientedObjectDetectorTask`(含 AddInference 的函数)开头计算:
 
 ```cpp
     const auto& tiling = task_options.tiling();
@@ -571,15 +591,20 @@ TEST_F(/*同文件既有 fixture*/, TiledGridDetectsShipsOnBoats) {
 非 tiled 路径原封不动包进 `if (!tiling_enabled) { ... 既有代码 ... } else { tiled 分支 }`。tiled 分支:
 
 ```cpp
-    // tiling 与 NORM_RECT/ROI 互斥(v1)。
-    RET_CHECK(!norm_rect_in_connected)  // 依据该函数现有的 norm_rect 入参判断
-        << "tiling and NORM_RECT/ROI are mutually exclusive";
-    // 模型输入维度 [N,H,W,C]:
-    const tflite::Model* model = model_resources.GetTfLiteModel()->GetModel();
+    // 模型输入维度 [N,H,W,C]。本轮 tiled front 只支持 float32 BHWC。
+    // normalization 判据(见 spec §2 预处理事实):float32 + 4D 硬性;
+    // BuildInputImageTensorSpecs(model_resources) 的 normalization_options
+    // 存在且不等价 (mean 0, std 255) -> InvalidArgument;缺失 -> 按 /255
+    // 假设放行(fork 导出脚本不写 normalization metadata;与单图路径对
+    // 此类模型的隐含假设一致)。
+    const tflite::Model* model = model_resources.GetTfLiteModel();
     const tflite::SubGraph* sg = model->subgraphs()->Get(0);
-    const auto* dims = sg->tensors()->Get(sg->inputs()->Get(0))->shape();
+    const auto* input_tensor = sg->tensors()->Get(sg->inputs()->Get(0));
+    const auto* dims = input_tensor->shape();
     RET_CHECK(dims != nullptr && dims->size() == 4)
         << "tiled mode expects a [N,H,W,C] image input tensor";
+    RET_CHECK_EQ(input_tensor->type(), tflite::TensorType_FLOAT32)
+        << "tiled mode currently supports float32 image input only";
 
     auto& to_frame = graph.AddNode("FromImageCalculator");
     image_in >> to_frame.In("IMAGE");        // FromImageCalculator: IMAGE(Image)
@@ -598,6 +623,9 @@ TEST_F(/*同文件既有 fixture*/, TiledGridDetectsShipsOnBoats) {
     }
     fo.set_batch_capacity(dims->Get(0)); fo.set_input_height(dims->Get(1));
     fo.set_input_width(dims->Get(2));    fo.set_input_channels(dims->Get(3));
+    fo.set_is_dynamic_batch(input_tensor->shape_signature() != nullptr &&
+                            input_tensor->shape_signature()->size() > 0 &&
+                            input_tensor->shape_signature()->Get(0) == -1);
     to_frame.Out("IMAGE_CPU") >> front.In("IMAGE");
 
     auto& inference = AddInference(
@@ -617,11 +645,13 @@ TEST_F(/*同文件既有 fixture*/, TiledGridDetectsShipsOnBoats) {
     mo.set_max_detections(task_options.max_results());
     obb_decode.Out(kOrientedDetectionsTag) >> merge.In(kOrientedDetectionsTag);
     front.Out("BATCH_INFO") >> merge.In("BATCH_INFO");
-    // merge 输出(帧归一化)直接接 label_id_to_text(跳过 flatten/NMS/projection
-    // 三个单图节点),其后与既有输出接线相同。
+    // merge 输出 frame-normalized OrientedDetection,直接接 label_id_to_text。
+    // 跳过 flatten/NMS/projection 三个单图节点;public C++ result 的 pixel
+    // conversion 仍由 oriented_object_detector.cc 的
+    // ConvertToOrientedObjectDetectionResult(dets, image_size) 完成。
 ```
 
-(实现者注意:既有单图路径里 `flatten`/`nms`/`projection` 三节点只属于非 tiled 分支;`label_id_to_text` 与输出流两分支共享——把共享尾部提到分支外。)BUILD deps:graph target 加 `//mediapipe/graphs/tiled_detection:tiled_detection_front_graph`、`:tiled_obb_merge_graph`、`//mediapipe/calculators/util:from_image_calculator` 及相应 cc_proto。
+(实现者注意:既有单图路径里 `flatten`/`nms`/`projection` 三节点只属于非 tiled 分支;`label_id_to_text` 可共享,但不要把 YOLO 的 pixel transformation 规则套到 OBB proto 上。tiled 分支的 `output_streams.image` 可直接用原始 `image_in`。)BUILD deps:graph target 加 `//mediapipe/graphs/tiled_detection:tiled_detection_front_graph`、`:tiled_obb_merge_graph`、`//mediapipe/calculators/util:from_image_calculator` 及相应 cc_proto。
 
 - [ ] **Step 4: 删哨兵,跑 e2e GREEN**:`bazel test --define MEDIAPIPE_DISABLE_GPU=1 //mediapipe/tasks/cc/vision/oriented_object_detector:oriented_object_detector_test`。
 - [ ] **Step 5: Commit** `feat(tiling): OrientedObjectDetector tiled branch + real-model e2e`。
@@ -632,11 +662,11 @@ TEST_F(/*同文件既有 fixture*/, TiledGridDetectsShipsOnBoats) {
 
 **Files:**
 - Modify: `mediapipe/tasks/cc/vision/yolo_object_detector/proto/yolo_object_detector_options.proto`(`TilingOptions tiling = 10;`,message 文本与 Task 7 相同——按 spec 原文重抄,勿引用)
-- Modify: `yolo_object_detector.h/.cc`(struct + `ConvertYoloObjectDetectorOptionsToProto`,函数在 .cc:97)
-- Modify: `yolo_object_detector_graph.cc`(tiled 分支:`FromImageCalculator` → FrontGraph → AddInference → 既有 yolo decoder(写入 tile-local NMS 两参)→ `mediapipe.tiled_detection.TiledBoxMergeGraph`(iou/class_agnostic/max_results 透传)→ 既有 label 解析尾部;同样跳过单图路径的 batch-flatten/NMS/projection 节点)
-- Test: `yolo_object_detector_test.cc`(转换器单测 + 真模型 e2e,断言与 Task 8 同构,类别名按该模型 COCO 标签——"boat")
+- Modify: `yolo_object_detector.h/.cc`(struct + `ConvertYoloObjectDetectorOptionsToProto`,函数在 .cc:97;**wrapper 三处改动与 Task 8 同型**:CreateGraphConfig 按 tiling_enabled 分支不声明 NORM_RECT、三个 Detect 变体 packet map 不发 norm_rect、tiling+ROI → InvalidArgument)
+- Modify: `yolo_object_detector_graph.cc`(tiled 分支:`ImagePropertiesCalculator` 取原图 `SIZE`;`FromImageCalculator` → FrontGraph → AddInference → 既有 yolo decoder(写入 tile-local NMS 两参)→ `mediapipe.tiled_detection.TiledBoxMergeGraph`(iou/class_agnostic/max_results 透传)→ 既有 label 解析尾部 → `DetectionTransformationCalculator` 将 frame-normalized `relative_bounding_box` 转为 pixel `bounding_box` → `DetectionsDeduplicateCalculator`;同样跳过单图路径的 batch-flatten/NMS/projection 节点,但不能跳过 pixel transformation/dedup 尾部)
+- Test: `yolo_object_detector_test.cc`(转换器单测 + 真模型 e2e,断言与 Task 8 同构但检查 public `DetectionResult.bounding_box` 为 pixel units,类别名按该模型 COCO 标签——"boat")
 
-步骤同 Task 7+8(失败转换器测试 → 实现 → 失败 e2e 哨兵 → builder → GREEN → Commit)。结构代码与 Task 8 同形,Detection 版差异:merge subgraph 名 `TiledBoxMergeGraph`、流 tag `DETECTIONS`。Commit ×2:`feat(tiling): YoloObjectDetector tiling options + converter`、`feat(tiling): YoloObjectDetector tiled branch + real-model e2e`。
+步骤同 Task 7+8(失败转换器测试 → 实现 → 失败 e2e 哨兵 → builder → GREEN → Commit)。结构代码与 Task 8 同形,Detection 版差异:merge subgraph 名 `TiledBoxMergeGraph`、流 tag `DETECTIONS`;merge 输出是 frame-normalized `RELATIVE_BOUNDING_BOX`,必须用原图 `SIZE` 接 `DetectionTransformationCalculator` 输出 `PIXEL_DETECTIONS`,再接 `DetectionsDeduplicateCalculator` 后作为 graph 输出,以保持 `YoloObjectDetector` 现有 pixel-unit public API。Commit ×2:`feat(tiling): YoloObjectDetector tiling options + converter`、`feat(tiling): YoloObjectDetector tiled branch + real-model e2e`。
 
 ---
 
@@ -663,4 +693,6 @@ bazel test --define MEDIAPIPE_DISABLE_GPU=1 \
 
 - Spec 覆盖:§3.1→Task 1;§3.2→Task 2;§3.3→Task 3-6;§3.4→Task 7-9;§4 错误处理分散在 Task 1(互斥/参数)、Task 8(NORM_RECT、维度 RET_CHECK);§5 测试→各任务 + Task 10。
 - 类型一致性:`TileGridCalculatorOptions.TileRect` 仅定义一次(Task 1),FrontGraph options 整体嵌 `tile_grid`(Task 3),Tasks proto 的 `TilingOptions.TileRect` 是独立嵌套消息(Task 7/9,按 spec 原文)。
-- 已知实现期需就地确认的点(非占位,均给了查证路径):`FromImageCalculator` 输出 tag(`IMAGE_CPU`,见其源文件)、`ModelResources::GetTfLiteModel()` 准确签名(model_resources.h)、检测结果容器字段名(oriented_object_detection_result.h)。
+- 输出单位一致性:merge graph 内部输出 frame-normalized proto;OBB public result 由容器转换成 pixel units;YOLO tiled 分支必须显式接 `DetectionTransformationCalculator` + dedup 后再输出 pixel bbox。
+- NMS 决定:全局 NMS 恒执行、不做 NUM_TILES bypass(tile-local NMS 默认关闭,bypass 会让单显式 tile 配置返回未去重结果;对已去重集合重跑 NMS 是幂等 no-op)。两个 merge subgraph 都有 `SingleTileStillRunsGlobalNms` 测试钉住此决定。
+- 已知实现期需就地确认的点(非占位,均给了查证路径):`FromImageCalculator` 输出 tag(`IMAGE_CPU`,见其源文件)、`ModelResources::GetTfLiteModel()` 准确签名(model_resources.h)、检测结果容器字段名(oriented_object_detection_result.h)、模型 normalization helper 的准确入口(image_tensor_specs/metadata extractor)。
