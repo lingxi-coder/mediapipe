@@ -2570,6 +2570,44 @@ cc_test(
 )
 
 mediapipe_proto_library(
+    name = "tile_grid_calculator_proto",
+    srcs = ["tile_grid_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "tile_grid_calculator",
+    srcs = ["tile_grid_calculator.cc"],
+    deps = [
+        ":tile_grid_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "tile_grid_calculator_test",
+    srcs = ["tile_grid_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":tile_grid_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+mediapipe_proto_library(
     name = "streaming_tiles_to_tensor_batch_calculator_proto",
     srcs = ["streaming_tiles_to_tensor_batch_calculator.proto"],
     deps = [

@@ -1,0 +1,42 @@
+// Copyright 2026 The MediaPipe Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package mediapipe;
+
+import "mediapipe/framework/calculator.proto";
+
+message TileGridCalculatorOptions {
+  extend .mediapipe.CalculatorOptions {
+    optional TileGridCalculatorOptions ext = 471230012;
+  }
+  // Uniform grid: rows x cols tiles, with neighboring tiles overlapping by
+  // overlap_fraction (as a fraction of the tile side length, in [0, 1)).
+  // rows = cols = 1 (the default) emits a single full-frame tile.
+  optional int32 rows = 1 [default = 1];
+  optional int32 cols = 2 [default = 1];
+  optional float overlap_fraction = 3 [default = 0.0];
+
+  // Explicit tile list (frame-normalized center + size). When non-empty, it is
+  // mutually exclusive with the grid params above (setting them as well makes
+  // Open() fail).
+  message TileRect {
+    optional float x_center = 1;
+    optional float y_center = 2;
+    optional float width = 3;
+    optional float height = 4;
+  }
+  repeated TileRect explicit_tiles = 4;
+}
