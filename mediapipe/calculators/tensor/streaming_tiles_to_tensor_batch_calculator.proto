@@ -74,4 +74,17 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // metal_external_input_zero_copy=true). Requires N==1 and C<=4; fails loudly
   // otherwise. Default off => the logical [N,H,W,C] Metal path (unchanged).
   optional bool metal_direct_delegate_input = 11 [default = false];
+
+  // Model-input metadata used when the METADATA side packet is NOT connected
+  // (subgraph use: the graph builder fills these at build time). When both
+  // are provided the side packet wins (a warning is logged).
+  // metadata_is_dynamic_batch mirrors InferenceMetadata 1:1 for subgraph use;
+  // it is equivalent to the top-level dynamic_batch option (OR semantics) and,
+  // like the other metadata_* fields, ignored when the METADATA side packet is
+  // connected.
+  optional int32 metadata_batch_capacity = 12 [default = 0];
+  optional int32 metadata_input_height = 13 [default = 0];
+  optional int32 metadata_input_width = 14 [default = 0];
+  optional int32 metadata_input_channels = 15 [default = 0];
+  optional bool metadata_is_dynamic_batch = 16 [default = false];
 }

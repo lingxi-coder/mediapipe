@@ -19,6 +19,7 @@
 #include <memory>
 #include <vector>
 
+#include "absl/log/absl_log.h"
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.pb.h"
 #include "mediapipe/calculators/tensor/tiling_cache_stats.h"
@@ -96,7 +97,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   // IMAGE_GPU instead; exactly one image input must be present per frame.
   static constexpr Input<ImageFrame>::Optional kInImage{"IMAGE"};
   static constexpr Input<TilePlan> kInPlan{"TILE_PLAN"};
-  static constexpr SideInput<InferenceMetadata> kSideMeta{"METADATA"};
+  static constexpr SideInput<InferenceMetadata>::Optional kSideMeta{"METADATA"};
   static constexpr Output<std::vector<Tensor>> kOutTensors{"TENSORS"};
   static constexpr Output<TensorBatchInfo> kOutInfo{"BATCH_INFO"};
   static constexpr Output<TilingCacheStats>::Optional kOutStats{"CACHE_STATS"};
@@ -129,7 +130,23 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   absl::Status Open(CalculatorContext* cc) override {
     options_ = cc->Options<
         mediapipe::StreamingTilesToTensorBatchCalculatorOptions>();
-    meta_ = kSideMeta(cc).Get();
+    if (kSideMeta(cc).IsConnected()) {
+      meta_ = kSideMeta(cc).Get();
+      if (options_.has_metadata_batch_capacity() ||
+          options_.has_metadata_input_height() ||
+          options_.has_metadata_input_width() ||
+          options_.has_metadata_input_channels() ||
+          options_.has_metadata_is_dynamic_batch()) {
+        ABSL_LOG(WARNING) << "Both METADATA side packet and options-borne "
+                             "metadata set; side packet wins.";
+      }
+    } else {
+      meta_.set_batch_capacity(options_.metadata_batch_capacity());
+      meta_.set_input_height(options_.metadata_input_height());
+      meta_.set_input_width(options_.metadata_input_width());
+      meta_.set_input_channels(options_.metadata_input_channels());
+      meta_.set_is_dynamic_batch(options_.metadata_is_dynamic_batch());
+    }
     RET_CHECK_GT(meta_.input_height(), 0);
     RET_CHECK_GT(meta_.input_width(), 0);
     RET_CHECK_GT(meta_.input_channels(), 0);

@@ -24,12 +24,15 @@
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
+#include "mediapipe/framework/port/gmock.h"
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
 #include "mediapipe/framework/port/status_matchers.h"
 
 namespace mediapipe {
 namespace {
+
+using ::testing::HasSubstr;
 
 InferenceMetadata Meta(int batch_capacity, int h, int w, int c, bool dynamic) {
   InferenceMetadata md;
@@ -492,6 +495,80 @@ TEST(StreamingTilesTest, MissingTilePlanPacketEmitsEmptyFrameInfo) {
   EXPECT_EQ(info.source_frame_timestamp, 7);
   EXPECT_EQ(info.total_batches, 0);
   EXPECT_EQ(info.valid_count, 0);
+}
+
+// Metadata coming from options (METADATA side packet not connected) behaves
+// identically to the side-packet path.
+TEST(StreamingTilesTest, OptionsBorneMetadataWorksWithoutSidePacket) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+    options { [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+      metadata_batch_capacity: 4 metadata_input_height: 8
+      metadata_input_width: 8 metadata_input_channels: 3 } }
+  )pb"));
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(16, 16).release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(TwoTiles()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  ASSERT_EQ(runner.Outputs().Tag("TENSORS").packets.size(), 1u);
+  const auto& tensors =
+      runner.Outputs().Tag("TENSORS").packets[0].Get<std::vector<Tensor>>();
+  EXPECT_EQ(tensors[0].shape().dims[0], 4);  // fixed batch = cap, padded
+  EXPECT_EQ(tensors[0].shape().dims[1], 8);
+  const auto& info =
+      runner.Outputs().Tag("BATCH_INFO").packets[0].Get<TensorBatchInfo>();
+  EXPECT_EQ(info.valid_count, 2);
+}
+
+// Both sources missing -> Open fails (via the existing RET_CHECKs).
+TEST(StreamingTilesTest, MissingMetadataEverywhereFailsOpen) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image" input_stream: "TILE_PLAN:plan"
+    output_stream: "TENSORS:tensors" output_stream: "BATCH_INFO:info"
+  )pb"));
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(16, 16).release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(TwoTiles()).At(Timestamp(0)));
+  absl::Status st = runner.Run();
+  EXPECT_FALSE(st.ok());
+  EXPECT_THAT(st.message(), HasSubstr("input_height"));
+}
+
+// When BOTH the METADATA side packet and options-borne metadata are provided,
+// the side packet wins and the options metadata is ignored (pins existing
+// behavior; a warning is logged).
+TEST(StreamingTilesTest, SidePacketWinsOverOptionsMetadata) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+    options { [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+      metadata_batch_capacity: 2 metadata_input_height: 99
+      metadata_input_width: 99 metadata_input_channels: 3 } }
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(4, 8, 8, 3, /*dynamic=*/false));
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(16, 16).release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(TwoTiles()).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& tpk = runner.Outputs().Tag("TENSORS").packets;
+  ASSERT_EQ(tpk.size(), 1);
+  const auto& tensors = tpk[0].Get<std::vector<Tensor>>();
+  ASSERT_EQ(tensors.size(), 1);
+  EXPECT_EQ(tensors[0].shape().dims[0], 4);  // side packet wins, not 2
+  EXPECT_EQ(tensors[0].shape().dims[1], 8);  // side packet wins, not 99
 }
 
 }  // namespace

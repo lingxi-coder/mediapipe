@@ -2648,6 +2648,7 @@ cc_library(
         "//mediapipe/framework/port:opencv_core",
         "//mediapipe/framework/port:opencv_imgproc",
         "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/status",
     ] + select({
         "//mediapipe/gpu:disable_gpu": [],
