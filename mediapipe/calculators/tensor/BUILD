@@ -3410,6 +3410,31 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "detections_tick_gate_calculator",
+    srcs = ["detections_tick_gate_calculator.cc"],
+    deps = [
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "detections_tick_gate_calculator_test",
+    srcs = ["detections_tick_gate_calculator_test.cc"],
+    deps = [
+        ":detections_tick_gate_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
 cc_test(
     name = "video_tile_scheduler_e2e_test",
     srcs = ["video_tile_scheduler_e2e_test.cc"],
