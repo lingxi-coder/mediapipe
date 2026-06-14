@@ -242,5 +242,76 @@ TEST(TiledFrameSuppressionCalculatorTest, AbsentNumTilesNoBypass) {
   EXPECT_EQ(out.size(), 1u);
 }
 
+// gap-fill: a high-score tracker box overlapping a lower-score fresh box is
+// dropped before NMS, so the FRESH box (its geometry/score) is what survives.
+TEST(TiledFrameSuppressionCalculatorTest, GapFillDropsTrackerBoxOverlappingFresh) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  PushDets(&runner, "DETECTIONS", {Det(0.4f, 0, 0.10f, 0.10f, 0.40f, 0.40f)});
+  PushDets(&runner, "TRACKER_DETECTIONS",
+           {Det(0.95f, 0, 0.11f, 0.11f, 0.40f, 0.40f)});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_NEAR(out[0].score(0), 0.4f, 1e-5);
+}
+
+// gap-fill: a tracker box that does NOT overlap any fresh box is kept.
+TEST(TiledFrameSuppressionCalculatorTest, GapFillKeepsNonOverlappingTrackerBox) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  PushDets(&runner, "DETECTIONS", {Det(0.4f, 0, 0.05f, 0.05f, 0.10f, 0.10f)});
+  PushDets(&runner, "TRACKER_DETECTIONS",
+           {Det(0.8f, 0, 0.70f, 0.70f, 0.10f, 0.10f)});
+  MP_ASSERT_OK(runner.Run());
+  EXPECT_EQ(GetOutput(runner).size(), 2u);
+}
+
+// Default (option absent) keeps today's blind-concatenate behavior: the HIGHER
+// score wins among overlapping boxes.
+TEST(TiledFrameSuppressionCalculatorTest, DefaultConcatenatesTrackerIntoNms) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+      }
+    }
+  )pb"));
+  PushDets(&runner, "DETECTIONS", {Det(0.4f, 0, 0.10f, 0.10f, 0.40f, 0.40f)});
+  PushDets(&runner, "TRACKER_DETECTIONS",
+           {Det(0.95f, 0, 0.11f, 0.11f, 0.40f, 0.40f)});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_NEAR(out[0].score(0), 0.95f, 1e-5);
+}
+
 }  // namespace
 }  // namespace mediapipe

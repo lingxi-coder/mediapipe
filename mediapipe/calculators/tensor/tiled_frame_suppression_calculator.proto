@@ -30,4 +30,9 @@ message TiledFrameSuppressionCalculatorOptions {
   // call when there is nothing cross-source to dedup). Default false = always
   // run global NMS.
   optional bool bypass_single_tile = 3 [default = false];
+  // When true, before the global NMS, drop every TRACKER_DETECTIONS box that
+  // overlaps any fresh DETECTIONS box (IoU >= iou_threshold, honoring
+  // class_agnostic) so fresh detections always win and the tracker only fills
+  // gaps. Default false = today's blind concatenate-then-NMS behavior.
+  optional bool tracker_is_gap_fill_only = 4 [default = false];
 }

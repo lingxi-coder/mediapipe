@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstddef>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -62,7 +63,29 @@ class TiledFrameSuppressionCalculator : public Node {
     std::vector<Detection> combined = std::move(fresh);
     if (tracker_present) {
       const auto& tr = *kInTracker(cc);
-      combined.insert(combined.end(), tr.begin(), tr.end());
+      if (options_.tracker_is_gap_fill_only()) {
+        // Keep only tracker boxes that don't overlap any fresh box. The inner
+        // loop is bounded by the original fresh count so appended tracker boxes
+        // are never treated as "fresh".
+        const size_t fresh_count = combined.size();
+        for (const Detection& t : tr) {
+          bool overlaps = false;
+          for (size_t i = 0; i < fresh_count; ++i) {
+            const Detection& f = combined[i];
+            if (!options_.class_agnostic() && t.label_id_size() > 0 &&
+                f.label_id_size() > 0 && t.label_id(0) != f.label_id(0)) {
+              continue;
+            }
+            if (DetectionRelativeIoU(t, f) >= options_.iou_threshold()) {
+              overlaps = true;
+              break;
+            }
+          }
+          if (!overlaps) combined.push_back(t);
+        }
+      } else {
+        combined.insert(combined.end(), tr.begin(), tr.end());
+      }
     }
     kOut(cc).Send(GreedyDetectionNms(std::move(combined),
                                      options_.iou_threshold(),
