@@ -189,6 +189,14 @@ absl::StatusOr<std::unique_ptr<YoloObjectDetector>> YoloObjectDetector::Create(
         };
   }
   const bool tiling_enabled = TilingEnabled(options_proto->tiling());
+  if (options_proto->tiling().enable_motion_scheduling() &&
+      options->running_mode == core::RunningMode::IMAGE) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling.enable_motion_scheduling requires VIDEO or LIVE_STREAM running "
+        "mode; motion scheduling is meaningless in IMAGE mode.",
+        MediaPipeTasksStatus::kRunnerUnexpectedInputError);
+  }
   auto detector =
       core::VisionTaskApiFactory::Create<YoloObjectDetector,
                                          YoloObjectDetectorOptionsProto>(

@@ -511,6 +511,24 @@ TEST(YoloObjectDetectorTest, TiledRoiAndRotationRejected) {
 }
 
 // ---------------------------------------------------------------------------
+// enable_motion_scheduling requires VIDEO/LIVE_STREAM; IMAGE mode is rejected
+// at Create() (the scheduler is meaningless without temporal continuity).
+// This check fires before model loading, so no model fixture is required.
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTest, MotionSchedulingInImageModeRejected) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = ModelPath();
+  options->running_mode = core::RunningMode::IMAGE;
+  options->num_classes = 80;
+  options->tiling.tile_cols = 2;
+  options->tiling.enable_motion_scheduling = true;
+  auto detector = YoloObjectDetector::Create(std::move(options));
+  EXPECT_EQ(detector.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(detector.status().message(),
+              testing::HasSubstr("motion scheduling"));
+}
+
+// ---------------------------------------------------------------------------
 // Explicit tiles + a nonzero tile_overlap_fraction is rejected at graph build
 // (overlap only applies to grid mode; silently ignoring it would mislead).
 // ---------------------------------------------------------------------------

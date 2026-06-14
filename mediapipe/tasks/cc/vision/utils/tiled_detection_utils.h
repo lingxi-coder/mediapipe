@@ -44,6 +44,14 @@ bool TilingEnabled(const TilingProto& t) {
   return t.tile_rows() * t.tile_cols() > 1 || t.explicit_tiles_size() > 0;
 }
 
+// Returns true when motion scheduling should be active: scheduling is opted in
+// AND tiling is enabled. (Running-mode gating — VIDEO/LIVE_STREAM only — is
+// enforced separately at the wrapper's Create(), where running_mode lives.)
+template <typename TilingProto>
+bool SchedulingEnabled(const TilingProto& t) {
+  return t.enable_motion_scheduling() && TilingEnabled(t);
+}
+
 // Validates the model input tensor for the tiled front and returns its
 // [N,H,W,C] shape dims. The tiled front supports float32 BHWC only.
 // Normalization criterion (spec §2): float32 + 4D are hard requirements; if
