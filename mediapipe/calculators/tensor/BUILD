@@ -3367,6 +3367,49 @@ cc_test(
     ],
 )
 
+# ---------------------------------------------------------------------------
+# detection_label_id_codec_calculator: label_id <-> string round-trip for
+# optical-flow tracker integration.
+# ---------------------------------------------------------------------------
+
+mediapipe_proto_library(
+    name = "detection_label_id_codec_calculator_proto",
+    srcs = ["detection_label_id_codec_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "detection_label_id_codec_calculator",
+    srcs = ["detection_label_id_codec_calculator.cc"],
+    deps = [
+        ":detection_label_id_codec_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "detection_label_id_codec_calculator_test",
+    srcs = ["detection_label_id_codec_calculator_test.cc"],
+    deps = [
+        ":detection_label_id_codec_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
 cc_test(
     name = "video_tile_scheduler_e2e_test",
     srcs = ["video_tile_scheduler_e2e_test.cc"],
