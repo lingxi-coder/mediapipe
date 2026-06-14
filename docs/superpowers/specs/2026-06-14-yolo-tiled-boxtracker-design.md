@@ -125,8 +125,11 @@ pixel/label tail, so no pixel conversion happens at the tracker.
     `score` untouched.
   - **DECODE:** for each Detection, `SimpleAtoi(label(i)) → label_id[i]` and clear the
     synthetic `label` (so the downstream `DetectionLabelIdToText` tail sees uniform `label_id`
-    and no stray text). A label that fails to parse is dropped from that detection (logged
-    once); a detection left with no `label_id` still passes `class_agnostic` NMS on `score`.
+    and no stray text). **If a Detection ends up with no parseable `label_id` (parse failure or
+    an empty `label` set), the whole Detection is dropped (logged once)** — a categoryless box
+    must never reach the public API, where `ConvertToDetection` would emit category index `-1`
+    / empty name (`detection_result.cc:29`). This is the "fail safe, not loud-junk" choice
+    Codex [P2] asked for.
   - Emit at the input timestamp (default offset 0). Stateless — no map, no TTL.
 - **Options proto:** `DetectionLabelIdCodecCalculatorOptions` with
   `extend mediapipe.CalculatorOptions { optional DetectionLabelIdCodecCalculatorOptions ext =
@@ -140,13 +143,28 @@ pixel/label tail, so no pixel conversion happens at the tracker.
 - **Location:** `mediapipe/graphs/tiled_detection/tiled_tracking_graph.cc`
 - **IO:** `Input IMAGE: ImageFrame`, `Input DETECTIONS: std::vector<Detection>` (merged_fresh,
   carries `label_id`+`score`) → `Output TRACKER_DETECTIONS: std::vector<Detection>` (carries
-  `label_id`). The `label_id` codec is fully internal, so the external contract is `label_id`
-  in / `label_id` out.
+  `label_id`, **exactly one packet per source frame, empty when the tracker produced nothing**).
+  The `label_id` codec is fully internal, so the external contract is `label_id` in /
+  `label_id` out.
 - **Internals:** `DetectionLabelIdCodecCalculator[ENCODE]`(DETECTIONS) →
   `ObjectTrackingSubgraphCpu`(VIDEO=IMAGE, DETECTIONS=encoded) → tracked →
-  `DetectionLabelIdCodecCalculator[DECODE]` → TRACKER_DETECTIONS.
+  `DetectionLabelIdCodecCalculator[DECODE]` → `DetectionsTickGateCalculator`(TICK=DETECTIONS,
+  DATA=decoded) → TRACKER_DETECTIONS.
+- **Why the tick gate (Codex [P1#2]):** `TrackedDetectionManagerCalculator` emits a
+  `DETECTIONS` packet **only inside** the non-empty `TRACKING_BOXES` branch
+  (`tracked_detection_manager_calculator.cc:208`), so the tracker stream has gaps (first
+  frames before optical flow exists, no-track frames). `TRACKER_DETECTIONS` is a synchronized
+  optional input of `TiledFrameSuppression`, so an un-materialized gap can stall or add
+  unbounded latency to `DetectForVideo` / `DetectAsync`. The new
+  `DetectionsTickGateCalculator` (small, stateless) is clocked by the `DETECTIONS` stream
+  (1:1 with source frames) and emits the decoded tracker vector at each tick if present, else
+  an **empty** `std::vector<Detection>` — guaranteeing one aligned packet per source frame.
+  No off-the-shelf calculator does "empty-default on tick gap" (`PacketClonerCalculator`
+  repeats the *previous* packet, which would resurrect stale boxes), hence a dedicated unit.
+  Location `mediapipe/calculators/tensor/detections_tick_gate_calculator.cc`.
 - **Responsibility:** "given frames + fresh detections, produce class-carrying
-  tracker-propagated detections." Single purpose; independently testable; reusable by B.
+  tracker-propagated detections, one packet per source frame." Single purpose; independently
+  testable; reusable by B.
 - **Options:** none in v1 — tracker/manager knobs come from `ObjectTrackingSubgraphCpu`
   defaults (incl. its 320×240 motion-analysis downscale). Parameterizing is a follow-up.
 
@@ -159,13 +177,32 @@ pixel/label tail, so no pixel conversion happens at the tracker.
   std::vector<Detection>` (final, frame-normalized).
 - **Internals:** `MergeTileBoxDetectionsAccumulator` → `merged_fresh`, which fans out to
   `TiledTrackingGraph`(IMAGE, merged_fresh) → `tracker_dets` and to
-  `TiledFrameSuppression(DETECTIONS=merged_fresh, TRACKER_DETECTIONS=tracker_dets)` →
-  optional `ClipDetectionVectorSize`.
+  `TiledFrameSuppression(DETECTIONS=merged_fresh, TRACKER_DETECTIONS=tracker_dets,
+  tracker_is_gap_fill_only=true)` → optional `ClipDetectionVectorSize`.
 - **Options:** reuse the existing `TiledBoxMergeGraphOptions` message (`iou_threshold`,
   `class_agnostic`, `max_detections`) — same suppression knobs; `class_agnostic` stays
   `true` for the single-path YOLO NMS. `max_detections == 0` rejected at init (mirror
   `TiledBoxMergeGraph`).
 - **`TiledBoxMergeGraph` (non-tracking / IMAGE path) is unchanged.**
+
+### 3b. `TiledFrameSuppressionCalculator` change — fresh-wins fusion (Codex [P1#1])
+
+- **Why:** `GreedyDetectionNms` sorts purely by `score(0)` (`detection_nms_util.cc:57`), and a
+  tracker box's score is a **historical max** (`tracked_detection.cc:90`,
+  `MergeLabelScore` `:131`). The manager prefers fresh geometry for *associated* objects
+  (`tracked_detection_manager.cc:59`), but on an association miss a stale, high-historical-score
+  tracker box could outrank — and thus suppress — a correct lower-score fresh box, yielding
+  stale geometry or a duplicate. Today the calculator blindly concatenates fresh + tracker
+  before one NMS.
+- **Change:** add `optional bool tracker_is_gap_fill_only = 4 [default = false];` to
+  `TiledFrameSuppressionCalculatorOptions` (field 4 is next free after 1-3; **default `false` ⇒ byte-identical
+  to today**, so the IMAGE `TiledBoxMergeGraph` path and all existing tests are unaffected).
+  When `true`, before the global NMS, **drop every `TRACKER_DETECTIONS` box that overlaps any
+  `DETECTIONS` (fresh) box** (IoU ≥ `iou_threshold`, honoring `class_agnostic`). Fresh always
+  wins where it exists; the tracker contributes only genuine gap-fills. `TiledBoxTrackMergeGraph`
+  sets it `true`.
+- This lives in the calculator whose sole job is fresh+tracker fusion — no new calculator, no
+  score-decay magic number.
 
 ### 4. `YoloObjectDetectorGraph` change
 
@@ -197,43 +234,57 @@ pixel/label tail, so no pixel conversion happens at the tracker.
 
 ## Error handling / degenerate cases
 
-- First frame (no prior flow) / empty fresh detections / empty track set → `TiledTrackingGraph`
-  emits an empty vector → `TiledFrameSuppression` degrades to fresh-only (empty in/empty out).
-- A tracked box whose `label` fails to parse under DECODE keeps no `label_id`; `class_agnostic`
-  NMS still suppresses it on `score`, and (rare) it survives without a category — acceptable,
-  logged at most once.
-- The codec is stateless; all cross-frame state lives in `TrackedDetectionManager` (which
-  already expires tracks after its own timeout and emits `CANCEL_OBJECT_ID`).
+- First frame (no prior flow) / empty fresh detections / empty track set → the
+  `DetectionsTickGateCalculator` still emits an **empty** `TRACKER_DETECTIONS` at the source
+  timestamp, so `TiledFrameSuppression` runs on time and degrades to fresh-only. No stall.
+- A tracked box that cannot be assigned a `label_id` under DECODE is **dropped entirely** (not
+  passed on label-less), so no category `-1` reaches the public API.
+- With `tracker_is_gap_fill_only=true`, a tracker box overlapping a fresh box is dropped pre-NMS;
+  fresh geometry/score always wins, tracker fills only gaps.
+- The codec and tick gate are effectively stateless w.r.t. detection identity; all cross-frame
+  tracking state lives in `TrackedDetectionManager` (which already expires tracks after its own
+  timeout and emits `CANCEL_OBJECT_ID`).
 
 ## Testing strategy (TDD, red→green, English test names/comments)
 
 1. **`DetectionLabelIdCodecCalculator` unit test** (`CalculatorRunner`): ENCODE writes
    `label[i] = str(label_id[i])` and leaves `score`/geometry intact; DECODE round-trips
    `ENCODE`'d input back to the original `label_id` with the synthetic `label` cleared; a
-   non-numeric `label` under DECODE is dropped and logged (the detection survives without that
-   `label_id`).
+   Detection whose `label` is non-numeric or empty is **dropped entirely** (logged once) — no
+   label-less Detection is emitted (Codex [P2]).
+1b. **`DetectionsTickGateCalculator` unit test:** a tick with a present DATA packet forwards it;
+   a tick with no DATA at that timestamp emits an **empty** `std::vector<Detection>`; output
+   timestamp equals the tick timestamp.
+1c. **`TiledFrameSuppressionCalculator` fresh-wins test:** with `tracker_is_gap_fill_only=true`,
+   a high-score tracker box overlapping a lower-score fresh box is dropped (fresh kept); a
+   non-overlapping tracker box survives (gap fill). With the option `false` (default), behavior
+   is byte-identical to today (regression guard for the IMAGE path).
 2. **`TiledTrackingGraph` graph test:** synthetic ImageFrame sequence + fresh detections →
-   asserts tracked output carries the round-tripped `label_id` (not a stray string `label`)
-   and persists an object across frames.
+   asserts tracked output carries the round-tripped `label_id` (not a stray string `label`),
+   persists an object across frames, and emits **exactly one packet per source frame including
+   the first (empty) frame** (no stall).
 3. **`TiledBoxTrackMergeGraph` graph test:** drive per-batch detections where a fresh
    detection is present at frame T and **absent** at frame T+1 → assert the object still
-   appears at T+1 via the tracker path (the core "tracker fills the gap" behavior), and that
-   the fresh+tracker fusion is deduped by the single global NMS.
+   appears at T+1 via the tracker path (the core "tracker fills the gap" behavior), the
+   fresh+tracker fusion is deduped by the single global NMS, and a fresh box at T+1 overrides
+   an overlapping stale tracker box (fresh-wins).
 4. **Public `YoloObjectDetector.DetectForVideo` e2e:** generate a deterministic video by
    translating `boats.jpg` a few pixels per frame for ~10 frames (real, trackable motion);
    run with tiling + `RunningMode::VIDEO`; assert temporal persistence / track-stable boat
    detections across frames (output in pixel units, as the IMAGE-mode tiled e2e already
    asserts).
 
-All four must fail first (red) before implementation.
+All of the above must fail first (red) before implementation.
 
 ## Build / dependency notes
 
 - `MotionAnalysis` / `BoxTracker` / `FlowPackager` pull in additional OpenCV. `calib3d`
   (`libopencv_calib3d.dylib`) is already added to `third_party/opencv_macos.BUILD`; any
   further missing dylib will surface at the red-test link step and is added there.
-- New BUILD targets: the calculator (+ its `_cc_proto`), the two subgraphs, and their tests.
-  The tracking subgraph depends on `ObjectTrackingSubgraphCpu`'s target and the constituent
+- New BUILD targets: two calculators — `DetectionLabelIdCodecCalculator` (+ its `_cc_proto`)
+  and `DetectionsTickGateCalculator` — the two subgraphs, and their tests; plus a one-field
+  proto bump to `tiled_frame_suppression_calculator.proto` (`tracker_is_gap_fill_only`). The
+  tracking subgraph depends on `ObjectTrackingSubgraphCpu`'s target and the constituent
   video-tracking calculators.
 - Verifiable locally on desktop C++ only (`--define MEDIAPIPE_DISABLE_GPU=1`), per the fork's
   build constraints.
