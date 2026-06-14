@@ -33,9 +33,13 @@ limitations under the License.
 
 #include "mediapipe/framework/deps/file_path.h"
 #include "mediapipe/framework/formats/image.h"
+#include "mediapipe/framework/formats/image_frame.h"
+#include "mediapipe/framework/formats/image_frame_opencv.h"
 #include "mediapipe/framework/port/file_helpers.h"
 #include "mediapipe/framework/port/gmock.h"
 #include "mediapipe/framework/port/gtest.h"
+#include "mediapipe/framework/port/opencv_core_inc.h"
+#include "mediapipe/framework/port/opencv_imgproc_inc.h"
 #include "mediapipe/framework/port/status_matchers.h"
 #include "mediapipe/tasks/cc/components/containers/detection_result.h"
 #include "mediapipe/tasks/cc/vision/utils/image_utils.h"
@@ -75,6 +79,20 @@ std::string ModelPath() {
 // Returns the absolute path to the test input image.
 std::string ImagePath() {
   return JoinPath("./", kTestDataDirectory, kTestImage);
+}
+
+// Translates `src` by (dx, dy) pixels (border replicated), returning a new
+// SRGB Image. Produces real, trackable motion for the optical-flow tracker.
+Image TranslateImage(const Image& src, int dx, int dy) {
+  cv::Mat in = mediapipe::formats::MatView(src.GetImageFrameSharedPtr().get());
+  cv::Mat shifted;
+  cv::Mat m = (cv::Mat_<double>(2, 3) << 1, 0, dx, 0, 1, dy);
+  cv::warpAffine(in, shifted, m, in.size(), cv::INTER_LINEAR,
+                 cv::BORDER_REPLICATE);
+  cv::Mat out = shifted.clone();  // own the buffer
+  mediapipe::ImageFrame frame(mediapipe::ImageFormat::SRGB, out.cols, out.rows,
+                              out.step, out.data, [out](uint8_t[]) {});
+  return Image(std::make_shared<mediapipe::ImageFrame>(std::move(frame)));
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +408,52 @@ TEST(YoloObjectDetectorTest, TiledGridDetectsBoatsOnBoats) {
   const int n_tiled = result.detections.size();
   EXPECT_GE(n_tiled, n_single - 1);
   EXPECT_LE(n_tiled, n_single + 3);
+}
+
+// Tiled VIDEO mode with the BoxTracker: pan boats.jpg a few px/frame so the
+// optical-flow tracker has real motion to follow, and assert boat detections
+// persist across frames (temporal recall), not just on the first frame.
+TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWhilePanning) {
+  const std::string model_path = ModelPath();
+  const std::string image_path = JoinPath("./", kTestDataDirectory, kBoatsImage);
+  if (!mediapipe::file::Exists(model_path).ok() ||
+      !mediapipe::file::Exists(image_path).ok()) {
+    GTEST_SKIP() << "YOLO model or boats.jpg fixture not available.";
+  }
+
+  MP_ASSERT_OK_AND_ASSIGN(Image base_image, DecodeImageFromFile(image_path));
+
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::VIDEO;
+  options->max_results = 10;
+  options->num_classes = 80;
+  options->score_threshold = 0.09f;
+  options->iou_threshold = 0.45f;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+
+  int frames_with_boat = 0;
+  const int kFrames = 8;
+  for (int i = 0; i < kFrames; ++i) {
+    Image frame = TranslateImage(base_image, /*dx=*/2 * i, /*dy=*/0);
+    MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
+                            detector->DetectForVideo(frame, /*timestamp_ms=*/i));
+    for (const auto& d : result.detections) {
+      ASSERT_EQ(d.categories.size(), 1u);
+      if (d.categories[0].index == 8) {
+        ++frames_with_boat;
+        break;
+      }
+    }
+  }
+  MP_ASSERT_OK(detector->Close());
+
+  EXPECT_GE(frames_with_boat, kFrames / 2)
+      << "expected boats tracked across most panning frames";
 }
 
 // ---------------------------------------------------------------------------
