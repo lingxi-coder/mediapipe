@@ -122,6 +122,13 @@ TEST(YoloObjectDetectorOptionsTest, TilingOptionsConvertToProto) {
   EXPECT_NEAR(proto->tiling().explicit_tiles(0).height(), 0.6f, 1e-6);
   EXPECT_NEAR(proto->tiling().tile_local_nms_iou_threshold(), 0.5f, 1e-6);
   EXPECT_EQ(proto->tiling().max_detections_after_tile_nms(), 50);
+
+  // Sub-project B: motion-scheduling fields round-trip through the converter.
+  options->tiling.enable_motion_scheduling = true;
+  options->tiling.max_scheduled_tiles = 4;
+  auto proto2 = ConvertYoloObjectDetectorOptionsToProto(options.get());
+  EXPECT_TRUE(proto2->tiling().enable_motion_scheduling());
+  EXPECT_EQ(proto2->tiling().max_scheduled_tiles(), 4);
 }
 
 // ---------------------------------------------------------------------------

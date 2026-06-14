@@ -147,6 +147,8 @@ ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options) {
       options->tiling.tile_local_nms_iou_threshold);
   tiling->set_max_detections_after_tile_nms(
       options->tiling.max_detections_after_tile_nms);
+  tiling->set_enable_motion_scheduling(options->tiling.enable_motion_scheduling);
+  tiling->set_max_scheduled_tiles(options->tiling.max_scheduled_tiles);
   return options_proto;
 }
 

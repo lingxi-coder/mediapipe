@@ -88,6 +88,13 @@ message YoloObjectDetectorOptions {
     optional float tile_local_nms_iou_threshold = 5 [default = 0.0];
     // Per-tile cap after tile-local NMS; <= 0 disables.
     optional int32 max_detections_after_tile_nms = 6 [default = 0];
+    // VIDEO/LIVE_STREAM only: gate per-frame tiled inference with a motion
+    // scheduler; low-motion (near-duplicate) frames SKIP inference and the
+    // BoxTracker fills them. Rejected in IMAGE mode.
+    optional bool enable_motion_scheduling = 7 [default = false];
+    // When scheduling, cap how many tiles are inferred per DETECT frame
+    // (motion-prioritized). 0 = uncapped (all tiles).
+    optional int32 max_scheduled_tiles = 8 [default = 0];
   }
   optional TilingOptions tiling = 10;
 }

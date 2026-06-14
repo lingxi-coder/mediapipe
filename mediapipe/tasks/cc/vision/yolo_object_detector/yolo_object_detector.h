@@ -121,6 +121,11 @@ struct YoloObjectDetectorOptions {
     float tile_local_nms_iou_threshold = 0.0f;
     // Per-tile cap after tile-local NMS; <= 0 disables.
     int max_detections_after_tile_nms = 0;
+    // VIDEO/LIVE_STREAM only: gate per-frame tiled inference with a motion
+    // scheduler (near-duplicate frames SKIP; the tracker fills them).
+    bool enable_motion_scheduling = false;
+    // Per DETECT-frame cap on inferred tiles (motion-prioritized). 0 = all.
+    int max_scheduled_tiles = 0;
   };
   TilingOptions tiling;
 
