@@ -379,8 +379,17 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
 
       // Tile + batch front: IMAGE -> TENSORS (one packet per batch, synthetic
       // timestamps) + BATCH_INFO (per-batch tile geometry / source timestamp).
-      auto& front =
-          graph.AddNode("mediapipe.tiled_detection.TiledDetectionFrontGraph");
+      // Stream mode + opted-in motion scheduling -> the scheduler-bearing
+      // stream front (it runs its own optical-flow pass and consumes a
+      // PRIOR_DETECTIONS loopback); otherwise the plain front. Both read the
+      // same TiledDetectionFrontGraphOptions.
+      const bool scheduling_enabled =
+          task_options.base_options().use_stream_mode() &&
+          ::mediapipe::tasks::vision::SchedulingEnabled(tiling);
+      auto& front = graph.AddNode(
+          scheduling_enabled
+              ? "mediapipe.tiled_detection.TiledDetectionStreamFrontGraph"
+              : "mediapipe.tiled_detection.TiledDetectionFrontGraph");
       auto& fo =
           front.GetOptions<::mediapipe::TiledDetectionFrontGraphOptions>();
       auto* tg = fo.mutable_tile_grid();
@@ -404,6 +413,20 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       fo.set_input_width(dims.width);
       fo.set_input_channels(dims.channels);
       to_frame.Out(kImageCpuTag) >> front.In(kImageTag);
+
+      // The scheduler needs the previous frame's merged detections as
+      // PRIOR_DETECTIONS; PreviousLoopbackCalculator emits an empty packet on
+      // frame 0 (-> first frame DETECTs). The LOOP back edge is closed after
+      // merged_dets is produced, below.
+      ::mediapipe::api2::builder::GenericNode* scheduler_loopback = nullptr;
+      if (scheduling_enabled) {
+        fo.set_max_scheduled_tiles(tiling.max_scheduled_tiles());
+        auto& lb = graph.AddNode("PreviousLoopbackCalculator");
+        image_in >> lb.In("MAIN");
+        lb.Out("PREV_LOOP").Cast<std::vector<Detection>>() >>
+            front.In("PRIOR_DETECTIONS");
+        scheduler_loopback = &lb;
+      }
 
       auto& inference = AddInference(
           model_resources, task_options.base_options().acceleration(), graph);
@@ -465,6 +488,12 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       // original-image space — no projection needed): label mapping, then
       // pixel-unit transformation, then dedup, mirroring the single path's
       // public output contract.
+      // Close the scheduler's PRIOR_DETECTIONS loopback with this frame's
+      // merged (frame-normalized, post-fusion) detections.
+      if (scheduler_loopback != nullptr) {
+        *merged_dets >> scheduler_loopback->In("LOOP").AsBackEdge();
+      }
+
       auto& label_id_to_text =
           graph.AddNode("DetectionLabelIdToTextCalculator");
       configure_label_id_to_text(label_id_to_text);
