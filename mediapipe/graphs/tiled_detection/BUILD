@@ -14,6 +14,10 @@
 #
 
 load("//mediapipe/framework/port:build_config.bzl", "mediapipe_proto_library")
+load(
+    "//mediapipe/framework/tool:mediapipe_graph.bzl",
+    "mediapipe_simple_subgraph",
+)
 
 licenses(["notice"])
 
@@ -164,6 +168,33 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+mediapipe_simple_subgraph(
+    name = "optical_flow_tracking_graph",
+    graph = "optical_flow_tracking_graph.pbtxt",
+    register_as = "OpticalFlowTrackingGraph",
+    deps = [
+        "//mediapipe/calculators/image:image_transformation_calculator",
+        "//mediapipe/calculators/video:flow_packager_calculator",
+        "//mediapipe/calculators/video:motion_analysis_calculator",
+    ],
+)
+
+cc_test(
+    name = "tiled_video_scheduler_graphs_test",
+    size = "medium",
+    srcs = ["tiled_video_scheduler_graphs_test.cc"],
+    deps = [
+        ":optical_flow_tracking_graph",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+        "//mediapipe/util/tracking:tracking",
         "@com_google_absl//absl/status",
     ],
 )
