@@ -50,6 +50,22 @@ cc_library(
             # util/tracking (MotionBox PnP homography) needs solvePnP/
             # projectPoints/undistortPoints/Rodrigues from calib3d.
             paths.join(PREFIX, "lib/libopencv_calib3d.dylib"),
+            # util/tracking optical-flow (RegionFlowComputation) needs
+            # calcOpticalFlowPyrLK / buildOpticalFlowPyramid from video and
+            # FastFeatureDetector from features2d.
+            # Use the static archives (.a) instead of .dylib here: the dylib
+            # variants transitively load libopencv_dnn, which loads the
+            # Homebrew libprotobuf.34 dylib and causes a protobuf ODR crash
+            # against the statically-linked protobuf that Bazel embeds in test
+            # binaries. The .a archives contain only cv:: symbols and standard-
+            # library references — no protobuf chain.
+            paths.join(PREFIX, "lib/libopencv_video.a"),
+            paths.join(PREFIX, "lib/libopencv_features2d.a"),
+            # kleidicv HAL + thread are required transitive deps of the static
+            # video archive (provides NEON-optimised Scharr derivatives on arm64).
+            paths.join(PREFIX, "lib/libkleidicv.a"),
+            paths.join(PREFIX, "lib/libkleidicv_hal.a"),
+            paths.join(PREFIX, "lib/libkleidicv_thread.a"),
         ],
     ),
     hdrs = glob([paths.join(PREFIX, "include/opencv4/opencv2/**/*.h*")]),
