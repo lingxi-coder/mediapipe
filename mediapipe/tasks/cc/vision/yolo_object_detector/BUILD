@@ -74,6 +74,7 @@ cc_library(
         "//mediapipe/framework/formats:rect_cc_proto",
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/graphs/tiled_detection:tiled_box_merge_graph",
+        "//mediapipe/graphs/tiled_detection:tiled_box_track_merge_graph",
         "//mediapipe/graphs/tiled_detection:tiled_detection_front_graph",
         "//mediapipe/graphs/tiled_detection:tiled_detection_graphs_cc_proto",
         "//mediapipe/tasks/cc:common",

@@ -430,14 +430,36 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       // default false) suppresses jointly across ALL classes, so mirror that
       // semantic with class_agnostic=true (the task options expose no
       // class_agnostic knob).
-      auto& merge =
-          graph.AddNode("mediapipe.tiled_detection.TiledBoxMergeGraph");
-      auto& mo = merge.GetOptions<::mediapipe::TiledBoxMergeGraphOptions>();
-      mo.set_iou_threshold(task_options.iou_threshold());
-      mo.set_class_agnostic(true);
-      mo.set_max_detections(task_options.max_results());
-      yolo_decode.Out(kDetectionsTag) >> merge.In(kDetectionsTag);
-      front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
+      //
+      // In stream mode (VIDEO / LIVE_STREAM) fuse the merged tile detections
+      // with optical-flow tracker-propagated boxes via the TRACKER_DETECTIONS
+      // seam; in IMAGE mode keep the stateless merge. Both emit one packet per
+      // source frame on DETECTIONS.
+      std::optional<Source<std::vector<Detection>>> merged_dets;
+      if (task_options.base_options().use_stream_mode()) {
+        auto& merge = graph.AddNode(
+            "mediapipe.tiled_detection.TiledBoxTrackMergeGraph");
+        auto& mo = merge.GetOptions<::mediapipe::TiledBoxMergeGraphOptions>();
+        mo.set_iou_threshold(task_options.iou_threshold());
+        mo.set_class_agnostic(true);
+        mo.set_max_detections(task_options.max_results());
+        yolo_decode.Out(kDetectionsTag) >> merge.In(kDetectionsTag);
+        front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
+        // The tracker needs the source video frame; reuse the ImageFrame the
+        // tiled front already consumes (to_frame's IMAGE_CPU output).
+        to_frame.Out(kImageCpuTag) >> merge.In(kImageTag);
+        merged_dets = merge.Out(kDetectionsTag).Cast<std::vector<Detection>>();
+      } else {
+        auto& merge =
+            graph.AddNode("mediapipe.tiled_detection.TiledBoxMergeGraph");
+        auto& mo = merge.GetOptions<::mediapipe::TiledBoxMergeGraphOptions>();
+        mo.set_iou_threshold(task_options.iou_threshold());
+        mo.set_class_agnostic(true);
+        mo.set_max_detections(task_options.max_results());
+        yolo_decode.Out(kDetectionsTag) >> merge.In(kDetectionsTag);
+        front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
+        merged_dets = merge.Out(kDetectionsTag).Cast<std::vector<Detection>>();
+      }
 
       // Merge output is frame-normalized RELATIVE_BOUNDING_BOX (already in
       // original-image space — no projection needed): label mapping, then
@@ -446,7 +468,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       auto& label_id_to_text =
           graph.AddNode("DetectionLabelIdToTextCalculator");
       configure_label_id_to_text(label_id_to_text);
-      merge.Out(kDetectionsTag) >> label_id_to_text.In("");
+      *merged_dets >> label_id_to_text.In("");
 
       // The tiled path has no preprocessing node to provide IMAGE_SIZE, so
       // derive it from the ORIGINAL input image.
