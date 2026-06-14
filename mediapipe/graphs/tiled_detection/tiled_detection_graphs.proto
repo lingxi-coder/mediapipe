@@ -35,6 +35,8 @@ message TiledDetectionFrontGraphOptions {
   optional int32 input_width = 4 [default = 0];
   optional int32 input_channels = 5 [default = 0];
   optional bool is_dynamic_batch = 6 [default = false];
+  // Stream-front only: forwarded to VideoTileSchedulerCalculator.max_scheduled_tiles.
+  optional int32 max_scheduled_tiles = 7 [default = 0];
 }
 
 // Options for the tiled OBB (oriented bounding box) merge subgraph: merges
