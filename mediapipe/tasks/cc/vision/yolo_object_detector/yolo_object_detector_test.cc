@@ -557,6 +557,98 @@ TEST(YoloObjectDetectorTest, TiledExplicitTilesWithOverlapRejected) {
               testing::HasSubstr("tile_overlap_fraction"));
 }
 
+// Tiled VIDEO with motion scheduling ON: panning boats. The cyclic
+// scheduler<-loopback graph must run to completion (no deadlock) and boats
+// must persist across frames (DETECT frames detect; SKIP frames are filled by
+// the tracker).
+TEST(YoloObjectDetectorTest, TiledVideoSchedulingPanningKeepsBoats) {
+  const std::string model_path = ModelPath();
+  const std::string image_path = JoinPath("./", kTestDataDirectory, kBoatsImage);
+  if (!mediapipe::file::Exists(model_path).ok() ||
+      !mediapipe::file::Exists(image_path).ok()) {
+    GTEST_SKIP() << "YOLO model or boats.jpg fixture not available.";
+  }
+  MP_ASSERT_OK_AND_ASSIGN(Image base_image, DecodeImageFromFile(image_path));
+
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::VIDEO;
+  options->max_results = 10;
+  options->num_classes = 80;
+  options->score_threshold = 0.09f;
+  options->iou_threshold = 0.45f;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  options->tiling.enable_motion_scheduling = true;
+
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+
+  int frames_with_boat = 0;
+  const int kFrames = 8;
+  for (int i = 0; i < kFrames; ++i) {
+    Image frame = TranslateImage(base_image, /*dx=*/2 * i, /*dy=*/0);
+    MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
+                            detector->DetectForVideo(frame, /*timestamp_ms=*/i));
+    for (const auto& d : result.detections) {
+      ASSERT_EQ(d.categories.size(), 1u);
+      if (d.categories[0].index == 8) {
+        ++frames_with_boat;
+        break;
+      }
+    }
+  }
+  MP_ASSERT_OK(detector->Close());
+  EXPECT_GE(frames_with_boat, kFrames / 2)
+      << "boats should persist across most frames with scheduling on";
+}
+
+// SKIP -> tracker-fill at the public level: after a first DETECT frame, feed
+// IDENTICAL frames (zero motion). Each DetectForVideo call returns that frame's
+// result synchronously; boats must still be present (the tracker fills any
+// SKIPped frame). The deterministic "inference actually skipped" proof is the
+// graph-level video_tile_scheduler_pipeline_test.
+TEST(YoloObjectDetectorTest, TiledVideoSchedulingStaticFramesKeepBoats) {
+  const std::string model_path = ModelPath();
+  const std::string image_path = JoinPath("./", kTestDataDirectory, kBoatsImage);
+  if (!mediapipe::file::Exists(model_path).ok() ||
+      !mediapipe::file::Exists(image_path).ok()) {
+    GTEST_SKIP() << "YOLO model or boats.jpg fixture not available.";
+  }
+  MP_ASSERT_OK_AND_ASSIGN(Image base_image, DecodeImageFromFile(image_path));
+
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::VIDEO;
+  options->max_results = 10;
+  options->num_classes = 80;
+  options->score_threshold = 0.09f;
+  options->iou_threshold = 0.45f;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  options->tiling.enable_motion_scheduling = true;
+
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+
+  const int kFrames = 6;
+  int frames_with_boat = 0;
+  for (int i = 0; i < kFrames; ++i) {
+    Image frame = TranslateImage(base_image, /*dx=*/0, /*dy=*/0);  // identical
+    MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
+                            detector->DetectForVideo(frame, /*timestamp_ms=*/i));
+    for (const auto& d : result.detections) {
+      if (!d.categories.empty() && d.categories[0].index == 8) {
+        ++frames_with_boat;
+        break;
+      }
+    }
+  }
+  MP_ASSERT_OK(detector->Close());
+  EXPECT_GE(frames_with_boat, kFrames - 1)
+      << "tracker should keep boats present across static (SKIPped) frames";
+}
+
 }  // namespace
 }  // namespace yolo_object_detector
 }  // namespace vision
