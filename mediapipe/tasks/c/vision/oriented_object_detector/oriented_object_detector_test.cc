@@ -142,6 +142,61 @@ TEST(OrientedObjectDetectorCApiTest, ImageMode) {
   MpOrientedObjectDetectorCloseResult(&result);
 }
 
+// Runs OBB detection with a 2x2 tiling grid on boats.jpg. The yolo_obb_test_model
+// fixture is vendored in this package's BUILD, so this RUNS (does not skip) and
+// genuinely exercises the C->C++->proto tiling path end to end. In tiled mode the
+// graph has no NORM_RECT input, so image_processing_options must be null.
+TEST(OrientedObjectDetectorCApiTest, TiledImageMode) {
+  const std::string model_path = GetFullPath(kObbModel);
+
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path;
+  }
+
+  MpOrientedObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.score_threshold = 0.25f;
+  options.iou_threshold = 0.45f;
+  options.num_classes = 15;
+  options.layout = 1;  // CHANNELS_FIRST
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  options.tiling.tile_overlap_fraction = 0.2f;
+
+  MpOrientedObjectDetectorPtr detector = nullptr;
+  ASSERT_EQ(
+      MpOrientedObjectDetectorCreate(&options, &detector, /*error_msg=*/nullptr),
+      kMpOk);
+  EXPECT_NE(detector, nullptr);
+  ScopedMpOrientedObjectDetector scoped_detector;
+  scoped_detector.ptr = detector;
+
+  MpImagePtr raw_image = nullptr;
+  ASSERT_EQ(
+      MpImageCreateFromFile(GetFullPath(kImageFile).c_str(), &raw_image,
+                            /*error_msg=*/nullptr),
+      kMpOk);
+  ScopedMpImage image(raw_image);
+
+  MpOrientedObjectDetectorResult result;
+  ASSERT_EQ(MpOrientedObjectDetectorDetectImage(detector, image.get(),
+                                                /*options=*/nullptr, &result,
+                                                /*error_msg=*/nullptr),
+            kMpOk);
+
+  EXPECT_GT(result.detections_count, 0u);
+  bool saw_ship = false;
+  for (uint32_t i = 0; i < result.detections_count; ++i) {
+    ASSERT_EQ(result.detections[i].categories_count, 1u);
+    if (result.detections[i].categories[0].index == 1) saw_ship = true;
+  }
+  EXPECT_TRUE(saw_ship) << "expected a 'ship' (DOTA class 1) on boats.jpg tiled";
+
+  MpOrientedObjectDetectorCloseResult(&result);
+}
+
 TEST(OrientedObjectDetectorCApiTest, CategoryAllowlistAndDenylistFilterByName) {
   const std::string model_path = GetFullPath(kObbModel);
   if (!mediapipe::file::Exists(model_path).ok()) {
