@@ -27,6 +27,7 @@ limitations under the License.
 #include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -128,7 +129,9 @@ TEST(YoloObjectDetectorCApiTest, ImageMode) {
 // ImageMode, this SKIPs cleanly when the yolov8n.tflite fixture is absent
 // (no yolo_test_models data dep is wired). It exercises the full C->C++->proto
 // tiling path end to end when the model is present. In tiled mode the graph
-// has no NORM_RECT input, so image_processing_options must be null.
+// has no NORM_RECT input, so we pass null
+// image_processing_options. (A default no-ROI, no-rotation options object is
+// also accepted; only a region-of-interest or non-zero rotation is rejected.)
 TEST(YoloObjectDetectorCApiTest, TiledImageMode) {
   const std::string model_path = GetFullPath(kYoloModel);
 
@@ -173,6 +176,31 @@ TEST(YoloObjectDetectorCApiTest, TiledImageMode) {
 
   EXPECT_GT(result.detections_count, 0u);
   MpYoloObjectDetectorCloseResult(&result);
+}
+
+// Verifies the tiling sub-struct actually propagates through the C binding into
+// the C++ Create(), WITHOUT needing a model fixture. enable_motion_scheduling
+// combined with IMAGE running mode is rejected by the C++ Create() before any
+// model is loaded; the rejection therefore proves options.tiling reached the
+// C++ layer (MpTilingOptions -> CppConvertToTilingOptions -> proto -> Create).
+// A broken binding would drop the flag, skip the rejection, and fail later for
+// a different reason -- so we assert the message, not merely a non-OK status.
+TEST(YoloObjectDetectorCApiTest, MotionSchedulingInImageModeRejectedThroughBinding) {
+  MpYoloObjectDetectorOptions options = {};
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.num_classes = 80;
+  options.tiling.enable_motion_scheduling = true;
+
+  MpYoloObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpYoloObjectDetectorCreate(&options, &detector, &error_msg);
+
+  EXPECT_NE(status, kMpOk);
+  EXPECT_EQ(detector, nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("motion scheduling"), std::string::npos);
+  free(error_msg);
 }
 
 }  // namespace
