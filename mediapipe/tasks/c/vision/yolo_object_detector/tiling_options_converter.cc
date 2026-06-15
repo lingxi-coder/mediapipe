@@ -31,6 +31,16 @@ void CppConvertToTilingOptions(
   out->tile_cols = in.tile_cols;
   out->tile_overlap_fraction = in.tile_overlap_fraction;
 
+  // explicit_tiles requires a 1x1 grid: TileGridCalculator rejects rows/cols != 1
+  // when explicit tiles are present, and the graph forwards rows/cols verbatim. A
+  // zero-initialized C options struct leaves rows/cols at 0; promote them to 1 when
+  // the caller supplies explicit tiles without a grid, matching the C++ struct's
+  // (1,1) defaults that the graph assumes. Grid-only callers are unaffected.
+  if (in.explicit_tiles_count > 0) {
+    if (out->tile_rows <= 0) out->tile_rows = 1;
+    if (out->tile_cols <= 0) out->tile_cols = 1;
+  }
+
   out->explicit_tiles.clear();
   out->explicit_tiles.reserve(in.explicit_tiles_count);
   for (uint32_t i = 0; i < in.explicit_tiles_count; ++i) {

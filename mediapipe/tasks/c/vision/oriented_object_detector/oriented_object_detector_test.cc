@@ -202,6 +202,66 @@ TEST(OrientedObjectDetectorCApiTest, TiledImageMode) {
   MpOrientedObjectDetectorCloseResult(&result);
 }
 
+// Exercises the explicit_tiles (pointer + count) path through the real C-API
+// Create + DetectImage, which the grid TiledImageMode test does not. A single
+// full-frame tile {center (0.5,0.5), size 1x1} covers the whole image. The binding
+// promotes the zero-initialized grid to 1x1 (required by TileGridCalculator with
+// explicit tiles), the caller-owned tile array is copied during Create, and a ship
+// is still detected.
+TEST(OrientedObjectDetectorCApiTest, TiledImageModeExplicitTiles) {
+  const std::string model_path = GetFullPath(kObbModel);
+
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path;
+  }
+
+  const MpOrientedTileRect tiles[] = {{0.5f, 0.5f, 1.0f, 1.0f}};
+
+  MpOrientedObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.score_threshold = 0.25f;
+  options.iou_threshold = 0.45f;
+  options.num_classes = 15;
+  options.layout = 1;  // CHANNELS_FIRST
+  options.tiling.explicit_tiles = tiles;
+  options.tiling.explicit_tiles_count = 1;
+
+  MpOrientedObjectDetectorPtr detector = nullptr;
+  ASSERT_EQ(
+      MpOrientedObjectDetectorCreate(&options, &detector, /*error_msg=*/nullptr),
+      kMpOk);
+  EXPECT_NE(detector, nullptr);
+  ScopedMpOrientedObjectDetector scoped_detector;
+  scoped_detector.ptr = detector;
+
+  MpImagePtr raw_image = nullptr;
+  ASSERT_EQ(
+      MpImageCreateFromFile(GetFullPath(kImageFile).c_str(), &raw_image,
+                            /*error_msg=*/nullptr),
+      kMpOk);
+  ScopedMpImage image(raw_image);
+
+  MpOrientedObjectDetectorResult result;
+  ASSERT_EQ(MpOrientedObjectDetectorDetectImage(detector, image.get(),
+                                                /*options=*/nullptr, &result,
+                                                /*error_msg=*/nullptr),
+            kMpOk);
+
+  EXPECT_GT(result.detections_count, 0u);
+  bool saw_ship = false;
+  for (uint32_t i = 0; i < result.detections_count; ++i) {
+    ASSERT_EQ(result.detections[i].categories_count, 1u);
+    if (result.detections[i].categories[0].index == 1) saw_ship = true;
+  }
+  EXPECT_TRUE(saw_ship)
+      << "expected a 'ship' (DOTA class 1) on boats.jpg with one full-frame "
+         "explicit tile";
+
+  MpOrientedObjectDetectorCloseResult(&result);
+}
+
 TEST(OrientedObjectDetectorCApiTest, CategoryAllowlistAndDenylistFilterByName) {
   const std::string model_path = GetFullPath(kObbModel);
   if (!mediapipe::file::Exists(model_path).ok()) {

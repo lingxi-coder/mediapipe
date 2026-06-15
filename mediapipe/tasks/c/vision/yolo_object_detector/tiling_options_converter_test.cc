@@ -118,5 +118,22 @@ TEST(TilingOptionsConverterTest, EmptyInputClearsPreexistingExplicitTiles) {
   EXPECT_TRUE(out.explicit_tiles.empty());
 }
 
+TEST(TilingOptionsConverterTest, ExplicitTilesDefaultGridToOneByOne) {
+  // A zero-initialized grid (rows/cols == 0) with explicit_tiles must be promoted
+  // to a 1x1 grid -- TileGridCalculator requires rows == 1 && cols == 1 when
+  // explicit tiles are present.
+  const MpTileRect tiles[] = {{0.5f, 0.5f, 1.0f, 1.0f}};
+  MpTilingOptions in = {};
+  in.explicit_tiles = tiles;
+  in.explicit_tiles_count = 1;
+
+  CppTilingOptions out;
+  CppConvertToTilingOptions(in, &out);
+
+  EXPECT_EQ(out.tile_rows, 1);
+  EXPECT_EQ(out.tile_cols, 1);
+  ASSERT_EQ(out.explicit_tiles.size(), 1u);
+}
+
 }  // namespace
 }  // namespace mediapipe::tasks::c::vision::yolo_object_detector
