@@ -124,4 +124,55 @@ TEST(YoloObjectDetectorCApiTest, ImageMode) {
   MpYoloObjectDetectorCloseResult(&result);
 }
 
+// Configures a 2x2 tiling grid through the C API and runs detection. Like
+// ImageMode, this SKIPs cleanly when the yolov8n.tflite fixture is absent
+// (no yolo_test_models data dep is wired). It exercises the full C->C++->proto
+// tiling path end to end when the model is present. In tiled mode the graph
+// has no NORM_RECT input, so image_processing_options must be null.
+TEST(YoloObjectDetectorCApiTest, TiledImageMode) {
+  const std::string model_path = GetFullPath(kYoloModel);
+
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path
+                 << "; tiled integration assertions gated until yolov8n.tflite "
+                    "is added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  MpYoloObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.score_threshold = 0.25f;
+  options.iou_threshold = 0.45f;
+  options.num_classes = 80;
+  options.layout = 2;  // CHANNELS_LAST
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  options.tiling.tile_overlap_fraction = 0.2f;
+
+  MpYoloObjectDetectorPtr detector = nullptr;
+  ASSERT_EQ(
+      MpYoloObjectDetectorCreate(&options, &detector, /*error_msg=*/nullptr),
+      kMpOk);
+  EXPECT_NE(detector, nullptr);
+  ScopedMpYoloObjectDetector scoped_detector;
+  scoped_detector.ptr = detector;
+
+  MpImagePtr raw_image = nullptr;
+  ASSERT_EQ(
+      MpImageCreateFromFile(GetFullPath(kImageFile).c_str(), &raw_image,
+                            /*error_msg=*/nullptr),
+      kMpOk);
+  ScopedMpImage image(raw_image);
+
+  MpYoloObjectDetectorResult result;
+  ASSERT_EQ(MpYoloObjectDetectorDetectImage(detector, image.get(),
+                                            /*options=*/nullptr, &result,
+                                            /*error_msg=*/nullptr),
+            kMpOk);
+
+  EXPECT_GT(result.detections_count, 0u);
+  MpYoloObjectDetectorCloseResult(&result);
+}
+
 }  // namespace
