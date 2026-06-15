@@ -89,6 +89,16 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "tiling_options_abi_test",
+    srcs = ["tiling_options_abi_test.cc"],
+    deps = [
+        ":yolo_object_detector_lib",
+        "//mediapipe/framework/port:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "yolo_object_detector_c_lib",
     srcs = [
