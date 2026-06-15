@@ -76,6 +76,33 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
     # Verify constructor arguments were stored correctly.
     self.assertEqual(options.num_classes, 15)
 
+  def test_ctypes_tiling_layout_matches_c_abi(self):
+    """ctypes tiling structs byte-match the OBB C header (see tiling_options_abi_test.cc)."""
+    import ctypes  # pylint: disable=g-import-not-at-top
+
+    rect_c = oriented_object_detector.MpOrientedTileRectC
+    self.assertEqual(ctypes.sizeof(rect_c), 16)
+    self.assertEqual(rect_c.x_center.offset, 0)
+    self.assertEqual(rect_c.y_center.offset, 4)
+    self.assertEqual(rect_c.width.offset, 8)
+    self.assertEqual(rect_c.height.offset, 12)
+
+    tiling_c = oriented_object_detector.MpOrientedTilingOptionsC
+    self.assertEqual(ctypes.sizeof(tiling_c), 40)
+    self.assertEqual(tiling_c.tile_rows.offset, 0)
+    self.assertEqual(tiling_c.tile_cols.offset, 4)
+    self.assertEqual(tiling_c.tile_overlap_fraction.offset, 8)
+    self.assertEqual(tiling_c.explicit_tiles.offset, 16)
+    self.assertEqual(tiling_c.explicit_tiles_count.offset, 24)
+    self.assertEqual(tiling_c.tile_local_nms_iou_threshold.offset, 28)
+    self.assertEqual(tiling_c.max_detections_after_tile_nms.offset, 32)
+
+    options_c = oriented_object_detector.MpOrientedObjectDetectorOptionsC
+    # Absolute anchors mirroring tiling_options_abi_test.cc (compiler-verified).
+    self.assertEqual(options_c.tiling.offset, 144)
+    self.assertEqual(options_c.result_callback.offset, 184)
+    self.assertEqual(ctypes.sizeof(options_c), 192)
+
   @unittest.skipUnless(
       _MODEL_PRESENT,
       'yolov8n-obb.tflite fixture not present; skipping inference test',

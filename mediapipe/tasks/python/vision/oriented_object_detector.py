@@ -95,6 +95,35 @@ def _enrich_with_label_map(
   return result
 
 
+class MpOrientedTileRectC(ctypes.Structure):
+  """Byte-matches struct MpOrientedTileRect in the OBB C header."""
+
+  _fields_ = [
+      ('x_center', ctypes.c_float),
+      ('y_center', ctypes.c_float),
+      ('width', ctypes.c_float),
+      ('height', ctypes.c_float),
+  ]
+
+
+class MpOrientedTilingOptionsC(ctypes.Structure):
+  """Byte-matches struct MpOrientedTilingOptions in the OBB C header (6 fields).
+
+  Field order/types MUST stay in sync with the C header (pinned by
+  tiling_options_abi_test.cc). OBB has no motion-scheduling fields.
+  """
+
+  _fields_ = [
+      ('tile_rows', ctypes.c_int),
+      ('tile_cols', ctypes.c_int),
+      ('tile_overlap_fraction', ctypes.c_float),
+      ('explicit_tiles', ctypes.POINTER(MpOrientedTileRectC)),
+      ('explicit_tiles_count', ctypes.c_uint32),
+      ('tile_local_nms_iou_threshold', ctypes.c_float),
+      ('max_detections_after_tile_nms', ctypes.c_int),
+  ]
+
+
 class MpOrientedObjectDetectorOptionsC(ctypes.Structure):
   """OBB detector options for the C API.
 
@@ -116,6 +145,7 @@ class MpOrientedObjectDetectorOptionsC(ctypes.Structure):
       ('class_agnostic_nms', ctypes.c_bool),
       ('layout', ctypes.c_int),
       ('num_classes', ctypes.c_int),
+      ('tiling', MpOrientedTilingOptionsC),
       ('result_callback', _C_TYPES_RESULT_CALLBACK),
   ]
 
