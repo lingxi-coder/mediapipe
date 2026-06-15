@@ -45,6 +45,51 @@ typedef MpDetectionResult MpYoloObjectDetectorResult;
 // display_names_locale, category_allowlist, and category_denylist are applied
 // by the YOLO graph: category names are read from the model metadata's label
 // file and allow/deny filter results by class name (resolved to indices).
+
+// A frame-normalized tile given by its CENTER point and size (NOT corner-based
+// like RectF). Mirrors YoloObjectDetectorOptions::TilingOptions::TileRect.
+struct MpTileRect {
+  float x_center;
+  float y_center;
+  float width;
+  float height;
+};
+
+// Static tiling configuration. Mirrors
+// YoloObjectDetectorOptions::TilingOptions field-for-field.
+//
+// Tiling is ENABLED when tile_rows * tile_cols > 1 or explicit_tiles_count > 0.
+// A zero-initialized MpTilingOptions (e.g. from `MpYoloObjectDetectorOptions
+// options = {}`) therefore means tiling DISABLED -- byte-identical to a C caller
+// that never set tiling at all. To tile with a grid, set BOTH tile_rows and
+// tile_cols (each >= 1); a zero in either disables tiling.
+struct MpTilingOptions {
+  // Grid tiling: rows x cols of equal tiles. Mutually exclusive with
+  // explicit_tiles.
+  int tile_rows;
+  int tile_cols;
+  // Fractional overlap added around each grid tile. Default 0.0.
+  float tile_overlap_fraction;
+
+  // Explicit (non-grid) tiles. Caller owns this array; it is COPIED during
+  // Create and need not outlive the MpYoloObjectDetectorCreate call. Mirrors
+  // the category_allowlist (pointer + count) ownership convention.
+  const struct MpTileRect* explicit_tiles;
+  uint32_t explicit_tiles_count;
+
+  // Per-tile (in-decoder) NMS IoU threshold; <= 0 disables.
+  float tile_local_nms_iou_threshold;
+  // Per-tile cap after tile-local NMS; <= 0 disables.
+  int max_detections_after_tile_nms;
+
+  // VIDEO/LIVE_STREAM only: gate per-frame tiled inference with a motion
+  // scheduler. Setting this in IMAGE mode is rejected by the C++ Create()
+  // (surfaced as a non-kMpOk MpStatus); the binding only passes it through.
+  bool enable_motion_scheduling;
+  // Per DETECT-frame cap on inferred tiles (motion-prioritized). 0 = all.
+  int max_scheduled_tiles;
+};
+
 struct MpYoloObjectDetectorOptions {
   struct MpBaseOptions base_options;
 
@@ -77,6 +122,9 @@ struct MpYoloObjectDetectorOptions {
 
   // Number of classes. If 0, derived from model metadata at graph build time.
   int num_classes;
+
+  // Static tiling configuration. Zero-initialized => tiling disabled.
+  struct MpTilingOptions tiling;
 
   // Result callback for live-stream mode. Must be set iff running_mode is
   // MP_RUNNING_MODE_LIVE_STREAM. Passed arguments are valid only for the

@@ -40,8 +40,14 @@ YOLO_OBJECT_DETECTOR_DEPS = [
 
 cc_library(
     name = "yolo_object_detector_lib",
-    srcs = ["yolo_object_detector.cc"],
-    hdrs = ["yolo_object_detector.h"],
+    srcs = [
+        "tiling_options_converter.cc",
+        "yolo_object_detector.cc",
+    ],
+    hdrs = [
+        "tiling_options_converter.h",
+        "yolo_object_detector.h",
+    ],
     visibility = ["//visibility:public"],
     deps = YOLO_OBJECT_DETECTOR_DEPS,
 )
@@ -72,10 +78,27 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "tiling_options_converter_test",
+    srcs = ["tiling_options_converter_test.cc"],
+    deps = [
+        ":yolo_object_detector_lib",
+        "//mediapipe/framework/port:gtest",
+        "//mediapipe/tasks/cc/vision/yolo_object_detector",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "yolo_object_detector_c_lib",
-    srcs = ["yolo_object_detector.cc"],
-    hdrs = ["yolo_object_detector.h"],
+    srcs = [
+        "tiling_options_converter.cc",
+        "yolo_object_detector.cc",
+    ],
+    hdrs = [
+        "tiling_options_converter.h",
+        "yolo_object_detector.h",
+    ],
     visibility = ["//mediapipe/tasks/c:__subpackages__"],
     deps = YOLO_OBJECT_DETECTOR_DEPS,
     alwayslink = 1,
