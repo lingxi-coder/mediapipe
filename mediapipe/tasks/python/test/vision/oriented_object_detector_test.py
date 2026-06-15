@@ -146,7 +146,9 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
     self.assertEqual(tiling_c.explicit_tiles_count, 2)
     self.assertTrue(bool(tiling_c.explicit_tiles))  # non-null
     self.assertAlmostEqual(tiling_c.explicit_tiles[0].x_center, 0.1, places=5)
+    self.assertAlmostEqual(tiling_c.explicit_tiles[0].y_center, 0.2, places=5)
     self.assertAlmostEqual(tiling_c.explicit_tiles[1].height, 0.3, places=5)
+    self.assertAlmostEqual(tiling_c.explicit_tiles[1].width, 0.45, places=5)
     self.assertAlmostEqual(tiling_c.tile_local_nms_iou_threshold, 0.5, places=5)
     self.assertEqual(tiling_c.max_detections_after_tile_nms, 50)
     self.assertIsNotNone(keepalive)

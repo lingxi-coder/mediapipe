@@ -143,9 +143,14 @@ TEST(OrientedObjectDetectorCApiTest, ImageMode) {
 }
 
 // Runs OBB detection with a 2x2 tiling grid on boats.jpg. The yolo_obb_test_model
-// fixture is vendored in this package's BUILD, so this RUNS (does not skip) and
-// genuinely exercises the C->C++->proto tiling path end to end. In tiled mode the
-// graph has no NORM_RECT input, so image_processing_options must be null.
+// fixture is vendored in this package's BUILD, so this RUNS (does not skip): it
+// verifies the tiled C->C++->proto path executes and returns a valid result. It is
+// a smoke test, NOT a tiling-efficacy check -- boats.jpg yields a ship in non-tiled
+// mode too, so this would still pass if tiling degraded to a no-op; the converter
+// unit test (tiling_options_converter_test.cc) is what pins the field mapping. In
+// tiled mode the graph drops its NORM_RECT input, so we pass null
+// image_processing_options. (A default no-ROI, no-rotation options object is also
+// accepted; only a region-of-interest or non-zero rotation is rejected.)
 TEST(OrientedObjectDetectorCApiTest, TiledImageMode) {
   const std::string model_path = GetFullPath(kObbModel);
 

@@ -51,8 +51,10 @@ struct MpOrientedTileRect {
   float height;
 };
 
-// Static tiling configuration. Mirrors OrientedObjectDetectorOptions::TilingOptions
-// field-for-field (6 fields; OBB has no motion-scheduling knobs).
+// Static tiling configuration.
+// Mirrors the 6 logical OrientedObjectDetectorOptions::TilingOptions fields; the
+// std::vector explicit_tiles is exposed as a pointer + count pair, so this struct
+// has 7 members. OBB has no motion-scheduling knobs.
 //
 // Tiling is ENABLED when tile_rows * tile_cols > 1 or explicit_tiles_count > 0. A
 // zero-initialized MpOrientedTilingOptions means tiling DISABLED. To tile with a

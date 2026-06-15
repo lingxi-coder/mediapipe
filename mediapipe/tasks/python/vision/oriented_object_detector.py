@@ -107,7 +107,7 @@ class MpOrientedTileRectC(ctypes.Structure):
 
 
 class MpOrientedTilingOptionsC(ctypes.Structure):
-  """Byte-matches struct MpOrientedTilingOptions in the OBB C header (6 fields).
+  """Byte-matches struct MpOrientedTilingOptions in the OBB C header.
 
   Field order/types MUST stay in sync with the C header (pinned by
   tiling_options_abi_test.cc). OBB has no motion-scheduling fields.
