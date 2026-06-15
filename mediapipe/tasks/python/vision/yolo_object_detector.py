@@ -213,6 +213,59 @@ _CTYPES_SIGNATURES = (
 
 
 @dataclasses.dataclass
+class TileRect:
+  """A frame-normalized tile given by its center point and size.
+
+  Attributes:
+    x_center: Tile center x, normalized to [0, 1].
+    y_center: Tile center y, normalized to [0, 1].
+    width: Tile width, normalized to [0, 1].
+    height: Tile height, normalized to [0, 1].
+  """
+
+  x_center: float = 0.0
+  y_center: float = 0.0
+  width: float = 0.0
+  height: float = 0.0
+
+
+@dataclasses.dataclass
+class TilingOptions:
+  """Static tiling configuration for the YOLO object detector.
+
+  Mirrors the C++ YoloObjectDetectorOptions.TilingOptions. Tiling is enabled
+  when tile_rows * tile_cols > 1 or explicit_tiles is non-empty. The defaults
+  (1x1, no explicit tiles) mean tiling disabled. To tile with a grid set BOTH
+  tile_rows and tile_cols (each >= 1); a zero in either disables tiling.
+
+  Attributes:
+    tile_rows: Number of grid rows. Mutually exclusive with explicit_tiles.
+    tile_cols: Number of grid columns. Mutually exclusive with explicit_tiles.
+    tile_overlap_fraction: Fractional overlap added around each grid tile.
+    explicit_tiles: Explicit (non-grid) tiles. Mutually exclusive with the grid
+      params.
+    tile_local_nms_iou_threshold: Per-tile (in-decoder) NMS IoU threshold;
+      <= 0 disables.
+    max_detections_after_tile_nms: Per-tile cap after tile-local NMS;
+      <= 0 disables.
+    enable_motion_scheduling: VIDEO/LIVE_STREAM only; gate per-frame tiled
+      inference with a motion scheduler. Rejected in IMAGE mode by the
+      underlying task.
+    max_scheduled_tiles: Per DETECT-frame cap on inferred tiles
+      (motion-prioritized). 0 = all.
+  """
+
+  tile_rows: int = 1
+  tile_cols: int = 1
+  tile_overlap_fraction: float = 0.0
+  explicit_tiles: Optional[List[TileRect]] = None
+  tile_local_nms_iou_threshold: float = 0.0
+  max_detections_after_tile_nms: int = 0
+  enable_motion_scheduling: bool = False
+  max_scheduled_tiles: int = 0
+
+
+@dataclasses.dataclass
 class YoloObjectDetectorOptions:
   """Options for the YOLO object detector task.
 
@@ -240,6 +293,7 @@ class YoloObjectDetectorOptions:
     layout: The output tensor layout of the YOLO detect head. Default
       CHANNELS_FIRST.
     num_classes: Number of classes. If 0, derived from model metadata.
+    tiling: Static tiling configuration. Defaults to disabled (1x1).
     result_callback: The user-defined result callback for processing live stream
       data. The result callback should only be specified when the running mode
       is set to the live stream mode.
@@ -261,6 +315,7 @@ class YoloObjectDetectorOptions:
   iou_threshold: float = 0.45
   layout: Layout = Layout.CHANNELS_FIRST
   num_classes: int = 0
+  tiling: TilingOptions = dataclasses.field(default_factory=TilingOptions)
   result_callback: Optional[
       Callable[
           [detections_module.DetectionResult, image_module.Image, int], None
@@ -382,6 +437,35 @@ class YoloObjectDetector:
     denylist_c = mediapipe_c_bindings_c_module.convert_strings_to_ctypes_array(
         options.category_denylist
     )
+    explicit_tiles = options.tiling.explicit_tiles or []
+    # NOTE: tiles_array must stay referenced (as a local) through the
+    # MpYoloObjectDetectorCreate call below. explicit_tiles is a raw pointer
+    # into this array; ctypes does not keep it alive once MpTilingOptionsC is
+    # copied by value into the parent options struct. The C converter copies the
+    # tiles into a std::vector during Create, so this transient caller-owned
+    # array only needs to outlive the Create call (same contract as
+    # category_allowlist).
+    tiles_array = (MpTileRectC * len(explicit_tiles))(
+        *[
+            MpTileRectC(t.x_center, t.y_center, t.width, t.height)
+            for t in explicit_tiles
+        ]
+    )
+    tiling_c = MpTilingOptionsC(
+        tile_rows=options.tiling.tile_rows,
+        tile_cols=options.tiling.tile_cols,
+        tile_overlap_fraction=options.tiling.tile_overlap_fraction,
+        explicit_tiles=(
+            ctypes.cast(tiles_array, ctypes.POINTER(MpTileRectC))
+            if explicit_tiles
+            else None
+        ),
+        explicit_tiles_count=len(explicit_tiles),
+        tile_local_nms_iou_threshold=options.tiling.tile_local_nms_iou_threshold,
+        max_detections_after_tile_nms=options.tiling.max_detections_after_tile_nms,
+        enable_motion_scheduling=options.tiling.enable_motion_scheduling,
+        max_scheduled_tiles=options.tiling.max_scheduled_tiles,
+    )
     ctypes_options = MpYoloObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
@@ -403,6 +487,7 @@ class YoloObjectDetector:
         iou_threshold=options.iou_threshold,
         layout=int(options.layout),
         num_classes=options.num_classes,
+        tiling=tiling_c,
         result_callback=c_callback,
     )
 
