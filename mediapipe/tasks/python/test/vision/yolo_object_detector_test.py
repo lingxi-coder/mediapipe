@@ -84,6 +84,12 @@ class YoloObjectDetectorTest(parameterized.TestCase):
     self.assertEqual(options.tiling.tile_cols, 1)
     self.assertIsNone(options.tiling.explicit_tiles)
     self.assertFalse(options.tiling.enable_motion_scheduling)
+    self.assertAlmostEqual(options.tiling.tile_overlap_fraction, 0.0, places=5)
+    self.assertAlmostEqual(
+        options.tiling.tile_local_nms_iou_threshold, 0.0, places=5
+    )
+    self.assertEqual(options.tiling.max_detections_after_tile_nms, 0)
+    self.assertEqual(options.tiling.max_scheduled_tiles, 0)
 
   def test_options_with_tiling_construct_without_model(self):
     """Constructs TilingOptions (grid + explicit_tiles + caps); no model needed."""
@@ -97,6 +103,7 @@ class YoloObjectDetectorTest(parameterized.TestCase):
         ],
         tile_local_nms_iou_threshold=0.5,
         max_detections_after_tile_nms=50,
+        max_scheduled_tiles=7,
     )
     options = _YoloObjectDetectorOptions(
         base_options=_BaseOptions(model_asset_path='/dummy/model.tflite'),
@@ -115,6 +122,50 @@ class YoloObjectDetectorTest(parameterized.TestCase):
     )
     self.assertEqual(options.tiling.max_detections_after_tile_nms, 50)
     self.assertFalse(options.tiling.enable_motion_scheduling)
+    self.assertAlmostEqual(
+        options.tiling.tile_local_nms_iou_threshold, 0.5, places=5
+    )
+    self.assertEqual(options.tiling.max_scheduled_tiles, 7)
+
+  def test_build_tiling_options_c_marshalling(self):
+    """The dataclass->ctypes marshalling fills the struct; no model needed."""
+    import ctypes  # pylint: disable=g-import-not-at-top
+
+    tiling = yolo_object_detector.TilingOptions(
+        tile_rows=2,
+        tile_cols=3,
+        tile_overlap_fraction=0.2,
+        explicit_tiles=[
+            yolo_object_detector.TileRect(0.1, 0.2, 0.5, 0.4),
+            yolo_object_detector.TileRect(0.75, 0.6, 0.45, 0.3),
+        ],
+        tile_local_nms_iou_threshold=0.5,
+        max_detections_after_tile_nms=50,
+        max_scheduled_tiles=7,
+    )
+    tiling_c, keepalive = yolo_object_detector._build_tiling_options_c(tiling)  # keepalive kept alive for the explicit_tiles reads below  # pylint: disable=protected-access
+
+    self.assertEqual(tiling_c.tile_rows, 2)
+    self.assertEqual(tiling_c.tile_cols, 3)
+    self.assertAlmostEqual(tiling_c.tile_overlap_fraction, 0.2, places=5)
+    self.assertEqual(tiling_c.explicit_tiles_count, 2)
+    self.assertTrue(bool(tiling_c.explicit_tiles))  # non-null pointer
+    self.assertAlmostEqual(tiling_c.explicit_tiles[0].x_center, 0.1, places=5)
+    self.assertAlmostEqual(tiling_c.explicit_tiles[0].y_center, 0.2, places=5)
+    self.assertAlmostEqual(tiling_c.explicit_tiles[1].width, 0.45, places=5)
+    self.assertAlmostEqual(tiling_c.explicit_tiles[1].height, 0.3, places=5)
+    self.assertAlmostEqual(tiling_c.tile_local_nms_iou_threshold, 0.5, places=5)
+    self.assertEqual(tiling_c.max_detections_after_tile_nms, 50)
+    self.assertFalse(tiling_c.enable_motion_scheduling)
+    self.assertEqual(tiling_c.max_scheduled_tiles, 7)
+
+  def test_build_tiling_options_c_empty(self):
+    """Empty explicit_tiles -> null pointer + zero count (C-safe)."""
+    tiling_c, _ = yolo_object_detector._build_tiling_options_c(  # pylint: disable=protected-access
+        yolo_object_detector.TilingOptions()
+    )
+    self.assertEqual(tiling_c.explicit_tiles_count, 0)
+    self.assertFalse(bool(tiling_c.explicit_tiles))  # null pointer
 
   def test_ctypes_tiling_layout_matches_c_abi(self):
     """ctypes tiling structs byte-match the C header (see tiling_options_abi_test.cc)."""
@@ -123,21 +174,32 @@ class YoloObjectDetectorTest(parameterized.TestCase):
     self.assertEqual(ctypes.sizeof(yolo_object_detector.MpTileRectC), 16)
     self.assertEqual(ctypes.sizeof(yolo_object_detector.MpTilingOptionsC), 48)
 
+    rect_c = yolo_object_detector.MpTileRectC
+    self.assertEqual(rect_c.x_center.offset, 0)
+    self.assertEqual(rect_c.y_center.offset, 4)
+    self.assertEqual(rect_c.width.offset, 8)
+    self.assertEqual(rect_c.height.offset, 12)
+
     tiling_c = yolo_object_detector.MpTilingOptionsC
+    self.assertEqual(tiling_c.tile_rows.offset, 0)
+    self.assertEqual(tiling_c.tile_cols.offset, 4)
+    self.assertEqual(tiling_c.tile_overlap_fraction.offset, 8)
     self.assertEqual(tiling_c.explicit_tiles.offset, 16)
     self.assertEqual(tiling_c.explicit_tiles_count.offset, 24)
     self.assertEqual(tiling_c.tile_local_nms_iou_threshold.offset, 28)
     self.assertEqual(tiling_c.max_detections_after_tile_nms.offset, 32)
     self.assertEqual(tiling_c.enable_motion_scheduling.offset, 36)
     self.assertEqual(tiling_c.max_scheduled_tiles.offset, 40)
+    # c_bool width pin: an offset-only check cannot catch a c_bool->c_int swap.
+    self.assertEqual(tiling_c.enable_motion_scheduling.size, 1)
 
     options_c = yolo_object_detector.MpYoloObjectDetectorOptionsC
-    # `tiling` sits contiguously between num_classes and result_callback.
-    self.assertGreater(options_c.tiling.offset, options_c.num_classes.offset)
-    self.assertEqual(
-        options_c.result_callback.offset,
-        options_c.tiling.offset + ctypes.sizeof(yolo_object_detector.MpTilingOptionsC),
-    )
+    # Absolute anchors mirroring tiling_options_abi_test.cc: these cross-check
+    # the whole parent prefix (base_options + scalars), not just tiling's
+    # relative placement.
+    self.assertEqual(options_c.tiling.offset, 136)
+    self.assertEqual(options_c.result_callback.offset, 184)
+    self.assertEqual(ctypes.sizeof(options_c), 192)
 
   @unittest.skipUnless(_MODEL_PRESENT, 'yolov8n.tflite fixture not present; skipping inference test')
   def test_detect_image(self):
@@ -183,7 +245,11 @@ class YoloObjectDetectorTest(parameterized.TestCase):
 
   @unittest.skipUnless(_MODEL_PRESENT, 'yolov8n.tflite fixture not present; skipping inference test')
   def test_detect_image_tiled(self):
-    """Runs inference with a 2x2 tiling grid and validates the result."""
+    """Smoke-checks the tiled detect path end-to-end (model-gated).
+
+    Note: cats_and_dogs.jpg is detectable without tiling, so this verifies the
+    tiling path runs and returns a valid result, not tiling efficacy.
+    """
     model_path = test_utils.get_test_data_path(
         os.path.join(_TEST_DATA_DIR, _MODEL_FILE)
     )

@@ -45,6 +45,11 @@ static_assert(offsetof(MpTilingOptions, tile_local_nms_iou_threshold) == 28, "")
 static_assert(offsetof(MpTilingOptions, max_detections_after_tile_nms) == 32, "");
 static_assert(offsetof(MpTilingOptions, enable_motion_scheduling) == 36, "");
 static_assert(offsetof(MpTilingOptions, max_scheduled_tiles) == 40, "");
+// Pin the bool field's WIDTH (1 byte): a c_bool->c_int swap on the Python side
+// would NOT change any offset (the 3 trailing pad bytes absorb the widening),
+// so an offset-only check cannot catch it; this size pin can.
+static_assert(sizeof(MpTilingOptions::enable_motion_scheduling) == 1,
+              "enable_motion_scheduling must stay 1 byte (matches Python c_bool)");
 
 // `tiling` occupies a contiguous block between num_classes and result_callback.
 static_assert(offsetof(MpYoloObjectDetectorOptions, tiling) >
@@ -54,6 +59,15 @@ static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) ==
                   offsetof(MpYoloObjectDetectorOptions, tiling) +
                       sizeof(MpTilingOptions),
               "result_callback must immediately follow tiling");
+
+// Absolute anchors so the Python layout test cross-checks the WHOLE parent
+// prefix (base_options + scalars), not just tiling's relative placement. If the
+// prefix ever changes, this fails loudly and the Python ctypes mirror
+// (incl. MpBaseOptionsC) must be updated in lockstep.
+static_assert(offsetof(MpYoloObjectDetectorOptions, tiling) == 136,
+              "parent prefix size pinned for the Python ctypes mirror");
+static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 184, "");
+static_assert(sizeof(MpYoloObjectDetectorOptions) == 192, "");
 
 namespace {
 

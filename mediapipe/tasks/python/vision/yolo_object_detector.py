@@ -116,8 +116,11 @@ class MpTilingOptionsC(ctypes.Structure):
 
   Field order/types MUST stay in sync with the C header (pinned by
   tiling_options_abi_test.cc). enable_motion_scheduling is c_bool (1 byte) to
-  match the C `bool`; using c_int here would shift max_scheduled_tiles and
-  corrupt every options struct.
+  match the C `bool`. (A c_int here would NOT change any offset -- the field is
+  followed by alignment padding that absorbs the extra 3 bytes -- so the
+  layout/offset tests cannot catch such a swap; it must be reviewed by hand. The
+  c_bool width is pinned by tiling_options_abi_test.cc and
+  test_ctypes_tiling_layout_matches_c_abi.)
   """
 
   _fields_ = [
@@ -323,6 +326,45 @@ class YoloObjectDetectorOptions:
   ] = None
 
 
+def _build_tiling_options_c(
+    tiling: TilingOptions,
+) -> tuple['MpTilingOptionsC', object]:
+  """Builds the ctypes MpTilingOptionsC from a TilingOptions dataclass.
+
+  Returns the populated ctypes struct AND the backing explicit_tiles array. The
+  caller MUST keep the returned array referenced until the C call that consumes
+  the parent options struct returns: explicit_tiles is a raw pointer into that
+  array. (ctypes also records the array in the parent struct's _objects when the
+  nested struct is copied in by value, but returning it makes the lifetime
+  explicit instead of relying on that internal behavior.) The C converter copies
+  the tiles into a std::vector synchronously during Create, so outliving the
+  Create call is sufficient.
+  """
+  explicit_tiles = tiling.explicit_tiles or []
+  tiles_array = (MpTileRectC * len(explicit_tiles))(
+      *[
+          MpTileRectC(t.x_center, t.y_center, t.width, t.height)
+          for t in explicit_tiles
+      ]
+  )
+  tiling_c = MpTilingOptionsC(
+      tile_rows=tiling.tile_rows,
+      tile_cols=tiling.tile_cols,
+      tile_overlap_fraction=tiling.tile_overlap_fraction,
+      explicit_tiles=(
+          ctypes.cast(tiles_array, ctypes.POINTER(MpTileRectC))
+          if explicit_tiles
+          else None
+      ),
+      explicit_tiles_count=len(explicit_tiles),
+      tile_local_nms_iou_threshold=tiling.tile_local_nms_iou_threshold,
+      max_detections_after_tile_nms=tiling.max_detections_after_tile_nms,
+      enable_motion_scheduling=tiling.enable_motion_scheduling,
+      max_scheduled_tiles=tiling.max_scheduled_tiles,
+  )
+  return tiling_c, tiles_array
+
+
 class YoloObjectDetector:
   """Performs YOLO (axis-aligned) object detection on images.
 
@@ -437,35 +479,10 @@ class YoloObjectDetector:
     denylist_c = mediapipe_c_bindings_c_module.convert_strings_to_ctypes_array(
         options.category_denylist
     )
-    explicit_tiles = options.tiling.explicit_tiles or []
-    # NOTE: tiles_array must stay referenced (as a local) through the
-    # MpYoloObjectDetectorCreate call below. explicit_tiles is a raw pointer
-    # into this array; ctypes does not keep it alive once MpTilingOptionsC is
-    # copied by value into the parent options struct. The C converter copies the
-    # tiles into a std::vector during Create, so this transient caller-owned
-    # array only needs to outlive the Create call (same contract as
-    # category_allowlist).
-    tiles_array = (MpTileRectC * len(explicit_tiles))(
-        *[
-            MpTileRectC(t.x_center, t.y_center, t.width, t.height)
-            for t in explicit_tiles
-        ]
-    )
-    tiling_c = MpTilingOptionsC(
-        tile_rows=options.tiling.tile_rows,
-        tile_cols=options.tiling.tile_cols,
-        tile_overlap_fraction=options.tiling.tile_overlap_fraction,
-        explicit_tiles=(
-            ctypes.cast(tiles_array, ctypes.POINTER(MpTileRectC))
-            if explicit_tiles
-            else None
-        ),
-        explicit_tiles_count=len(explicit_tiles),
-        tile_local_nms_iou_threshold=options.tiling.tile_local_nms_iou_threshold,
-        max_detections_after_tile_nms=options.tiling.max_detections_after_tile_nms,
-        enable_motion_scheduling=options.tiling.enable_motion_scheduling,
-        max_scheduled_tiles=options.tiling.max_scheduled_tiles,
-    )
+    # tiles_keepalive holds the explicit_tiles backing array; it must stay
+    # referenced through the MpYoloObjectDetectorCreate call below (the C
+    # converter copies the tiles into a std::vector synchronously during Create).
+    tiling_c, tiles_keepalive = _build_tiling_options_c(options.tiling)
     ctypes_options = MpYoloObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
