@@ -27,7 +27,6 @@ limitations under the License.
 #include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
 
 #include <cstdint>
-#include <cstdlib>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -200,7 +199,7 @@ TEST(YoloObjectDetectorCApiTest, MotionSchedulingInImageModeRejectedThroughBindi
   EXPECT_EQ(detector, nullptr);
   ASSERT_NE(error_msg, nullptr);
   EXPECT_NE(std::string(error_msg).find("motion scheduling"), std::string::npos);
-  free(error_msg);
+  MpErrorFree(error_msg);
 }
 
 }  // namespace

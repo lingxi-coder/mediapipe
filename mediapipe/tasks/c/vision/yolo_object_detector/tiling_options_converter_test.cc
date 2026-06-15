@@ -50,8 +50,8 @@ TEST(TilingOptionsConverterTest, CopiesAllScalarFields) {
 
 TEST(TilingOptionsConverterTest, CopiesExplicitTilesArray) {
   const MpTileRect tiles[] = {
-      {0.25f, 0.25f, 0.5f, 0.5f},
-      {0.75f, 0.75f, 0.4f, 0.3f},
+      {0.1f, 0.2f, 0.5f, 0.4f},
+      {0.75f, 0.6f, 0.45f, 0.3f},
   };
   MpTilingOptions in = {};
   in.explicit_tiles = tiles;
@@ -61,13 +61,13 @@ TEST(TilingOptionsConverterTest, CopiesExplicitTilesArray) {
   CppConvertToTilingOptions(in, &out);
 
   ASSERT_EQ(out.explicit_tiles.size(), 2u);
-  EXPECT_FLOAT_EQ(out.explicit_tiles[0].x_center, 0.25f);
-  EXPECT_FLOAT_EQ(out.explicit_tiles[0].y_center, 0.25f);
+  EXPECT_FLOAT_EQ(out.explicit_tiles[0].x_center, 0.1f);
+  EXPECT_FLOAT_EQ(out.explicit_tiles[0].y_center, 0.2f);
   EXPECT_FLOAT_EQ(out.explicit_tiles[0].width, 0.5f);
-  EXPECT_FLOAT_EQ(out.explicit_tiles[0].height, 0.5f);
+  EXPECT_FLOAT_EQ(out.explicit_tiles[0].height, 0.4f);
   EXPECT_FLOAT_EQ(out.explicit_tiles[1].x_center, 0.75f);
-  EXPECT_FLOAT_EQ(out.explicit_tiles[1].y_center, 0.75f);
-  EXPECT_FLOAT_EQ(out.explicit_tiles[1].width, 0.4f);
+  EXPECT_FLOAT_EQ(out.explicit_tiles[1].y_center, 0.6f);
+  EXPECT_FLOAT_EQ(out.explicit_tiles[1].width, 0.45f);
   EXPECT_FLOAT_EQ(out.explicit_tiles[1].height, 0.3f);
 }
 
@@ -104,6 +104,18 @@ TEST(TilingOptionsConverterTest, ClearsPreexistingExplicitTiles) {
 
   ASSERT_EQ(out.explicit_tiles.size(), 1u);
   EXPECT_FLOAT_EQ(out.explicit_tiles[0].x_center, 0.1f);
+}
+
+TEST(TilingOptionsConverterTest, EmptyInputClearsPreexistingExplicitTiles) {
+  MpTilingOptions in = {};
+  in.explicit_tiles = nullptr;
+  in.explicit_tiles_count = 0;
+
+  CppTilingOptions out;
+  out.explicit_tiles.push_back({9.0f, 9.0f, 9.0f, 9.0f});  // stale content
+  CppConvertToTilingOptions(in, &out);
+
+  EXPECT_TRUE(out.explicit_tiles.empty());
 }
 
 }  // namespace
