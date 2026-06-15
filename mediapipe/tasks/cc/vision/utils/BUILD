@@ -177,6 +177,16 @@ cc_library(
     ],
 )
 
+cc_test(
+    name = "tiled_detection_utils_test",
+    srcs = ["tiled_detection_utils_test.cc"],
+    deps = [
+        ":tiled_detection_utils",
+        "//mediapipe/framework/port:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "data_renderer",
     srcs = ["data_renderer.cc"],

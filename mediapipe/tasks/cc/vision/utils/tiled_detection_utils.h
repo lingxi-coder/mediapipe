@@ -33,6 +33,9 @@ struct TiledModelInputDims {
   int height = 0;
   int width = 0;
   int channels = 0;
+  // True when the model's batch axis is dynamic/unspecified (non-positive in
+  // the model). The tiled front then emits a variable (valid tile count) batch.
+  bool is_dynamic_batch = false;
 };
 
 // Returns true when the tiling options enable the tiled path (grid larger
@@ -51,6 +54,18 @@ template <typename TilingProto>
 bool SchedulingEnabled(const TilingProto& t) {
   return t.enable_motion_scheduling() && TilingEnabled(t);
 }
+
+// Normalizes a raw TFLite input batch dimension for the tiled front. A
+// non-positive value (a dynamic / unspecified batch axis) is treated as a
+// dynamic batch: returns capacity 1 with is_dynamic=true, so the positive-
+// capacity contract downstream holds and the front emits a variable
+// (valid-count) batch rather than aborting. A positive value is a fixed batch
+// and is returned unchanged.
+struct NormalizedBatchDim {
+  int batch_capacity = 1;
+  bool is_dynamic = false;
+};
+NormalizedBatchDim NormalizeTiledBatchDim(int raw_batch);
 
 // Validates the model input tensor for the tiled front and returns its
 // [N,H,W,C] shape dims. The tiled front supports float32 BHWC only.

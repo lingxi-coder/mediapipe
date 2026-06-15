@@ -31,6 +31,13 @@ namespace mediapipe {
 namespace tasks {
 namespace vision {
 
+NormalizedBatchDim NormalizeTiledBatchDim(int raw_batch) {
+  if (raw_batch <= 0) {
+    return NormalizedBatchDim{/*batch_capacity=*/1, /*is_dynamic=*/true};
+  }
+  return NormalizedBatchDim{/*batch_capacity=*/raw_batch, /*is_dynamic=*/false};
+}
+
 absl::StatusOr<TiledModelInputDims> ValidateTiledModelInputAndGetDims(
     const tasks::core::ModelResources& model_resources) {
   const auto& model = *model_resources.GetTfLiteModel();
@@ -64,8 +71,11 @@ absl::StatusOr<TiledModelInputDims> ValidateTiledModelInputAndGetDims(
       }
     }
   }
-  return TiledModelInputDims{/*batch=*/dims->Get(0), /*height=*/dims->Get(1),
-                             /*width=*/dims->Get(2), /*channels=*/dims->Get(3)};
+  const NormalizedBatchDim nb = NormalizeTiledBatchDim(dims->Get(0));
+  return TiledModelInputDims{/*batch=*/nb.batch_capacity,
+                             /*height=*/dims->Get(1), /*width=*/dims->Get(2),
+                             /*channels=*/dims->Get(3),
+                             /*is_dynamic_batch=*/nb.is_dynamic};
 }
 
 absl::Status CheckTiledImageProcessingOptions(

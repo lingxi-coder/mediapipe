@@ -430,6 +430,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
         tg->set_overlap_fraction(tiling.tile_overlap_fraction());
       }
       fo.set_batch_capacity(dims.batch);
+      fo.set_is_dynamic_batch(dims.is_dynamic_batch);
       fo.set_input_height(dims.height);
       fo.set_input_width(dims.width);
       fo.set_input_channels(dims.channels);
