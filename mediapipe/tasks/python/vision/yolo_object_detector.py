@@ -95,6 +95,44 @@ def _enrich_with_label_map(
   return result
 
 
+class MpTileRectC(ctypes.Structure):
+  """Byte-matches struct MpTileRect in the YOLO C header.
+
+  Field order/types MUST stay in sync with
+  mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h (pinned
+  by tiling_options_abi_test.cc).
+  """
+
+  _fields_ = [
+      ('x_center', ctypes.c_float),
+      ('y_center', ctypes.c_float),
+      ('width', ctypes.c_float),
+      ('height', ctypes.c_float),
+  ]
+
+
+class MpTilingOptionsC(ctypes.Structure):
+  """Byte-matches struct MpTilingOptions in the YOLO C header.
+
+  Field order/types MUST stay in sync with the C header (pinned by
+  tiling_options_abi_test.cc). enable_motion_scheduling is c_bool (1 byte) to
+  match the C `bool`; using c_int here would shift max_scheduled_tiles and
+  corrupt every options struct.
+  """
+
+  _fields_ = [
+      ('tile_rows', ctypes.c_int),
+      ('tile_cols', ctypes.c_int),
+      ('tile_overlap_fraction', ctypes.c_float),
+      ('explicit_tiles', ctypes.POINTER(MpTileRectC)),
+      ('explicit_tiles_count', ctypes.c_uint32),
+      ('tile_local_nms_iou_threshold', ctypes.c_float),
+      ('max_detections_after_tile_nms', ctypes.c_int),
+      ('enable_motion_scheduling', ctypes.c_bool),
+      ('max_scheduled_tiles', ctypes.c_int),
+  ]
+
+
 class MpYoloObjectDetectorOptionsC(ctypes.Structure):
   """YOLO detector options for the C API.
 
@@ -115,6 +153,7 @@ class MpYoloObjectDetectorOptionsC(ctypes.Structure):
       ('iou_threshold', ctypes.c_float),
       ('layout', ctypes.c_int),
       ('num_classes', ctypes.c_int),
+      ('tiling', MpTilingOptionsC),
       ('result_callback', _C_TYPES_RESULT_CALLBACK),
   ]
 

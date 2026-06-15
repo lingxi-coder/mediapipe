@@ -75,6 +75,29 @@ class YoloObjectDetectorTest(parameterized.TestCase):
     self.assertEqual(options.num_classes, 80)
     self.assertEqual(options.running_mode, _RUNNING_MODE.IMAGE)
 
+  def test_ctypes_tiling_layout_matches_c_abi(self):
+    """ctypes tiling structs byte-match the C header (see tiling_options_abi_test.cc)."""
+    import ctypes  # pylint: disable=g-import-not-at-top
+
+    self.assertEqual(ctypes.sizeof(yolo_object_detector.MpTileRectC), 16)
+    self.assertEqual(ctypes.sizeof(yolo_object_detector.MpTilingOptionsC), 48)
+
+    tiling_c = yolo_object_detector.MpTilingOptionsC
+    self.assertEqual(tiling_c.explicit_tiles.offset, 16)
+    self.assertEqual(tiling_c.explicit_tiles_count.offset, 24)
+    self.assertEqual(tiling_c.tile_local_nms_iou_threshold.offset, 28)
+    self.assertEqual(tiling_c.max_detections_after_tile_nms.offset, 32)
+    self.assertEqual(tiling_c.enable_motion_scheduling.offset, 36)
+    self.assertEqual(tiling_c.max_scheduled_tiles.offset, 40)
+
+    options_c = yolo_object_detector.MpYoloObjectDetectorOptionsC
+    # `tiling` sits contiguously between num_classes and result_callback.
+    self.assertGreater(options_c.tiling.offset, options_c.num_classes.offset)
+    self.assertEqual(
+        options_c.result_callback.offset,
+        options_c.tiling.offset + ctypes.sizeof(yolo_object_detector.MpTilingOptionsC),
+    )
+
   @unittest.skipUnless(_MODEL_PRESENT, 'yolov8n.tflite fixture not present; skipping inference test')
   def test_detect_image(self):
     """Runs inference and validates the detection result structure."""
