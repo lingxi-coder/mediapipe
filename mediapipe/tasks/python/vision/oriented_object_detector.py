@@ -209,6 +209,43 @@ _CTYPES_SIGNATURES = (
 
 
 @dataclasses.dataclass
+class TileRect:
+  """A frame-normalized tile given by its center point and size."""
+
+  x_center: float = 0.0
+  y_center: float = 0.0
+  width: float = 0.0
+  height: float = 0.0
+
+
+@dataclasses.dataclass
+class TilingOptions:
+  """Static tiling configuration for the OBB object detector (6 fields).
+
+  Mirrors OrientedObjectDetectorOptions.TilingOptions. Tiling is enabled when
+  tile_rows * tile_cols > 1 or explicit_tiles is non-empty. The defaults (1x1, no
+  explicit tiles) mean tiling disabled. To tile with a grid set BOTH tile_rows and
+  tile_cols (each >= 1); a zero in either disables tiling.
+
+  Attributes:
+    tile_rows: Number of grid rows. Mutually exclusive with explicit_tiles.
+    tile_cols: Number of grid columns. Mutually exclusive with explicit_tiles.
+    tile_overlap_fraction: Fractional overlap added around each grid tile.
+    explicit_tiles: Explicit (non-grid) tiles. Mutually exclusive with grid params.
+    tile_local_nms_iou_threshold: Per-tile (in-decoder) rotated NMS IoU threshold;
+      <= 0 disables.
+    max_detections_after_tile_nms: Per-tile cap after tile-local NMS; <= 0 disables.
+  """
+
+  tile_rows: int = 1
+  tile_cols: int = 1
+  tile_overlap_fraction: float = 0.0
+  explicit_tiles: Optional[List[TileRect]] = None
+  tile_local_nms_iou_threshold: float = 0.0
+  max_detections_after_tile_nms: int = 0
+
+
+@dataclasses.dataclass
 class OrientedObjectDetectorOptions:
   """Options for the oriented (OBB) object detector task.
 
@@ -239,6 +276,7 @@ class OrientedObjectDetectorOptions:
     layout: The output tensor layout of the OBB detect head. Default
       CHANNELS_FIRST.
     num_classes: Number of classes. If 0, derived from model metadata.
+    tiling: Static tiling configuration. Defaults to disabled (1x1).
     result_callback: The user-defined result callback for processing live stream
       data. The result callback should only be specified when the running mode
       is set to the live stream mode.
@@ -261,9 +299,45 @@ class OrientedObjectDetectorOptions:
   class_agnostic_nms: bool = False
   layout: Layout = Layout.CHANNELS_FIRST
   num_classes: int = 0
+  tiling: TilingOptions = dataclasses.field(default_factory=TilingOptions)
   result_callback: Optional[
       Callable[[OrientedObjectDetectorResult, image_module.Image, int], None]
   ] = None
+
+
+def _build_oriented_tiling_options_c(
+    tiling: TilingOptions,
+) -> tuple['MpOrientedTilingOptionsC', object]:
+  """Builds the ctypes MpOrientedTilingOptionsC from a TilingOptions dataclass.
+
+  Returns the populated struct AND the backing explicit_tiles array. The caller
+  MUST keep the returned array referenced until the C call that consumes the parent
+  options struct returns: explicit_tiles is a raw pointer into it. (ctypes also
+  records the array in the parent struct's _objects via the by-value copy; the C
+  converter copies the tiles into a std::vector synchronously during Create, so
+  outliving the Create call is sufficient.)
+  """
+  explicit_tiles = tiling.explicit_tiles or []
+  tiles_array = (MpOrientedTileRectC * len(explicit_tiles))(
+      *[
+          MpOrientedTileRectC(t.x_center, t.y_center, t.width, t.height)
+          for t in explicit_tiles
+      ]
+  )
+  tiling_c = MpOrientedTilingOptionsC(
+      tile_rows=tiling.tile_rows,
+      tile_cols=tiling.tile_cols,
+      tile_overlap_fraction=tiling.tile_overlap_fraction,
+      explicit_tiles=(
+          ctypes.cast(tiles_array, ctypes.POINTER(MpOrientedTileRectC))
+          if explicit_tiles
+          else None
+      ),
+      explicit_tiles_count=len(explicit_tiles),
+      tile_local_nms_iou_threshold=tiling.tile_local_nms_iou_threshold,
+      max_detections_after_tile_nms=tiling.max_detections_after_tile_nms,
+  )
+  return tiling_c, tiles_array
 
 
 class OrientedObjectDetector:
@@ -386,6 +460,10 @@ class OrientedObjectDetector:
     denylist_c = mediapipe_c_bindings_c_module.convert_strings_to_ctypes_array(
         options.category_denylist
     )
+    # tiles_keepalive holds the explicit_tiles backing array; it must stay
+    # referenced through the MpOrientedObjectDetectorCreate call below (the C
+    # converter copies the tiles into a std::vector synchronously during Create).
+    tiling_c, tiles_keepalive = _build_oriented_tiling_options_c(options.tiling)
     ctypes_options = MpOrientedObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
@@ -408,6 +486,7 @@ class OrientedObjectDetector:
         class_agnostic_nms=options.class_agnostic_nms,
         layout=int(options.layout),
         num_classes=options.num_classes,
+        tiling=tiling_c,
         result_callback=c_callback,
     )
 
