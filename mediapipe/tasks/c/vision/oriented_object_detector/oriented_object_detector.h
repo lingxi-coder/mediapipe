@@ -40,6 +40,36 @@ extern "C" {
 typedef struct MpOrientedObjectDetectorInternal* MpOrientedObjectDetectorPtr;
 typedef MpOrientedDetectionResult MpOrientedObjectDetectorResult;
 
+// A frame-normalized tile given by its CENTER point and size. Mirrors
+// OrientedObjectDetectorOptions::TilingOptions::TileRect. Named MpOrientedTileRect
+// (not MpTileRect) to avoid colliding with the YOLO detector's distinct global
+// extern "C" MpTileRect.
+struct MpOrientedTileRect {
+  float x_center;
+  float y_center;
+  float width;
+  float height;
+};
+
+// Static tiling configuration. Mirrors OrientedObjectDetectorOptions::TilingOptions
+// field-for-field (6 fields; OBB has no motion-scheduling knobs).
+//
+// Tiling is ENABLED when tile_rows * tile_cols > 1 or explicit_tiles_count > 0. A
+// zero-initialized MpOrientedTilingOptions means tiling DISABLED. To tile with a
+// grid, set BOTH tile_rows and tile_cols (each >= 1); a zero in either disables.
+struct MpOrientedTilingOptions {
+  int tile_rows;
+  int tile_cols;
+  float tile_overlap_fraction;
+  // Explicit (non-grid) tiles. Caller owns this array; it is COPIED during Create
+  // and need not outlive the MpOrientedObjectDetectorCreate call (mirrors the
+  // category_allowlist pointer+count convention).
+  const struct MpOrientedTileRect* explicit_tiles;
+  uint32_t explicit_tiles_count;
+  float tile_local_nms_iou_threshold;
+  int max_detections_after_tile_nms;
+};
+
 // Options for configuring a MediaPipe oriented (OBB) object detector task.
 struct MpOrientedObjectDetectorOptions {
   struct MpBaseOptions base_options;
@@ -73,6 +103,9 @@ struct MpOrientedObjectDetectorOptions {
 
   // Number of classes. If 0, derived from model metadata at graph build time.
   int num_classes;
+
+  // Static tiling configuration. Zero-initialized => tiling disabled.
+  struct MpOrientedTilingOptions tiling;
 
   // Result callback for live-stream mode. Must be set iff running_mode is
   // MP_RUNNING_MODE_LIVE_STREAM. The arguments passed to the callback are valid

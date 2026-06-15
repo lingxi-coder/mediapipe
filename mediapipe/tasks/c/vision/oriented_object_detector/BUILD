@@ -40,8 +40,14 @@ ORIENTED_OBJECT_DETECTOR_DEPS = [
 
 cc_library(
     name = "oriented_object_detector_lib",
-    srcs = ["oriented_object_detector.cc"],
-    hdrs = ["oriented_object_detector.h"],
+    srcs = [
+        "oriented_object_detector.cc",
+        "tiling_options_converter.cc",
+    ],
+    hdrs = [
+        "oriented_object_detector.h",
+        "tiling_options_converter.h",
+    ],
     visibility = ["//visibility:public"],
     deps = ORIENTED_OBJECT_DETECTOR_DEPS,
 )
@@ -71,10 +77,27 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "tiling_options_converter_test",
+    srcs = ["tiling_options_converter_test.cc"],
+    deps = [
+        ":oriented_object_detector_lib",
+        "//mediapipe/framework/port:gtest",
+        "//mediapipe/tasks/cc/vision/oriented_object_detector",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "oriented_object_detector_c_lib",
-    srcs = ["oriented_object_detector.cc"],
-    hdrs = ["oriented_object_detector.h"],
+    srcs = [
+        "oriented_object_detector.cc",
+        "tiling_options_converter.cc",
+    ],
+    hdrs = [
+        "oriented_object_detector.h",
+        "tiling_options_converter.h",
+    ],
     visibility = ["//mediapipe/tasks/c:__subpackages__"],
     deps = ORIENTED_OBJECT_DETECTOR_DEPS,
     alwayslink = 1,
