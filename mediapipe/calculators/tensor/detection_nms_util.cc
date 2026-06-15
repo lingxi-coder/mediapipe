@@ -54,10 +54,16 @@ float DetectionRelativeIoU(const Detection& a, const Detection& b) {
 std::vector<Detection> GreedyDetectionNms(std::vector<Detection> dets,
                                           float iou_threshold,
                                           bool class_agnostic) {
-  // Stable sort descending by score(0).
+  auto top_score = [](const Detection& d) {
+    return d.score_size() > 0 ? d.score(0) : 0.0f;
+  };
+  auto top_label = [](const Detection& d) {
+    return d.label_id_size() > 0 ? d.label_id(0) : -1;
+  };
+  // Stable sort descending by top score.
   std::stable_sort(dets.begin(), dets.end(),
-                   [](const Detection& x, const Detection& y) {
-                     return x.score(0) > y.score(0);
+                   [&](const Detection& x, const Detection& y) {
+                     return top_score(x) > top_score(y);
                    });
 
   const int n = static_cast<int>(dets.size());
@@ -69,9 +75,8 @@ std::vector<Detection> GreedyDetectionNms(std::vector<Detection> dets,
     kept.push_back(dets[i]);
     for (int j = i + 1; j < n; ++j) {
       if (suppressed[j]) continue;
-      // Per-class guard: only suppress if same label_id(0) or class-agnostic.
-      if (!class_agnostic &&
-          dets[i].label_id(0) != dets[j].label_id(0)) {
+      // Per-class guard: only suppress if same top label or class-agnostic.
+      if (!class_agnostic && top_label(dets[i]) != top_label(dets[j])) {
         continue;
       }
       if (DetectionRelativeIoU(dets[i], dets[j]) > iou_threshold) {

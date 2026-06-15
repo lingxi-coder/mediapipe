@@ -147,6 +147,20 @@ TEST(GreedyDetectionNmsTest, SingleDetectionKept) {
   EXPECT_NEAR(kept[0].score(0), 0.8f, 1e-6f);
 }
 
+TEST(GreedyDetectionNmsTest, HandlesMissingScoreAndLabel) {
+  // `a` is a normal detection; `b` shares the same box but has neither a score
+  // nor a label_id. The guarded code reads `b` as score 0.0 and label -1, so it
+  // sorts last and is treated as a distinct class -> not suppressed by `a`.
+  // Without the score_size()/label_id_size() guards this would be an
+  // out-of-bounds proto read (DCHECK-fatal in debug, UB in opt).
+  Detection a = Det(0.9f, 1, 0.0f, 0.0f, 0.5f, 0.5f);
+  Detection b;  // no score, no label_id, same box as `a`.
+  *b.mutable_location_data() = a.location_data();
+  auto kept = GreedyDetectionNms({a, b}, /*iou_threshold=*/0.5f,
+                                 /*class_agnostic=*/false);
+  EXPECT_EQ(kept.size(), 2u);
+}
+
 // -------------------------------------------------------------------------
 // GreedyOrientedDetectionNms tests
 // -------------------------------------------------------------------------

@@ -83,7 +83,9 @@ struct MpOrientedObjectDetectorOptions {
   // Max number of top-scored results. < 0 returns all; 0 is invalid.
   int max_results;
 
-  // Score threshold overriding the model metadata value. Default 0.25.
+  // Score threshold overriding the model metadata value. The C binding copies
+  // this verbatim; a zero-initialized struct yields 0.0 (NOT the C++/Python
+  // default of 0.25), so set it explicitly.
   float score_threshold;
 
   // Allowlist of category names (mutually exclusive with denylist).
