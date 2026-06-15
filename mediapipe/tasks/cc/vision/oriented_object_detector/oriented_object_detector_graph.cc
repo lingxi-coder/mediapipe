@@ -96,6 +96,27 @@ absl::Status SanityCheckOptions(
         "do not set both",
         MediaPipeTasksStatus::kInvalidArgumentError);
   }
+  if (options.tiling().tile_rows() < 0 || options.tiling().tile_cols() < 0) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling.tile_rows and tiling.tile_cols must be >= 0.",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
+  if (options.tiling().explicit_tiles_size() > 0 &&
+      (options.tiling().tile_rows() > 1 || options.tiling().tile_cols() > 1)) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling.explicit_tiles is mutually exclusive with a tiling.tile_rows / "
+        "tiling.tile_cols grid (> 1).",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
+  if (options.tiling().tile_overlap_fraction() < 0.0f ||
+      options.tiling().tile_overlap_fraction() >= 1.0f) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling.tile_overlap_fraction must be in [0.0, 1.0).",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
   return absl::OkStatus();
 }
 

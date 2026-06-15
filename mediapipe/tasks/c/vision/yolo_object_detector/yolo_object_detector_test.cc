@@ -202,4 +202,90 @@ TEST(YoloObjectDetectorCApiTest, MotionSchedulingInImageModeRejectedThroughBindi
   MpErrorFree(error_msg);
 }
 
+// SanityCheckOptions must reject explicit_tiles combined with a >1 grid with a
+// clean InvalidArgument (previously this crashed at TileGridCalculator::Open).
+// Gated on the yolov8n.tflite fixture: the validation runs during graph build,
+// which requires the model to load first.
+TEST(YoloObjectDetectorCApiTest, RejectsExplicitTilesWithGrid) {
+  const std::string model_path = GetFullPath(kYoloModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path;
+  }
+  const MpTileRect tiles[] = {{0.5f, 0.5f, 1.0f, 1.0f}};
+  MpYoloObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.num_classes = 80;
+  options.layout = 2;  // CHANNELS_LAST
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  options.tiling.explicit_tiles = tiles;
+  options.tiling.explicit_tiles_count = 1;
+
+  MpYoloObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpYoloObjectDetectorCreate(&options, &detector, &error_msg);
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpYoloObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("explicit_tiles"), std::string::npos);
+  MpErrorFree(error_msg);
+}
+
+// SanityCheckOptions must reject negative tile_rows/tile_cols cleanly.
+TEST(YoloObjectDetectorCApiTest, RejectsNegativeTileGrid) {
+  const std::string model_path = GetFullPath(kYoloModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path;
+  }
+  MpYoloObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.num_classes = 80;
+  options.layout = 2;  // CHANNELS_LAST
+  options.tiling.tile_rows = -1;
+  options.tiling.tile_cols = 2;
+
+  MpYoloObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpYoloObjectDetectorCreate(&options, &detector, &error_msg);
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpYoloObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("tile_rows"), std::string::npos);
+  MpErrorFree(error_msg);
+}
+
+// SanityCheckOptions must reject an out-of-range tile_overlap_fraction cleanly.
+TEST(YoloObjectDetectorCApiTest, RejectsOutOfRangeTileOverlap) {
+  const std::string model_path = GetFullPath(kYoloModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path;
+  }
+  MpYoloObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.num_classes = 80;
+  options.layout = 2;  // CHANNELS_LAST
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  options.tiling.tile_overlap_fraction = 1.5f;
+
+  MpYoloObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpYoloObjectDetectorCreate(&options, &detector, &error_msg);
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpYoloObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("tile_overlap_fraction"),
+            std::string::npos);
+  MpErrorFree(error_msg);
+}
+
 }  // namespace

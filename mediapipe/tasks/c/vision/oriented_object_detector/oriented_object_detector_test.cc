@@ -262,6 +262,90 @@ TEST(OrientedObjectDetectorCApiTest, TiledImageModeExplicitTiles) {
   MpOrientedObjectDetectorCloseResult(&result);
 }
 
+// SanityCheckOptions must reject explicit_tiles combined with a >1 grid with a
+// clean InvalidArgument (previously this crashed at TileGridCalculator::Open).
+TEST(OrientedObjectDetectorCApiTest, RejectsExplicitTilesWithGrid) {
+  const std::string model_path = GetFullPath(kObbModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path;
+  }
+  const MpOrientedTileRect tiles[] = {{0.5f, 0.5f, 1.0f, 1.0f}};
+  MpOrientedObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.num_classes = 15;
+  options.layout = 1;
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  options.tiling.explicit_tiles = tiles;
+  options.tiling.explicit_tiles_count = 1;
+
+  MpOrientedObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpOrientedObjectDetectorCreate(&options, &detector, &error_msg);
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpOrientedObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("explicit_tiles"), std::string::npos);
+  MpErrorFree(error_msg);
+}
+
+// SanityCheckOptions must reject negative tile_rows/tile_cols cleanly.
+TEST(OrientedObjectDetectorCApiTest, RejectsNegativeTileGrid) {
+  const std::string model_path = GetFullPath(kObbModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path;
+  }
+  MpOrientedObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.num_classes = 15;
+  options.layout = 1;
+  options.tiling.tile_rows = -1;
+  options.tiling.tile_cols = 2;
+
+  MpOrientedObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpOrientedObjectDetectorCreate(&options, &detector, &error_msg);
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpOrientedObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("tile_rows"), std::string::npos);
+  MpErrorFree(error_msg);
+}
+
+// SanityCheckOptions must reject an out-of-range tile_overlap_fraction cleanly.
+TEST(OrientedObjectDetectorCApiTest, RejectsOutOfRangeTileOverlap) {
+  const std::string model_path = GetFullPath(kObbModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path;
+  }
+  MpOrientedObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.num_classes = 15;
+  options.layout = 1;
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  options.tiling.tile_overlap_fraction = 1.5f;
+
+  MpOrientedObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpOrientedObjectDetectorCreate(&options, &detector, &error_msg);
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpOrientedObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("tile_overlap_fraction"),
+            std::string::npos);
+  MpErrorFree(error_msg);
+}
+
 TEST(OrientedObjectDetectorCApiTest, CategoryAllowlistAndDenylistFilterByName) {
   const std::string model_path = GetFullPath(kObbModel);
   if (!mediapipe::file::Exists(model_path).ok()) {
