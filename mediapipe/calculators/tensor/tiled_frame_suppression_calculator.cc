@@ -64,24 +64,34 @@ class TiledFrameSuppressionCalculator : public Node {
     if (tracker_present) {
       const auto& tr = *kInTracker(cc);
       if (options_.tracker_is_gap_fill_only()) {
-        // Keep only tracker boxes that don't overlap any fresh box. The inner
-        // loop is bounded by the original fresh count so appended tracker boxes
-        // are never treated as "fresh".
+        // Keep only tracker boxes that don't overlap any fresh box (gap-fill).
+        // When a tracker box DOES overlap a fresh box, fresh-wins geometry is
+        // unchanged, but we propagate the tracker's persistent track_id onto
+        // the best-IoU fresh box (Approach A). No-op when the tracker carries
+        // no track_id (e.g. the optical-flow BoxTracker path). The inner loop
+        // is bounded by the original fresh count so appended tracker boxes are
+        // never treated as "fresh".
         const size_t fresh_count = combined.size();
         for (const Detection& t : tr) {
-          bool overlaps = false;
+          int best_idx = -1;
+          float best_iou = options_.iou_threshold();
           for (size_t i = 0; i < fresh_count; ++i) {
             const Detection& f = combined[i];
             if (!options_.class_agnostic() && t.label_id_size() > 0 &&
                 f.label_id_size() > 0 && t.label_id(0) != f.label_id(0)) {
               continue;
             }
-            if (DetectionRelativeIoU(t, f) >= options_.iou_threshold()) {
-              overlaps = true;
-              break;
+            const float iou = DetectionRelativeIoU(t, f);
+            if (iou >= best_iou) {
+              best_iou = iou;
+              best_idx = static_cast<int>(i);
             }
           }
-          if (!overlaps) combined.push_back(t);
+          if (best_idx < 0) {
+            combined.push_back(t);  // gap-fill: keeps its own track_id
+          } else if (t.has_track_id() && !combined[best_idx].has_track_id()) {
+            combined[best_idx].set_track_id(t.track_id());
+          }
         }
       } else {
         combined.insert(combined.end(), tr.begin(), tr.end());

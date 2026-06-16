@@ -313,5 +313,89 @@ TEST(TiledFrameSuppressionCalculatorTest, DefaultConcatenatesTrackerIntoNms) {
   EXPECT_NEAR(out[0].score(0), 0.95f, 1e-5);
 }
 
+// Approach A: a tracker detection overlapping a surviving fresh detection
+// transfers its track_id onto the fresh one (geometry unchanged).
+TEST(TiledFrameSuppressionCalculatorTest, TransfersTrackIdToOverlappingFresh) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  // fresh: one box (no track_id). tracker: SAME box, track_id "7".
+  PushDets(&runner, "DETECTIONS", {Det(0.9f, 0, 0.10f, 0.10f, 0.40f, 0.40f)});
+  Detection tracked = Det(0.8f, 0, 0.10f, 0.10f, 0.40f, 0.40f);
+  tracked.set_track_id("7");
+  PushDets(&runner, "TRACKER_DETECTIONS", {tracked});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].track_id(), "7");
+}
+
+// A tracker detection overlapping no fresh box is appended as a gap-fill and
+// keeps its own track_id.
+TEST(TiledFrameSuppressionCalculatorTest, GapFillTrackerKeepsOwnTrackId) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  // fresh: box A (no id). tracker: box B far away, track_id "3".
+  PushDets(&runner, "DETECTIONS", {Det(0.9f, 0, 0.05f, 0.05f, 0.10f, 0.10f)});
+  Detection tracked = Det(0.8f, 0, 0.70f, 0.70f, 0.10f, 0.10f);
+  tracked.set_track_id("3");
+  PushDets(&runner, "TRACKER_DETECTIONS", {tracked});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 2u);
+  // The box-B detection (far away) carries track_id "3".
+  bool found = false;
+  for (const auto& d : out) {
+    if (d.has_track_id() && d.track_id() == "3") found = true;
+  }
+  EXPECT_TRUE(found);
+}
+
+// No-op when the tracker carries no track_id (the BoxTracker path).
+TEST(TiledFrameSuppressionCalculatorTest, NoTrackIdNoOp) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  // fresh: box A (no id). tracker: SAME box A, NO track_id.
+  PushDets(&runner, "DETECTIONS", {Det(0.9f, 0, 0.10f, 0.10f, 0.40f, 0.40f)});
+  PushDets(&runner, "TRACKER_DETECTIONS",
+           {Det(0.8f, 0, 0.10f, 0.10f, 0.40f, 0.40f)});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_FALSE(out[0].has_track_id());
+}
+
 }  // namespace
 }  // namespace mediapipe
