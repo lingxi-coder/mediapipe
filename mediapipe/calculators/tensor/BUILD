@@ -3421,6 +3421,47 @@ cc_test(
 )
 
 # ---------------------------------------------------------------------------
+# oriented_botsort_tracking_calculator: oriented analog of
+# botsort_tracking_calculator. Assigns BoTSORT track ids to oriented
+# detections via ID-association on their axis-aligned bounding boxes, keeping
+# the fresh rotated geometry (IMAGE + ORIENTED_DETECTIONS -> ORIENTED_DETECTIONS).
+# Reuses BotsortTrackingCalculatorOptions (no new options message).
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "oriented_botsort_tracking_calculator",
+    srcs = ["oriented_botsort_tracking_calculator.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":botsort_tracking_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//third_party:opencv",
+        "//third_party/botsort",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "oriented_botsort_tracking_calculator_test",
+    srcs = ["oriented_botsort_tracking_calculator_test.cc"],
+    deps = [
+        ":oriented_botsort_tracking_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
 # detection_label_id_codec_calculator: label_id <-> string round-trip for
 # optical-flow tracker integration.
 # ---------------------------------------------------------------------------
