@@ -198,8 +198,74 @@ class YoloObjectDetectorTest(parameterized.TestCase):
     # the whole parent prefix (base_options + scalars), not just tiling's
     # relative placement.
     self.assertEqual(options_c.tiling.offset, 136)
-    self.assertEqual(options_c.result_callback.offset, 184)
-    self.assertEqual(ctypes.sizeof(options_c), 192)
+    # tracking (sizeof 28) sits between tiling and result_callback; the parent's
+    # result_callback offset and sizeof are pinned by the tracking layout test.
+    self.assertEqual(options_c.tracking.offset, 184)
+    self.assertEqual(options_c.result_callback.offset, 216)
+    self.assertEqual(ctypes.sizeof(options_c), 224)
+
+  def test_build_tracking_options_c_marshalling(self):
+    """The dataclass->ctypes marshalling fills the struct; no model needed."""
+    tracking = yolo_object_detector.TrackingOptions(
+        tracker_type=yolo_object_detector.TrackerType.BOTSORT,
+        track_high_threshold=0.55,
+        track_low_threshold=0.15,
+        new_track_threshold=0.65,
+        track_buffer=45,
+        match_threshold=0.8,
+        enable_gmc=True,
+    )
+    tracking_c = yolo_object_detector._build_tracking_options_c(tracking)  # pylint: disable=protected-access
+
+    self.assertEqual(tracking_c.tracker_type, 2)
+    self.assertAlmostEqual(tracking_c.track_high_threshold, 0.55, places=5)
+    self.assertAlmostEqual(tracking_c.track_low_threshold, 0.15, places=5)
+    self.assertAlmostEqual(tracking_c.new_track_threshold, 0.65, places=5)
+    self.assertEqual(tracking_c.track_buffer, 45)
+    self.assertAlmostEqual(tracking_c.match_threshold, 0.8, places=5)
+    self.assertTrue(tracking_c.enable_gmc)
+
+  def test_tracking_defaults(self):
+    """A default YoloObjectDetectorOptions has BOX_TRACKER tracking; no model."""
+    options = _YoloObjectDetectorOptions(
+        base_options=base_options_module.BaseOptions(model_asset_path='unused'),
+    )
+    self.assertEqual(
+        options.tracking.tracker_type,
+        yolo_object_detector.TrackerType.BOX_TRACKER,
+    )
+    self.assertAlmostEqual(options.tracking.track_high_threshold, 0.6, places=5)
+    self.assertAlmostEqual(options.tracking.track_low_threshold, 0.1, places=5)
+    self.assertAlmostEqual(options.tracking.new_track_threshold, 0.7, places=5)
+    self.assertEqual(options.tracking.track_buffer, 30)
+    self.assertAlmostEqual(options.tracking.match_threshold, 0.7, places=5)
+    self.assertFalse(options.tracking.enable_gmc)
+
+  def test_ctypes_tracking_layout_matches_c_abi(self):
+    """ctypes tracking struct byte-matches the C header (tracking_options_abi_test.cc)."""
+    import ctypes  # pylint: disable=g-import-not-at-top
+
+    self.assertEqual(ctypes.sizeof(yolo_object_detector.MpTrackingOptionsC), 28)
+    offsets = {
+        f[0]: getattr(yolo_object_detector.MpTrackingOptionsC, f[0]).offset
+        for f in yolo_object_detector.MpTrackingOptionsC._fields_  # pylint: disable=protected-access
+    }
+    self.assertEqual(offsets['tracker_type'], 0)
+    self.assertEqual(offsets['track_high_threshold'], 4)
+    self.assertEqual(offsets['track_low_threshold'], 8)
+    self.assertEqual(offsets['new_track_threshold'], 12)
+    self.assertEqual(offsets['track_buffer'], 16)
+    self.assertEqual(offsets['match_threshold'], 20)
+    self.assertEqual(offsets['enable_gmc'], 24)
+    # c_bool width pin: an offset-only check cannot catch a c_bool->c_int swap.
+    self.assertEqual(
+        yolo_object_detector.MpTrackingOptionsC.enable_gmc.size, 1
+    )
+
+    options_c = yolo_object_detector.MpYoloObjectDetectorOptionsC
+    self.assertEqual(options_c.tracking.offset, 184)
+    self.assertEqual(options_c.result_callback.offset, 216)
+    self.assertEqual(ctypes.sizeof(options_c), 224)
 
   @unittest.skipUnless(_MODEL_PRESENT, 'yolov8n.tflite fixture not present; skipping inference test')
   def test_detect_image(self):

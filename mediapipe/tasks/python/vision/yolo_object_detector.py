@@ -46,6 +46,16 @@ class Layout(enum.IntEnum):
   CHANNELS_LAST = 2
 
 
+class TrackerType(enum.IntEnum):
+  """Tracker selection for the tiled VIDEO/LIVE_STREAM path.
+
+  Values are numerically equal to the C++/proto TrackerType enum.
+  """
+
+  BOX_TRACKER = 1  # optical-flow propagation (default)
+  BOTSORT = 2  # tracking-by-detection, motion-only
+
+
 _C_TYPES_RESULT_CALLBACK = ctypes.CFUNCTYPE(
     None,
     ctypes.c_int32,  # MpStatus
@@ -136,6 +146,25 @@ class MpTilingOptionsC(ctypes.Structure):
   ]
 
 
+class MpTrackingOptionsC(ctypes.Structure):
+  """Byte-matches struct MpTrackingOptions in the YOLO C header.
+
+  Layout pinned by tracking_options_abi_test.cc (sizeof 28; offsets
+  0/4/8/12/16/20/24; enable_gmc is c_bool = 1 byte). tracker_type is c_int with
+  values 0=unspecified->BOX_TRACKER, 1=BOX_TRACKER, 2=BOTSORT.
+  """
+
+  _fields_ = [
+      ('tracker_type', ctypes.c_int),
+      ('track_high_threshold', ctypes.c_float),
+      ('track_low_threshold', ctypes.c_float),
+      ('new_track_threshold', ctypes.c_float),
+      ('track_buffer', ctypes.c_int),
+      ('match_threshold', ctypes.c_float),
+      ('enable_gmc', ctypes.c_bool),
+  ]
+
+
 class MpYoloObjectDetectorOptionsC(ctypes.Structure):
   """YOLO detector options for the C API.
 
@@ -157,6 +186,7 @@ class MpYoloObjectDetectorOptionsC(ctypes.Structure):
       ('layout', ctypes.c_int),
       ('num_classes', ctypes.c_int),
       ('tiling', MpTilingOptionsC),
+      ('tracking', MpTrackingOptionsC),
       ('result_callback', _C_TYPES_RESULT_CALLBACK),
   ]
 
@@ -269,6 +299,24 @@ class TilingOptions:
 
 
 @dataclasses.dataclass
+class TrackingOptions:
+  """Tracker selection for the YOLO object detector (tiled stream path).
+
+  Mirrors the C++ YoloObjectDetectorOptions.TrackingOptions. Honored only when
+  tiling is enabled and running mode is not IMAGE; otherwise ignored. BOTSORT is
+  motion-only (no ReID). The knobs are used only for BOTSORT.
+  """
+
+  tracker_type: TrackerType = TrackerType.BOX_TRACKER
+  track_high_threshold: float = 0.6
+  track_low_threshold: float = 0.1
+  new_track_threshold: float = 0.7
+  track_buffer: int = 30
+  match_threshold: float = 0.7
+  enable_gmc: bool = False
+
+
+@dataclasses.dataclass
 class YoloObjectDetectorOptions:
   """Options for the YOLO object detector task.
 
@@ -297,6 +345,9 @@ class YoloObjectDetectorOptions:
       CHANNELS_FIRST.
     num_classes: Number of classes. If 0, derived from model metadata.
     tiling: Static tiling configuration. Defaults to disabled (1x1).
+    tracking: Tracker selection for the tiled VIDEO/LIVE_STREAM path. Honored
+      only when tiling is enabled and running mode is not IMAGE; otherwise
+      ignored. Defaults to BOX_TRACKER.
     result_callback: The user-defined result callback for processing live stream
       data. The result callback should only be specified when the running mode
       is set to the live stream mode.
@@ -319,6 +370,7 @@ class YoloObjectDetectorOptions:
   layout: Layout = Layout.CHANNELS_FIRST
   num_classes: int = 0
   tiling: TilingOptions = dataclasses.field(default_factory=TilingOptions)
+  tracking: TrackingOptions = dataclasses.field(default_factory=TrackingOptions)
   result_callback: Optional[
       Callable[
           [detections_module.DetectionResult, image_module.Image, int], None
@@ -363,6 +415,24 @@ def _build_tiling_options_c(
       max_scheduled_tiles=tiling.max_scheduled_tiles,
   )
   return tiling_c, tiles_array
+
+
+def _build_tracking_options_c(
+    tracking: TrackingOptions,
+) -> 'MpTrackingOptionsC':
+  """Builds the ctypes MpTrackingOptionsC from a TrackingOptions dataclass.
+
+  No pointer fields, so (unlike tiling) there is no backing array to keep alive.
+  """
+  return MpTrackingOptionsC(
+      tracker_type=int(tracking.tracker_type),
+      track_high_threshold=tracking.track_high_threshold,
+      track_low_threshold=tracking.track_low_threshold,
+      new_track_threshold=tracking.new_track_threshold,
+      track_buffer=tracking.track_buffer,
+      match_threshold=tracking.match_threshold,
+      enable_gmc=tracking.enable_gmc,
+  )
 
 
 class YoloObjectDetector:
@@ -483,6 +553,7 @@ class YoloObjectDetector:
     # referenced through the MpYoloObjectDetectorCreate call below (the C
     # converter copies the tiles into a std::vector synchronously during Create).
     tiling_c, tiles_keepalive = _build_tiling_options_c(options.tiling)
+    tracking_c = _build_tracking_options_c(options.tracking)
     ctypes_options = MpYoloObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
@@ -505,6 +576,7 @@ class YoloObjectDetector:
         layout=int(options.layout),
         num_classes=options.num_classes,
         tiling=tiling_c,
+        tracking=tracking_c,
         result_callback=c_callback,
     )
 
