@@ -142,6 +142,21 @@ TEST(OrientedObjectDetectorOptionsTest, TilingOptionsConvertToProto) {
   EXPECT_EQ(proto->tiling().max_detections_after_tile_nms(), 50);
 }
 
+TEST(OrientedObjectDetectorOptionsConverterTest, MapsTrackingOptions) {
+  auto options = std::make_unique<OrientedObjectDetectorOptions>();
+  options->tracking.tracker_type =
+      OrientedObjectDetectorOptions::TrackingOptions::kBotsort;
+  options->tracking.track_high_threshold = 0.55f;
+  options->tracking.match_threshold = 0.75f;
+  options->tracking.enable_gmc = true;
+  auto proto = ConvertOrientedObjectDetectorOptionsToProto(options.get());
+  EXPECT_EQ(proto->tracking().tracker_type(),
+            proto::OrientedObjectDetectorOptions::TrackingOptions::BOTSORT);
+  EXPECT_FLOAT_EQ(proto->tracking().track_high_threshold(), 0.55f);
+  EXPECT_FLOAT_EQ(proto->tracking().match_threshold(), 0.75f);
+  EXPECT_TRUE(proto->tracking().enable_gmc());
+}
+
 // ---------------------------------------------------------------------------
 // Image-mode test
 // ---------------------------------------------------------------------------

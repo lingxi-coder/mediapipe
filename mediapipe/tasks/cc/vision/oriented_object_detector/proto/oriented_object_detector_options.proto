@@ -94,4 +94,28 @@ message OrientedObjectDetectorOptions {
     optional int32 max_detections_after_tile_nms = 6 [default = 0];
   }
   optional TilingOptions tiling = 11;
+
+  // Tracker selection for the tiled VIDEO/LIVE_STREAM path. OBB supports only
+  // BOTSORT (axis-aligned ID-association; oriented geometry preserved); default
+  // is no tracking. Honored only when tiling is enabled and running mode is not
+  // IMAGE (validated at Create()).
+  // NOTE: BoTSORT only emits a track_id for CONFIRMED tracks, so
+  // track_high_threshold / new_track_threshold must be at or below the detector's
+  // score_threshold, otherwise low-confidence detections never confirm and no
+  // track_id is produced.
+  message TrackingOptions {
+    enum TrackerType {
+      TRACKER_UNSPECIFIED = 0;  // no tracking (stateless per-frame; default)
+      BOX_TRACKER = 1;          // NOT supported for OBB (rejected at Create)
+      BOTSORT = 2;              // tracking-by-detection, motion-only
+    }
+    optional TrackerType tracker_type = 1 [default = TRACKER_UNSPECIFIED];
+    optional float track_high_threshold = 2 [default = 0.6];
+    optional float track_low_threshold = 3 [default = 0.1];
+    optional float new_track_threshold = 4 [default = 0.7];
+    optional int32 track_buffer = 5 [default = 30];
+    optional float match_threshold = 6 [default = 0.7];
+    optional bool enable_gmc = 7 [default = false];
+  }
+  optional TrackingOptions tracking = 12;
 }

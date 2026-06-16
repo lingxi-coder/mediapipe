@@ -125,6 +125,29 @@ struct OrientedObjectDetectorOptions {
   };
   TilingOptions tiling;
 
+  // Tracker selection for the tiled VIDEO/LIVE_STREAM path. OBB supports only
+  // BOTSORT; default is no tracking. Honored only when tiling is enabled and
+  // running mode is not IMAGE; validated at Create(). NOTE: BoTSORT only emits a
+  // track_id for confirmed tracks, so set track_high_threshold /
+  // new_track_threshold at or below your score_threshold.
+  struct TrackingOptions {
+    // Values must stay numerically equal to the proto enum (UNSPECIFIED=0,
+    // BOX_TRACKER=1, BOTSORT=2) -- the converter static_casts between them.
+    enum TrackerType {
+      kTrackerUnspecified = 0,  // no tracking (default)
+      kBoxTracker = 1,          // not supported for OBB
+      kBotsort = 2,             // tracking-by-detection, motion-only
+    };
+    TrackerType tracker_type = kTrackerUnspecified;
+    float track_high_threshold = 0.6f;
+    float track_low_threshold = 0.1f;
+    float new_track_threshold = 0.7f;
+    int track_buffer = 30;
+    float match_threshold = 0.7f;
+    bool enable_gmc = false;
+  };
+  TrackingOptions tracking;
+
   // The user-defined result callback for processing live stream data.
   // The result callback should only be specified when the running mode is set
   // to RunningMode::LIVE_STREAM.

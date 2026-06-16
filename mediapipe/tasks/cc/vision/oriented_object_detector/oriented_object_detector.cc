@@ -147,6 +147,20 @@ ConvertOrientedObjectDetectorOptionsToProto(
       options->tiling.tile_local_nms_iou_threshold);
   tiling->set_max_detections_after_tile_nms(
       options->tiling.max_detections_after_tile_nms);
+  static_assert(static_cast<int>(OrientedObjectDetectorOptions::TrackingOptions::kBotsort) ==
+                    static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::BOTSORT));
+  static_assert(static_cast<int>(OrientedObjectDetectorOptions::TrackingOptions::kBoxTracker) ==
+                    static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::BOX_TRACKER));
+  auto* tracking = options_proto->mutable_tracking();
+  tracking->set_tracker_type(
+      static_cast<OrientedObjectDetectorOptionsProto::TrackingOptions::TrackerType>(
+          options->tracking.tracker_type));
+  tracking->set_track_high_threshold(options->tracking.track_high_threshold);
+  tracking->set_track_low_threshold(options->tracking.track_low_threshold);
+  tracking->set_new_track_threshold(options->tracking.new_track_threshold);
+  tracking->set_track_buffer(options->tracking.track_buffer);
+  tracking->set_match_threshold(options->tracking.match_threshold);
+  tracking->set_enable_gmc(options->tracking.enable_gmc);
   return options_proto;
 }
 
