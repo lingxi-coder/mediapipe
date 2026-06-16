@@ -202,6 +202,24 @@ TEST(YoloObjectDetectorCApiTest, MotionSchedulingInImageModeRejectedThroughBindi
   MpErrorFree(error_msg);
 }
 
+// BOTSORT selection is rejected in IMAGE mode by the C++ Create(), WITHOUT a
+// model fixture: the tracking validation fires before model load. This proves
+// the new `tracking` field is wired through the binding into Create.
+TEST(YoloObjectDetectorCApiTest, BotsortInImageModeRejectedThroughBinding) {
+  MpYoloObjectDetectorOptions options = {};
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.num_classes = 80;
+  options.tracking.tracker_type = 2;  // BOTSORT
+
+  MpYoloObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpYoloObjectDetectorCreate(&options, &detector, &error_msg);
+
+  EXPECT_NE(status, kMpOk);
+  if (error_msg) MpErrorFree(error_msg);
+}
+
 // SanityCheckOptions must reject explicit_tiles combined with a >1 grid with a
 // clean InvalidArgument (previously this crashed at TileGridCalculator::Open).
 // Gated on the yolov8n.tflite fixture: the validation runs during graph build,
