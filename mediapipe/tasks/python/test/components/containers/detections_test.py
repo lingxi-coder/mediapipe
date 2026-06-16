@@ -180,6 +180,36 @@ class DetectionsTest(absltest.TestCase):
         None,
     )
 
+  def test_create_detection_from_ctypes_with_track_id(self):
+    c_categories = (category_c_lib.MpCategoryC * 1)(_CATEGORY_WITH_NAMES)
+    c_detection = detections_c_lib.MpDetectionC(
+        categories=c_categories,
+        categories_count=1,
+        bounding_box=_RECT_1,
+        keypoints=None,
+        keypoints_count=0,
+        track_id=b'42',
+    )
+
+    actual_detection = detections_lib.Detection.from_ctypes(c_detection)
+
+    self.assertEqual(actual_detection.track_id, '42')
+
+  def test_create_detection_from_ctypes_without_track_id(self):
+    c_categories = (category_c_lib.MpCategoryC * 1)(_CATEGORY_WITH_NAMES)
+    c_detection = detections_c_lib.MpDetectionC(
+        categories=c_categories,
+        categories_count=1,
+        bounding_box=_RECT_1,
+        keypoints=None,
+        keypoints_count=0,
+        track_id=None,
+    )
+
+    actual_detection = detections_lib.Detection.from_ctypes(c_detection)
+
+    self.assertIsNone(actual_detection.track_id)
+
   def test_create_detection_result_from_ctypes(self):
     c_categories_1 = (category_c_lib.MpCategoryC * 1)(_CATEGORY_WITH_NAMES)
     c_keypoints_1 = (keypoint_c_lib.MpNormalizedKeypointC * 1)(_KEYPOINT_1)

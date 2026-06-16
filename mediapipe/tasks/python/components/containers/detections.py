@@ -32,11 +32,14 @@ class Detection:
     bounding_box: A BoundingBox object.
     categories: A list of Category objects.
     keypoints: A list of NormalizedKeypoint objects.
+    track_id: Optional persistent track ID string (e.g. from BoTSORT); None when
+      the detection is not part of a track.
   """
 
   bounding_box: bounding_box_lib.BoundingBox
   categories: List[category_lib.Category]
   keypoints: Optional[List[keypoint_lib.NormalizedKeypoint]] = None
+  track_id: Optional[str] = None
 
   def __eq__(self, other: Any) -> bool:
     """Checks if this object is equal to the given object.
@@ -53,6 +56,7 @@ class Detection:
         self.bounding_box == other.bounding_box
         and self.categories == other.categories
         and self.keypoints == other.keypoints
+        and self.track_id == other.track_id
     )
 
   @classmethod
@@ -78,10 +82,13 @@ class Detection:
     else:
       py_keypoints = None
 
+    track_id = c_obj.track_id.decode('utf-8') if c_obj.track_id else None
+
     return Detection(
         bounding_box=py_bounding_box,
         categories=py_categories,
         keypoints=py_keypoints,
+        track_id=track_id,
     )
 
 

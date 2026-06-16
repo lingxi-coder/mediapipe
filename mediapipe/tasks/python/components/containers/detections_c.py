@@ -29,6 +29,7 @@ class MpDetectionC(ctypes.Structure):
       ('bounding_box', rect_c.MpRectC),
       ('keypoints', ctypes.POINTER(keypoint_c.MpNormalizedKeypointC)),
       ('keypoints_count', ctypes.c_uint32),
+      ('track_id', ctypes.c_char_p),
   ]
 
 
