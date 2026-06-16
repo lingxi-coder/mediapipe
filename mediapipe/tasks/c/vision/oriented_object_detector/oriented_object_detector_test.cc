@@ -346,6 +346,27 @@ TEST(OrientedObjectDetectorCApiTest, RejectsOutOfRangeTileOverlap) {
   MpErrorFree(error_msg);
 }
 
+// BOTSORT in IMAGE mode is rejected by the C++ Create() WITHOUT a model fixture,
+// proving the tracking field is wired through the binding.
+TEST(OrientedObjectDetectorCApiTest, BotsortInImageModeRejectedThroughBinding) {
+  MpOrientedObjectDetectorOptions options = {};
+  options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
+  options.num_classes = 15;
+  options.tracking.tracker_type = 2;  // BOTSORT
+
+  MpOrientedObjectDetectorPtr detector = nullptr;
+  char* error_msg = nullptr;
+  const MpStatus status =
+      MpOrientedObjectDetectorCreate(&options, &detector, &error_msg);
+
+  EXPECT_NE(status, kMpOk);
+  if (detector) MpOrientedObjectDetectorClose(detector, /*error_msg=*/nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  EXPECT_NE(std::string(error_msg).find("tracking.tracker_type=BOTSORT"),
+            std::string::npos);
+  MpErrorFree(error_msg);
+}
+
 TEST(OrientedObjectDetectorCApiTest, CategoryAllowlistAndDenylistFilterByName) {
   const std::string model_path = GetFullPath(kObbModel);
   if (!mediapipe::file::Exists(model_path).ok()) {
