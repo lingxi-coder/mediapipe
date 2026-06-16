@@ -513,6 +513,68 @@ TEST(OrientedTrackingValidationTest, BoxTrackerRejected) {
               testing::HasSubstr("BoxTracker"));
 }
 
+// ---------------------------------------------------------------------------
+// Tiled VIDEO + BOTSORT real-fixture e2e: feeds boats.jpg across frames and
+// asserts that oriented detections carry track ids that stay stable across
+// consecutive frames. BoTSORT only emits a track_id for CONFIRMED tracks, so
+// the confirmation thresholds below are tuned BELOW this low-confidence
+// fixture's detection scores. These are fixture-specific test-only values and
+// NOT representative production defaults (see the TrackingOptions doc note).
+// ---------------------------------------------------------------------------
+TEST(OrientedObjectDetectorTest, TiledVideoTracksShipWithBotsort) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "OBB model fixture not available at " << model_path
+                 << "; integration assertions gated until yolov8n-obb.tflite is "
+                    "added to mediapipe/tasks/testdata/vision/.";
+  }
+
+  auto options = std::make_unique<OrientedObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::VIDEO;
+  options->num_classes = 15;
+  options->max_results = 10;
+  options->tiling.tile_rows = 2;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  // Tuned to this low-confidence fixture so BoTSORT confirms tracks. These are
+  // NOT representative production defaults (see the TrackingOptions doc note).
+  options->tracking.tracker_type =
+      OrientedObjectDetectorOptions::TrackingOptions::kBotsort;
+  options->tracking.track_high_threshold = 0.05f;
+  options->tracking.track_low_threshold = 0.02f;
+  options->tracking.new_track_threshold = 0.05f;
+  options->tracking.match_threshold = 0.95f;
+  options->tracking.track_buffer = 60;
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          OrientedObjectDetector::Create(std::move(options)));
+  MP_ASSERT_OK_AND_ASSIGN(Image image, DecodeImageFromFile(ImagePath()));
+
+  std::vector<std::set<std::string>> per_frame_ids;
+  for (int ts = 0; ts < 5; ++ts) {
+    MP_ASSERT_OK_AND_ASSIGN(auto result, detector->DetectForVideo(image, ts));
+    std::set<std::string> ids;
+    for (const auto& d : result.detections) {
+      if (d.track_id.has_value()) ids.insert(*d.track_id);
+    }
+    per_frame_ids.push_back(ids);
+  }
+  MP_ASSERT_OK(detector->Close());
+
+  ASSERT_GE(per_frame_ids.size(), 2u);
+  EXPECT_FALSE(per_frame_ids.back().empty()) << "final frame had no track ids";
+  bool stable = false;
+  for (size_t f = 1; f < per_frame_ids.size() && !stable; ++f) {
+    for (const auto& id : per_frame_ids[f]) {
+      if (per_frame_ids[f - 1].count(id)) {
+        stable = true;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(stable) << "expected a track id stable across consecutive frames";
+}
+
 }  // namespace
 }  // namespace oriented_object_detector
 }  // namespace vision
