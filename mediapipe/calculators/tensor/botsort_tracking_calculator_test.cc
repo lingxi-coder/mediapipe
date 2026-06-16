@@ -103,8 +103,8 @@ constexpr char kGmcNodeConfig[] = R"pb(
 
 // Two (then three) frames carrying the same labeled object, slightly moved. The
 // tracker should emit a tracked detection that preserves the input label and a
-// positive score, and that carries NO track_id/detection_id (parity contract).
-TEST(BotsortTrackingCalculatorTest, PreservesLabelAndScoreAndCarriesNoTrackId) {
+// positive score, and surfaces the BoTSORT track id.
+TEST(BotsortTrackingCalculatorTest, PreservesLabelAndScoreAndSurfacesTrackId) {
   CalculatorRunner runner(
       ParseTextProtoOrDie<CalculatorGraphConfig::Node>(kNodeConfig));
 
@@ -139,7 +139,10 @@ TEST(BotsortTrackingCalculatorTest, PreservesLabelAndScoreAndCarriesNoTrackId) {
   ASSERT_FALSE(last.empty());
   EXPECT_EQ(last[0].label_id(0), 7);
   EXPECT_GT(last[0].score(0), 0.0f);
-  EXPECT_FALSE(last[0].has_track_id());
+  // BoTSORT now surfaces its persistent track id (as the proto string field).
+  // detection_id remains unused.
+  EXPECT_TRUE(last[0].has_track_id());
+  EXPECT_FALSE(last[0].track_id().empty());
   EXPECT_FALSE(last[0].has_detection_id());
 }
 

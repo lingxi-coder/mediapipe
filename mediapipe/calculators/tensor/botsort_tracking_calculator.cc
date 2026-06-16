@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -43,9 +44,10 @@ namespace api2 {
 //                                    normalized RELATIVE_BOUNDING_BOX form.
 // Output : DETECTIONS (std::vector<mediapipe::Detection>) - the tracked boxes,
 //                                    again normalized. The output preserves
-//                                    label_id (<= 255) and score but carries NO
-//                                    track_id/detection_id (parity contract with
-//                                    the optical-flow tracker output).
+//                                    label_id (<= 255) and score, and now writes
+//                                    BoTSORT's persistent track id as the proto's
+//                                    string track_id field. detection_id is left
+//                                    unset.
 //
 // The vendored BoTSORT `Detection` type is in the global namespace; it is
 // referenced as `::Detection` to disambiguate from `mediapipe::Detection`.
@@ -113,6 +115,10 @@ class BotsortTrackingCalculator : public Node {
       Detection det;
       det.add_score(t->get_score());
       det.add_label_id(static_cast<int>(t->get_class_id()));
+      // Surface BoTSORT's persistent track id (an int) as the proto's string
+      // track_id field ("part of a track"). Consumed downstream by
+      // TiledFrameSuppression (id propagation) and the result containers.
+      det.set_track_id(std::to_string(t->track_id));
       auto* loc = det.mutable_location_data();
       loc->set_format(LocationData::RELATIVE_BOUNDING_BOX);
       auto* box = loc->mutable_relative_bounding_box();
