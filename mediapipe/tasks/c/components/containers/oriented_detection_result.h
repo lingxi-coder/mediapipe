@@ -33,6 +33,10 @@ struct MpOrientedDetection {
   float width;     // pixels
   float height;    // pixels
   float rotation;  // radians, counter-clockwise
+  // Optional persistent track ID (e.g. from BoTSORT), as a NUL-terminated
+  // string. `nullptr` when the detection is not part of a track. Owned by the
+  // result; freed by the detector's CloseResult.
+  const char* track_id;
 };
 
 struct MpOrientedDetectionResult {

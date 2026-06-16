@@ -234,6 +234,18 @@ cc_library(
     ],
 )
 
+cc_test(
+    name = "oriented_detection_result_converter_test",
+    srcs = ["oriented_detection_result_converter_test.cc"],
+    deps = [
+        ":oriented_detection_result",
+        ":oriented_detection_result_converter",
+        "//mediapipe/framework/port:gtest",
+        "//mediapipe/tasks/cc/components/containers:oriented_object_detection_result",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "embedding_result",
     hdrs = ["embedding_result.h"],

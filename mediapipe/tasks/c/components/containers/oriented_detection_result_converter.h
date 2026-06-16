@@ -21,10 +21,16 @@ limitations under the License.
 
 namespace mediapipe::tasks::c::components::containers {
 
+void CppConvertToOrientedDetection(
+    const mediapipe::tasks::components::containers::OrientedObjectDetection& in,
+    MpOrientedDetection* out);
+
 void CppConvertToOrientedDetectionResult(
     const mediapipe::tasks::components::containers::
         OrientedObjectDetectionResult& in,
     MpOrientedDetectionResult* out);
+
+void CppCloseOrientedDetection(MpOrientedDetection* in);
 
 void CppCloseOrientedDetectionResult(MpOrientedDetectionResult* in);
 

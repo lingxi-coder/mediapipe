@@ -16,6 +16,7 @@ limitations under the License.
 #include "mediapipe/tasks/c/components/containers/oriented_detection_result_converter.h"
 
 #include <cstddef>
+#include <cstdlib>
 
 #include "mediapipe/tasks/c/components/containers/category.h"
 #include "mediapipe/tasks/c/components/containers/category_converter.h"
@@ -43,6 +44,8 @@ void CppConvertToOrientedDetection(const CppOrientedDetection& in,
   out->width = in.width;
   out->height = in.height;
   out->rotation = in.rotation;
+  out->track_id =
+      in.track_id.has_value() ? strdup(in.track_id->c_str()) : nullptr;
 }
 
 void CppConvertToOrientedDetectionResult(const CppOrientedDetectionResult& in,
@@ -60,6 +63,8 @@ void CppCloseOrientedDetection(MpOrientedDetection* in) {
   }
   delete[] in->categories;
   in->categories = nullptr;
+  free(const_cast<char*>(in->track_id));
+  in->track_id = nullptr;
 }
 
 void CppCloseOrientedDetectionResult(MpOrientedDetectionResult* in) {
