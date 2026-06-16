@@ -39,6 +39,9 @@ struct Detection {
   // in the template matching detection, e.g. KNIFT, they can represent the
   // feature points for template matching.
   std::optional<std::vector<NormalizedKeypoint>> keypoints = std::nullopt;
+  // Optional persistent track ID (set by tracking-by-detection trackers, e.g.
+  // BoTSORT). std::nullopt when the detection is not part of a track.
+  std::optional<std::string> track_id = std::nullopt;
 };
 
 // Detection results of a model.

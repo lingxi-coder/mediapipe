@@ -69,6 +69,9 @@ Detection ConvertToDetection(const mediapipe::Detection& detection_proto) {
                                 : std::nullopt});
     }
   }
+  if (detection_proto.has_track_id()) {
+    detection.track_id = detection_proto.track_id();
+  }
   return detection;
 }
 

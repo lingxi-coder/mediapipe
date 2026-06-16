@@ -63,6 +63,16 @@ cc_library(
     ],
 )
 
+cc_test(
+    name = "detection_result_test",
+    srcs = ["detection_result_test.cc"],
+    deps = [
+        ":detection_result",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
 cc_library(
     name = "embedding_result",
     srcs = ["embedding_result.cc"],
