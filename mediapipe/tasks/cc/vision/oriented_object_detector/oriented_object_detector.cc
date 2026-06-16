@@ -208,6 +208,40 @@ OrientedObjectDetector::Create(
         };
   }
   const bool tiling_enabled = TilingEnabled(options_proto->tiling());
+  const auto obb_tracker = options_proto->tracking().tracker_type();
+  if (obb_tracker ==
+      OrientedObjectDetectorOptionsProto::TrackingOptions::BOX_TRACKER) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tracking.tracker_type=BOX_TRACKER: BoxTracker is not supported for "
+        "oriented detection; use BOTSORT.",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
+  if (obb_tracker ==
+      OrientedObjectDetectorOptionsProto::TrackingOptions::BOTSORT) {
+    if (options->running_mode == core::RunningMode::IMAGE) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT requires VIDEO or LIVE_STREAM running "
+          "mode; tracking is not available in IMAGE mode.",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+    if (!tiling_enabled) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT requires tiling to be enabled; the "
+          "non-tiled path has no tracker stage.",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+    if (options_proto->num_classes() < 1 ||
+        options_proto->num_classes() > 256) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT requires num_classes in [1, 256] "
+          "(BoTSORT stores the class id as uint8).",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+  }
   auto detector =
       core::VisionTaskApiFactory::Create<OrientedObjectDetector,
                                          OrientedObjectDetectorOptionsProto>(

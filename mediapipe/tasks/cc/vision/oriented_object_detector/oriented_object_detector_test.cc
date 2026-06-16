@@ -35,6 +35,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "mediapipe/framework/deps/file_path.h"
 #include "mediapipe/framework/formats/image.h"
 #include "mediapipe/framework/port/file_helpers.h"
@@ -464,6 +466,51 @@ TEST(OrientedObjectDetectorTest, TiledExplicitTilesWithOverlapRejected) {
   EXPECT_EQ(detector.status().code(), absl::StatusCode::kInvalidArgument);
   EXPECT_THAT(detector.status().message(),
               testing::HasSubstr("tile_overlap_fraction"));
+}
+
+// ---------------------------------------------------------------------------
+// BOTSORT tracker-selection validation — all fire at Create() before the model
+// loads (no model_asset_path set), so no fixture is required. For OBB, BOTSORT
+// requires stream mode + tiling + num_classes in [1, 256], and BOX_TRACKER is
+// rejected outright (OBB has no optical-flow tracker stage). OBB has no
+// motion-scheduling option, so there is no motion-scheduling gate.
+// ---------------------------------------------------------------------------
+TEST(OrientedTrackingValidationTest, BotsortInImageModeRejected) {
+  auto o = std::make_unique<OrientedObjectDetectorOptions>();
+  o->running_mode = core::RunningMode::IMAGE;
+  o->num_classes = 15;
+  o->tiling.tile_rows = 2;
+  o->tiling.tile_cols = 2;
+  o->tracking.tracker_type =
+      OrientedObjectDetectorOptions::TrackingOptions::kBotsort;
+  auto r = OrientedObjectDetector::Create(std::move(o));
+  EXPECT_EQ(r.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(std::string(r.status().message()), testing::HasSubstr("IMAGE"));
+}
+
+TEST(OrientedTrackingValidationTest, BotsortWithoutTilingRejected) {
+  auto o = std::make_unique<OrientedObjectDetectorOptions>();
+  o->running_mode = core::RunningMode::VIDEO;
+  o->num_classes = 15;  // tiling default 1x1 (disabled)
+  o->tracking.tracker_type =
+      OrientedObjectDetectorOptions::TrackingOptions::kBotsort;
+  auto r = OrientedObjectDetector::Create(std::move(o));
+  EXPECT_EQ(r.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(std::string(r.status().message()), testing::HasSubstr("tiling"));
+}
+
+TEST(OrientedTrackingValidationTest, BoxTrackerRejected) {
+  auto o = std::make_unique<OrientedObjectDetectorOptions>();
+  o->running_mode = core::RunningMode::VIDEO;
+  o->num_classes = 15;
+  o->tiling.tile_rows = 2;
+  o->tiling.tile_cols = 2;
+  o->tracking.tracker_type =
+      OrientedObjectDetectorOptions::TrackingOptions::kBoxTracker;
+  auto r = OrientedObjectDetector::Create(std::move(o));
+  EXPECT_EQ(r.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(std::string(r.status().message()),
+              testing::HasSubstr("BoxTracker"));
 }
 
 }  // namespace
