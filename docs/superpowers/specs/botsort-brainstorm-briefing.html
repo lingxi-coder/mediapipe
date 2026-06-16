@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BoTSORT Integration — Brainstorming Briefing</title>
+<style>
+  :root {
+    --bg: #0f1216;
+    --panel: #171b21;
+    --panel-2: #1d232b;
+    --ink: #e6edf3;
+    --muted: #9fb0c0;
+    --line: #2a323c;
+    --accent: #5db0ff;
+    --accent-2: #7ee787;
+    --warn: #ffb454;
+    --danger: #ff7b72;
+    --chip: #233040;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 0 0 80px;
+  }
+  header {
+    padding: 32px 40px 24px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #141a21, #0f1216);
+  }
+  header h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.3px; }
+  header .sub { color: var(--muted); font-size: 14px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 40px; }
+  section { margin: 34px 0; }
+  h2 { font-size: 19px; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h2 .n { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  p { margin: 10px 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--chip); padding: 1px 6px; border-radius: 5px; color: #cfe3ff; }
+  .grid { display: grid; gap: 16px; }
+  .two { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 820px) { .two { grid-template-columns: 1fr; } .wrap, header { padding-left: 20px; padding-right: 20px; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px;
+  }
+  .card.flow { background: var(--panel-2); }
+  .card h3 { margin: 0 0 8px; font-size: 15px; }
+  .muted { color: var(--muted); }
+  .chip {
+    display: inline-block; background: var(--chip); color: #cfe3ff; border: 1px solid var(--line);
+    border-radius: 999px; padding: 2px 10px; font-size: 12px; margin: 2px 4px 2px 0;
+  }
+  .pipeline {
+    font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--muted);
+    background: #0c0f13; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto;
+    white-space: pre;
+  }
+  .pipeline b { color: var(--accent-2); font-weight: 600; }
+  .pipeline .hl { color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.ok { color: var(--accent-2); } td.no { color: var(--danger); } td.maybe { color: var(--warn); }
+  .q { border-left: 3px solid var(--accent); padding-left: 16px; margin: 18px 0; }
+  .opt { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 10px 0; }
+  .opt .lab { font-weight: 700; font-size: 15px; }
+  .opt.rec { border-color: #2f6b3f; }
+  .badge-rec { background: #14331e; color: var(--accent-2); border: 1px solid #2f6b3f; border-radius: 999px; padding: 1px 9px; font-size: 11px; margin-left: 8px; }
+  .legend { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .kbd { color: var(--warn); }
+  .footnote { color: var(--muted); font-size: 13px; border-top: 1px dashed var(--line); padding-top: 14px; margin-top: 28px; }
+  .pill-row { margin: 6px 0 2px; }
+  .arrow { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>BoTSORT Integration — Brainstorming Briefing</h1>
+    <div class="sub">MediaPipe fork · branch <code>dev</code> · making BoxTracker vs. BoTSORT a user-selectable tracker in the livestream object-detection flow</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section>
+    <h2><span class="n">1</span>What exists today</h2>
+    <p>Tracking currently lives in <b>one place only</b>: the <i>tiled stream</i> path of the YOLO object detector. It uses the <b>BoxTracker</b> — an <b>optical-flow propagator</b> — wrapped as <code>ObjectTrackingSubgraphCpu</code>, fused back through a <code>TRACKER_DETECTIONS</code> seam.</p>
+    <div class="card flow">
+      <div class="pipeline">IMAGE ─┬─────────────────────────────────────────────┐
+       │                                             ▼
+DETECTIONS ─▶ <b>ENCODE</b> label_id→str ─▶ <b>ObjectTrackingSubgraphCpu</b> (BoxTracker / optical flow)
+                                                     │
+                          <b>DECODE</b> str→label_id ◀────────────┘
+                                  │
+                          <b>DetectionsTickGate</b> (TICK = fresh DETECTIONS)
+                                  │
+                                  ▼
+                          <span class="hl">TRACKER_DETECTIONS</span>  ──▶ merge graph ──▶ output</div>
+    </div>
+    <p class="muted">Implication: "add BoTSORT to the livestream flow" most naturally means <i>this same seam</i>. Whether it should also cover the <b>non-tiled</b> stream path is an open scope question (Q4 below).</p>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>BoTSORT-cpp at a glance</h2>
+    <div class="grid two">
+      <div class="card">
+        <h3>Source layout (clean)</h3>
+        <p class="muted"><code>botsort/include/*.h</code> + <code>botsort/src/*.cpp</code></p>
+        <div class="pill-row">
+          <span class="chip">BoTSORT</span><span class="chip">track</span><span class="chip">KalmanFilter</span>
+          <span class="chip">matching / lapjv</span><span class="chip">GlobalMotionCompensation</span><span class="chip">DataType</span><span class="chip">utils</span>
+        </div>
+        <p class="muted" style="margin-top:10px">ReID / TensorRT files (<code>ReID.*</code>, <code>TRT_InferenceEngine/*</code>) compile <b>only when CUDA is found</b>.</p>
+      </div>
+      <div class="card">
+        <h3>Public API</h3>
+        <div class="pipeline" style="white-space:pre-wrap">BoTSORT(tracker_cfg, gmc_cfg,
+        reid_cfg, onnx_path);
+
+std::vector&lt;shared_ptr&lt;Track&gt;&gt;
+track(vector&lt;Detection&gt; dets,
+      const cv::Mat&amp; frame);</div>
+        <p class="muted" style="margin-top:8px">Frame is always required (GMC uses it). Output carries a <b>persistent track ID</b> per object.</p>
+      </div>
+    </div>
+    <h3 style="margin-top:18px">Dependencies vs. what this repo already vendors</h3>
+    <table>
+      <tr><th>Dependency</th><th>Needed for</th><th>Status here</th></tr>
+      <tr><td>OpenCV</td><td>frames, GMC</td><td class="ok">✓ vendored</td></tr>
+      <tr><td>Eigen3</td><td>Kalman / linear algebra</td><td class="ok">✓ vendored (<code>eigen.BUILD</code>)</td></tr>
+      <tr><td>Boost::filesystem</td><td>their <code>.ini</code> config loader only</td><td class="maybe">⚠ avoidable — configure from proto, skip INIReader</td></tr>
+      <tr><td>CUDA / TensorRT / ONNXRuntime</td><td>ReID appearance embeddings</td><td class="no">✗ not built on CPU desktop → motion-only</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>The core difference — why this isn't a trivial swap</h2>
+    <div class="grid two">
+      <div class="card">
+        <h3>BoxTracker (today)</h3>
+        <p><b>Optical-flow propagation.</b> Moves last-known boxes forward by dense pixel motion. Naturally fills SKIP frames. No notion of a stable object identity in the output contract.</p>
+      </div>
+      <div class="card">
+        <h3>BoTSORT (proposed)</h3>
+        <p><b>Tracking-by-detection.</b> Kalman motion prediction + Hungarian/lapjv association + global motion compensation. Emits <b>persistent track IDs</b>. On a detection-less frame it Kalman-predicts forward (also a valid gap-fill).</p>
+      </div>
+    </div>
+    <p>Their interfaces line up (<code>frame + detections → detections</code>), so BoTSORT can be a <b>drop-in alternative at the seam</b>. The real question is what to do with its signature feature — track IDs.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>Decision needed now — output contract</h2>
+    <div class="q"><b>How should BoTSORT's persistent track IDs show up in the detector's output?</b></div>
+
+    <div class="opt rec">
+      <div class="lab">A · Parity drop-in, IDs internal <span class="badge-rec">recommended to start</span></div>
+      <p>BoTSORT is an alternative tracker behind the <b>same output contract</b> as BoxTracker — no track-id field exposed. Reuses the existing <code>TRACKER_DETECTIONS</code> seam unchanged → smallest blast radius. Track IDs can be surfaced in a later follow-up.</p>
+    </div>
+
+    <div class="opt">
+      <div class="lab">B · Surface track IDs (new capability)</div>
+      <p>Expose the stable per-object ID on each output <code>Detection</code> (e.g. <code>detection_id</code> / a track-id field). Genuinely more useful for livestream apps, but the public output contract changes for the BoTSORT path and there's more to design + bind.</p>
+    </div>
+
+    <p class="legend">Reversible: starting at A and adding B later is cheap. Starting at B commits the public contract up front.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>Other scope questions queued after this one</h2>
+    <table>
+      <tr><th>#</th><th>Question</th><th>My leaning</th></tr>
+      <tr><td>Q2</td><td><b>Vendoring method</b>: hand-written <code>cc_library</code> BUILD wrapping the sources, vs. <code>rules_foreign_cc</code> CMake build</td><td class="maybe">Hand-written BUILD (full Bazel control, deps on vendored Eigen/OpenCV, drop ReID/TRT + Boost)</td></tr>
+      <tr><td>Q3</td><td><b>ReID</b>: motion-only (Kalman + IoU + GMC) vs. include appearance ReID</td><td class="maybe">Motion-only (ReID needs CUDA/ONNX — unbuildable + unverifiable here)</td></tr>
+      <tr><td>Q4</td><td><b>Footprint</b>: tiled-stream only (match BoxTracker today) vs. also non-tiled livestream</td><td class="maybe">Match today's footprint (tiled stream) — extend later</td></tr>
+      <tr><td>Q5</td><td><b>Selection API depth</b>: C++ proto only now, vs. also thread through C-API + Python</td><td class="maybe">Decide together — project has a strong bindings-arc precedent</td></tr>
+      <tr><td>Q6</td><td><b>Detectors</b>: YOLO only (where tracking lives) vs. YOLO + OBB</td><td class="maybe">YOLO only (OBB tracking is deferred)</td></tr>
+    </table>
+  </section>
+
+  <div class="footnote">
+    Next step: tell me your pick on the <span class="kbd">output-contract</span> question (A or B), plus any reactions to Q2–Q6 — or just say "your recommendations" and I'll proceed with the leanings above. I'll then walk the remaining questions one at a time and write the design spec.
+  </div>
+
+</div>
+</body>
+</html>
