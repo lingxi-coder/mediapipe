@@ -530,19 +530,27 @@ TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWithBotsort) {
   MP_ASSERT_OK_AND_ASSIGN(auto detector,
                           YoloObjectDetector::Create(std::move(options)));
 
+  int frames_with_boat = 0;
   const int kFrames = 8;
-  YoloObjectDetectorResult last_result;
   for (int i = 0; i < kFrames; ++i) {
     Image frame = TranslateImage(base_image, /*dx=*/2 * i, /*dy=*/0);
-    MP_ASSERT_OK_AND_ASSIGN(last_result,
+    MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
                             detector->DetectForVideo(frame, /*timestamp_ms=*/i));
+    for (const auto& d : result.detections) {
+      ASSERT_EQ(d.categories.size(), 1u);
+      if (d.categories[0].index == 8) {
+        ++frames_with_boat;
+        break;
+      }
+    }
   }
   MP_ASSERT_OK(detector->Close());
 
-  // BoTSORT runs on every inferred frame; by the last frame the tiled boats
-  // scene must produce at least one detection.
-  EXPECT_FALSE(last_result.detections.empty())
-      << "expected non-empty BoTSORT detections on the last tiled frame";
+  // BoTSORT runs on every inferred frame; the tiled boats scene must yield
+  // boat content (category index 8) across most frames, mirroring the
+  // sibling TiledVideoTracksBoatsWhilePanning flake-resistant assertion.
+  EXPECT_GE(frames_with_boat, kFrames / 2)
+      << "expected boats tracked across most BoTSORT tiled frames";
 }
 
 // ---------------------------------------------------------------------------
