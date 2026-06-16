@@ -526,12 +526,27 @@ TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWithBotsort) {
   // Select the BoTSORT tracker instead of the default optical-flow BoxTracker.
   options->tracking.tracker_type =
       YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+  // The boats scene is detected at a low score_threshold (0.09), so the boat
+  // detections sit well below BoTSORT's default new_track_threshold (0.7) and
+  // track_high_threshold (0.6). With the defaults BoTSORT confirms zero tracks
+  // and never emits a track_id. Lower the confirmation thresholds beneath the
+  // detection scores so tracks actually form and persist across frames.
+  options->tracking.track_high_threshold = 0.05f;
+  options->tracking.new_track_threshold = 0.05f;
+  options->tracking.track_low_threshold = 0.02f;
+  // Relax the association gate and widen the lost-track buffer so confirmed
+  // tracks survive the per-frame panning jitter (dx=2px) and the tile-merge
+  // box noise rather than dying after a single unmatched frame; otherwise the
+  // tracker emits an empty set on some frames and no id reaches the result.
+  options->tracking.match_threshold = 0.95f;
+  options->tracking.track_buffer = 60;
 
   MP_ASSERT_OK_AND_ASSIGN(auto detector,
                           YoloObjectDetector::Create(std::move(options)));
 
   int frames_with_boat = 0;
   const int kFrames = 8;
+  std::vector<std::set<std::string>> per_frame_track_ids;
   for (int i = 0; i < kFrames; ++i) {
     Image frame = TranslateImage(base_image, /*dx=*/2 * i, /*dy=*/0);
     MP_ASSERT_OK_AND_ASSIGN(YoloObjectDetectorResult result,
@@ -543,6 +558,11 @@ TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWithBotsort) {
         break;
       }
     }
+    std::set<std::string> ids_this_frame;
+    for (const auto& det : result.detections) {
+      if (det.track_id.has_value()) ids_this_frame.insert(*det.track_id);
+    }
+    per_frame_track_ids.push_back(ids_this_frame);
   }
   MP_ASSERT_OK(detector->Close());
 
@@ -551,6 +571,20 @@ TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWithBotsort) {
   // sibling TiledVideoTracksBoatsWhilePanning flake-resistant assertion.
   EXPECT_GE(frames_with_boat, kFrames / 2)
       << "expected boats tracked across most BoTSORT tiled frames";
+
+  // BoTSORT track ids survive the full pipeline to the public result, and at
+  // least one object keeps a stable id across consecutive frames.
+  ASSERT_GE(per_frame_track_ids.size(), 2u);
+  const auto& last_ids = per_frame_track_ids.back();
+  EXPECT_FALSE(last_ids.empty()) << "final frame produced no track ids";
+  bool stable = false;
+  for (size_t f = 1; f < per_frame_track_ids.size() && !stable; ++f) {
+    for (const auto& id : per_frame_track_ids[f]) {
+      if (per_frame_track_ids[f - 1].count(id)) { stable = true; break; }
+    }
+  }
+  EXPECT_TRUE(stable)
+      << "expected at least one track id stable across consecutive frames";
 }
 
 // ---------------------------------------------------------------------------
