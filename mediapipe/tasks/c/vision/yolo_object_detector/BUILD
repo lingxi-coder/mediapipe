@@ -42,10 +42,12 @@ cc_library(
     name = "yolo_object_detector_lib",
     srcs = [
         "tiling_options_converter.cc",
+        "tracking_options_converter.cc",
         "yolo_object_detector.cc",
     ],
     hdrs = [
         "tiling_options_converter.h",
+        "tracking_options_converter.h",
         "yolo_object_detector.h",
     ],
     visibility = ["//visibility:public"],
@@ -90,6 +92,17 @@ cc_test(
 )
 
 cc_test(
+    name = "tracking_options_converter_test",
+    srcs = ["tracking_options_converter_test.cc"],
+    deps = [
+        ":yolo_object_detector_lib",
+        "//mediapipe/framework/port:gtest",
+        "//mediapipe/tasks/cc/vision/yolo_object_detector",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "tiling_options_abi_test",
     srcs = ["tiling_options_abi_test.cc"],
     deps = [
@@ -113,10 +126,12 @@ cc_library(
     name = "yolo_object_detector_c_lib",
     srcs = [
         "tiling_options_converter.cc",
+        "tracking_options_converter.cc",
         "yolo_object_detector.cc",
     ],
     hdrs = [
         "tiling_options_converter.h",
+        "tracking_options_converter.h",
         "yolo_object_detector.h",
     ],
     visibility = ["//mediapipe/tasks/c:__subpackages__"],
