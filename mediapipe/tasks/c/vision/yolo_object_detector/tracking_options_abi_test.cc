@@ -53,6 +53,11 @@ static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) ==
 // this fails loudly and the Python ctypes mirror must be updated in lockstep.
 static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) == 184,
               "tracking offset pinned for the Python ctypes mirror");
+// NOTE: these parent-layout pins (result_callback == 216, sizeof == 224) are
+// intentionally duplicated in the sibling tiling_options_abi_test.cc as
+// defense-in-depth; a parent reorder must update both.
+// result_callback is 8-byte aligned; tracking ends at 212 (184+28), so 4 pad
+// bytes precede result_callback at 216 (the layout is NOT contiguous at 212).
 static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 216, "");
 static_assert(sizeof(MpYoloObjectDetectorOptions) == 224, "");
 

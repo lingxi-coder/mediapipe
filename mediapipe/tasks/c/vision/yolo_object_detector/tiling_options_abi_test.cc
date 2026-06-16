@@ -66,6 +66,9 @@ static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) ==
 // (incl. MpBaseOptionsC) must be updated in lockstep.
 static_assert(offsetof(MpYoloObjectDetectorOptions, tiling) == 136,
               "parent prefix size pinned for the Python ctypes mirror");
+// NOTE: these parent-layout pins (result_callback == 216, sizeof == 224) are
+// intentionally duplicated in the sibling tracking_options_abi_test.cc as
+// defense-in-depth; a parent reorder must update both.
 static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 216, "");
 static_assert(sizeof(MpYoloObjectDetectorOptions) == 224, "");
 
