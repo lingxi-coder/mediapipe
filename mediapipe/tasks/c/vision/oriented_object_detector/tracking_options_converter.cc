@@ -25,6 +25,9 @@ namespace ObbNs = ::mediapipe::tasks::vision::oriented_object_detector;
 void CppConvertToTrackingOptions(
     const MpOrientedTrackingOptions& in,
     ObbNs::OrientedObjectDetectorOptions::TrackingOptions* out) {
+  // tracker_type copied verbatim: 0/1/2 == unspecified/kBoxTracker/kBotsort.
+  // Knobs copied 1:1; honored only for BOTSORT. BOX_TRACKER is rejected at the
+  // cc Create(), not here.
   out->tracker_type =
       static_cast<ObbNs::OrientedObjectDetectorOptions::TrackingOptions::
                       TrackerType>(in.tracker_type);

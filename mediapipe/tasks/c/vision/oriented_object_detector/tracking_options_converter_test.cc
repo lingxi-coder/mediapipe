@@ -57,7 +57,7 @@ TEST(OrientedTrackingOptionsConverterTest, MapsTrackerTypeEnumValues) {
   MpOrientedTrackingOptions uns = {};
   uns.tracker_type = 0;
   CppConvertToTrackingOptions(uns, &out);
-  EXPECT_EQ(static_cast<int>(out.tracker_type), 0);
+  EXPECT_EQ(out.tracker_type, CppTrackingOptions::kTrackerUnspecified);
 }
 
 }  // namespace
