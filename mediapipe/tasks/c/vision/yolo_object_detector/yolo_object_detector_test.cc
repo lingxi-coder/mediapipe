@@ -217,7 +217,15 @@ TEST(YoloObjectDetectorCApiTest, BotsortInImageModeRejectedThroughBinding) {
       MpYoloObjectDetectorCreate(&options, &detector, &error_msg);
 
   EXPECT_NE(status, kMpOk);
-  if (error_msg) MpErrorFree(error_msg);
+  EXPECT_EQ(detector, nullptr);
+  ASSERT_NE(error_msg, nullptr);
+  // Assert the BOTSORT-specific validation message, not just a non-OK status:
+  // with no model path set, Create would also fail at model load even if the
+  // `tracking` field were silently dropped. The substring below appears ONLY in
+  // the tracking validation, so this can only pass if tracking is wired through.
+  EXPECT_NE(std::string(error_msg).find("tracking.tracker_type=BOTSORT"),
+            std::string::npos);
+  MpErrorFree(error_msg);
 }
 
 // SanityCheckOptions must reject explicit_tiles combined with a >1 grid with a
