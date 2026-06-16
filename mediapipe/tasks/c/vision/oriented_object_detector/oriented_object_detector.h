@@ -72,6 +72,30 @@ struct MpOrientedTilingOptions {
   int max_detections_after_tile_nms;
 };
 
+// Tracker selection for the OBB tiled VIDEO/LIVE_STREAM path. Mirrors
+// OrientedObjectDetectorOptions::TrackingOptions field-for-field.
+//
+// tracker_type: 0 = unspecified (-> no tracking, the OBB default), 1 =
+// BOX_TRACKER (NOT supported for OBB -- rejected by Create()), 2 = BOTSORT
+// (tracking-by-detection, motion-only). Numerically equal to the C++/proto enum.
+// A zero-initialized MpOrientedTrackingOptions therefore means NO tracking --
+// byte-identical to a C caller who never set tracking at all.
+//
+// The threshold/buffer knobs are honored only for BOTSORT. A plain C struct
+// cannot distinguish "unset" from 0, so a BOTSORT caller MUST set them
+// explicitly. BoTSORT only emits a track_id for CONFIRMED tracks, so
+// track_high_threshold / new_track_threshold must be at/below the detector's
+// score_threshold or no track_id is produced.
+struct MpOrientedTrackingOptions {
+  int tracker_type;
+  float track_high_threshold;
+  float track_low_threshold;
+  float new_track_threshold;
+  int track_buffer;
+  float match_threshold;
+  bool enable_gmc;
+};
+
 // Options for configuring a MediaPipe oriented (OBB) object detector task.
 struct MpOrientedObjectDetectorOptions {
   struct MpBaseOptions base_options;
@@ -110,6 +134,9 @@ struct MpOrientedObjectDetectorOptions {
 
   // Static tiling configuration. Zero-initialized => tiling disabled.
   struct MpOrientedTilingOptions tiling;
+
+  // Tracker selection. Zero-initialized => no tracking (the OBB default).
+  struct MpOrientedTrackingOptions tracking;
 
   // Result callback for live-stream mode. Must be set iff running_mode is
   // MP_RUNNING_MODE_LIVE_STREAM. The arguments passed to the callback are valid

@@ -98,6 +98,16 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "tracking_options_abi_test",
+    srcs = ["tracking_options_abi_test.cc"],
+    deps = [
+        ":oriented_object_detector_lib",
+        "//mediapipe/framework/port:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "oriented_object_detector_c_lib",
     srcs = [

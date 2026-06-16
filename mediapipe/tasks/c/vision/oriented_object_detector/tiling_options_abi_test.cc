@@ -46,14 +46,14 @@ static_assert(offsetof(MpOrientedTilingOptions, max_detections_after_tile_nms) =
 // `tiling` occupies a contiguous block between num_classes and result_callback,
 // plus absolute anchors so the Python layout test cross-checks the whole parent
 // prefix (base_options + scalars incl. class_agnostic_nms).
-static_assert(offsetof(MpOrientedObjectDetectorOptions, result_callback) ==
+static_assert(offsetof(MpOrientedObjectDetectorOptions, tracking) ==
                   offsetof(MpOrientedObjectDetectorOptions, tiling) +
                       sizeof(MpOrientedTilingOptions),
-              "result_callback must immediately follow tiling");
+              "tracking must immediately follow tiling");
 static_assert(offsetof(MpOrientedObjectDetectorOptions, tiling) == 144,
               "parent prefix size pinned for the Python ctypes mirror");
-static_assert(offsetof(MpOrientedObjectDetectorOptions, result_callback) == 184, "");
-static_assert(sizeof(MpOrientedObjectDetectorOptions) == 192, "");
+static_assert(offsetof(MpOrientedObjectDetectorOptions, result_callback) == 216, "");
+static_assert(sizeof(MpOrientedObjectDetectorOptions) == 224, "");
 
 namespace {
 TEST(OrientedTilingOptionsAbiTest, LayoutPinned) { SUCCEED(); }
