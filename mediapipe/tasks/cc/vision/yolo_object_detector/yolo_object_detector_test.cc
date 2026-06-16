@@ -499,6 +499,52 @@ TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWhilePanning) {
       << "expected boats tracked across most panning frames";
 }
 
+// Tiled VIDEO mode selecting the BoTSORT tracker (tracker_type=BOTSORT).
+// Mirrors TiledVideoTracksBoatsWhilePanning exactly except for the tracker
+// selection: BoTSORT runs on every inferred frame, so the tiled boats scene
+// must still yield non-empty detections by the last frame. Skips when the
+// model/image fixtures are absent, like the sibling model-gated tests.
+TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWithBotsort) {
+  const std::string model_path = ModelPath();
+  const std::string image_path = JoinPath("./", kTestDataDirectory, kBoatsImage);
+  if (!mediapipe::file::Exists(model_path).ok() ||
+      !mediapipe::file::Exists(image_path).ok()) {
+    GTEST_SKIP() << "YOLO model or boats.jpg fixture not available.";
+  }
+
+  MP_ASSERT_OK_AND_ASSIGN(Image base_image, DecodeImageFromFile(image_path));
+
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
+  options->running_mode = core::RunningMode::VIDEO;
+  options->max_results = 10;
+  options->num_classes = 80;
+  options->score_threshold = 0.09f;
+  options->iou_threshold = 0.45f;
+  options->tiling.tile_cols = 2;
+  options->tiling.tile_overlap_fraction = 0.2f;
+  // Select the BoTSORT tracker instead of the default optical-flow BoxTracker.
+  options->tracking.tracker_type =
+      YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+
+  const int kFrames = 8;
+  YoloObjectDetectorResult last_result;
+  for (int i = 0; i < kFrames; ++i) {
+    Image frame = TranslateImage(base_image, /*dx=*/2 * i, /*dy=*/0);
+    MP_ASSERT_OK_AND_ASSIGN(last_result,
+                            detector->DetectForVideo(frame, /*timestamp_ms=*/i));
+  }
+  MP_ASSERT_OK(detector->Close());
+
+  // BoTSORT runs on every inferred frame; by the last frame the tiled boats
+  // scene must produce at least one detection.
+  EXPECT_FALSE(last_result.detections.empty())
+      << "expected non-empty BoTSORT detections on the last tiled frame";
+}
+
 // ---------------------------------------------------------------------------
 // Tiled mode + region-of-interest is rejected (the tiled graph has no
 // NORM_RECT input, so per-call ROI cannot be honored).
