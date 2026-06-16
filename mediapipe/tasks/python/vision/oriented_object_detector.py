@@ -46,6 +46,17 @@ class Layout(enum.IntEnum):
   CHANNELS_LAST = 2
 
 
+class TrackerType(enum.IntEnum):
+  """Tracker selection for the OBB tiled VIDEO/LIVE_STREAM path.
+
+  OBB supports BOTSORT only; UNSPECIFIED means no tracking (the default).
+  Values are numerically equal to the C++/proto TrackerType enum.
+  """
+
+  UNSPECIFIED = 0  # no tracking (default)
+  BOTSORT = 2  # tracking-by-detection, motion-only
+
+
 _C_TYPES_RESULT_CALLBACK = ctypes.CFUNCTYPE(
     None,
     ctypes.c_int32,  # MpStatus
@@ -124,6 +135,25 @@ class MpOrientedTilingOptionsC(ctypes.Structure):
   ]
 
 
+class MpOrientedTrackingOptionsC(ctypes.Structure):
+  """Byte-matches struct MpOrientedTrackingOptions in the OBB C header.
+
+  Layout pinned by tracking_options_abi_test.cc (sizeof 28; offsets
+  0/4/8/12/16/20/24; enable_gmc c_bool = 1 byte). tracker_type is c_int with
+  0=unspecified->no tracking, 2=BOTSORT (1=BOX_TRACKER is rejected at Create).
+  """
+
+  _fields_ = [
+      ('tracker_type', ctypes.c_int),
+      ('track_high_threshold', ctypes.c_float),
+      ('track_low_threshold', ctypes.c_float),
+      ('new_track_threshold', ctypes.c_float),
+      ('track_buffer', ctypes.c_int),
+      ('match_threshold', ctypes.c_float),
+      ('enable_gmc', ctypes.c_bool),
+  ]
+
+
 class MpOrientedObjectDetectorOptionsC(ctypes.Structure):
   """OBB detector options for the C API.
 
@@ -146,6 +176,7 @@ class MpOrientedObjectDetectorOptionsC(ctypes.Structure):
       ('layout', ctypes.c_int),
       ('num_classes', ctypes.c_int),
       ('tiling', MpOrientedTilingOptionsC),
+      ('tracking', MpOrientedTrackingOptionsC),
       ('result_callback', _C_TYPES_RESULT_CALLBACK),
   ]
 
@@ -246,6 +277,25 @@ class TilingOptions:
 
 
 @dataclasses.dataclass
+class TrackingOptions:
+  """Tracker selection for the OBB object detector (tiled stream path).
+
+  OBB supports BOTSORT only; default is no tracking. Honored only when tiling is
+  enabled and running mode is not IMAGE. NOTE: BoTSORT only emits a track_id for
+  confirmed tracks, so set track_high_threshold / new_track_threshold at or below
+  your score_threshold.
+  """
+
+  tracker_type: TrackerType = TrackerType.UNSPECIFIED
+  track_high_threshold: float = 0.6
+  track_low_threshold: float = 0.1
+  new_track_threshold: float = 0.7
+  track_buffer: int = 30
+  match_threshold: float = 0.7
+  enable_gmc: bool = False
+
+
+@dataclasses.dataclass
 class OrientedObjectDetectorOptions:
   """Options for the oriented (OBB) object detector task.
 
@@ -277,6 +327,8 @@ class OrientedObjectDetectorOptions:
       CHANNELS_FIRST.
     num_classes: Number of classes. If 0, derived from model metadata.
     tiling: Static tiling configuration. Defaults to disabled (1x1).
+    tracking: Tracker configuration for the tiled VIDEO/LIVE_STREAM path.
+      Defaults to no tracking (TrackerType.UNSPECIFIED).
     result_callback: The user-defined result callback for processing live stream
       data. The result callback should only be specified when the running mode
       is set to the live stream mode.
@@ -300,6 +352,7 @@ class OrientedObjectDetectorOptions:
   layout: Layout = Layout.CHANNELS_FIRST
   num_classes: int = 0
   tiling: TilingOptions = dataclasses.field(default_factory=TilingOptions)
+  tracking: TrackingOptions = dataclasses.field(default_factory=TrackingOptions)
   result_callback: Optional[
       Callable[[OrientedObjectDetectorResult, image_module.Image, int], None]
   ] = None
@@ -338,6 +391,22 @@ def _build_oriented_tiling_options_c(
       max_detections_after_tile_nms=tiling.max_detections_after_tile_nms,
   )
   return tiling_c, tiles_array
+
+
+def _build_oriented_tracking_options_c(
+    tracking: TrackingOptions,
+) -> 'MpOrientedTrackingOptionsC':
+  """Builds the ctypes MpOrientedTrackingOptionsC from a TrackingOptions
+  dataclass. No pointer fields, so there is no backing array to keep alive."""
+  return MpOrientedTrackingOptionsC(
+      tracker_type=int(tracking.tracker_type),
+      track_high_threshold=tracking.track_high_threshold,
+      track_low_threshold=tracking.track_low_threshold,
+      new_track_threshold=tracking.new_track_threshold,
+      track_buffer=tracking.track_buffer,
+      match_threshold=tracking.match_threshold,
+      enable_gmc=tracking.enable_gmc,
+  )
 
 
 class OrientedObjectDetector:
@@ -464,6 +533,7 @@ class OrientedObjectDetector:
     # referenced through the MpOrientedObjectDetectorCreate call below (the C
     # converter copies the tiles into a std::vector synchronously during Create).
     tiling_c, tiles_keepalive = _build_oriented_tiling_options_c(options.tiling)
+    tracking_c = _build_oriented_tracking_options_c(options.tracking)
     ctypes_options = MpOrientedObjectDetectorOptionsC(
         base_options=options.base_options.to_ctypes(),
         running_mode=options.running_mode.ctype,
@@ -487,6 +557,7 @@ class OrientedObjectDetector:
         layout=int(options.layout),
         num_classes=options.num_classes,
         tiling=tiling_c,
+        tracking=tracking_c,
         result_callback=c_callback,
     )
 

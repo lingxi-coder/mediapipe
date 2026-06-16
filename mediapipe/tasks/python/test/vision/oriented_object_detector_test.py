@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for oriented (OBB) object detector."""
 
+import ctypes
 import math
 import os
 import unittest
@@ -163,8 +164,6 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
 
   def test_ctypes_tiling_layout_matches_c_abi(self):
     """ctypes tiling structs byte-match the OBB C header (see tiling_options_abi_test.cc)."""
-    import ctypes  # pylint: disable=g-import-not-at-top
-
     rect_c = oriented_object_detector.MpOrientedTileRectC
     self.assertEqual(ctypes.sizeof(rect_c), 16)
     self.assertEqual(rect_c.x_center.offset, 0)
@@ -184,9 +183,45 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
 
     options_c = oriented_object_detector.MpOrientedObjectDetectorOptionsC
     # Absolute anchors mirroring tiling_options_abi_test.cc (compiler-verified).
+    # The tracking field (sizeof 28, at offset 184) pushes result_callback to
+    # 216 and the parent struct to sizeof 224 (see tracking_options_abi_test.cc).
     self.assertEqual(options_c.tiling.offset, 144)
-    self.assertEqual(options_c.result_callback.offset, 184)
-    self.assertEqual(ctypes.sizeof(options_c), 192)
+    self.assertEqual(options_c.result_callback.offset, 216)
+    self.assertEqual(ctypes.sizeof(options_c), 224)
+
+  def test_ctypes_tracking_layout_matches_c_abi(self):
+    """ctypes tracking struct byte-matches the OBB C header (see tracking_options_abi_test.cc)."""
+    self.assertEqual(
+        ctypes.sizeof(oriented_object_detector.MpOrientedTrackingOptionsC), 28
+    )
+    tracking_c = oriented_object_detector.MpOrientedTrackingOptionsC
+    fields = {
+        f[0]: getattr(tracking_c, f[0]).offset for f in tracking_c._fields_
+    }
+    self.assertEqual(fields['tracker_type'], 0)
+    self.assertEqual(fields['track_high_threshold'], 4)
+    self.assertEqual(fields['track_low_threshold'], 8)
+    self.assertEqual(fields['new_track_threshold'], 12)
+    self.assertEqual(fields['track_buffer'], 16)
+    self.assertEqual(fields['match_threshold'], 20)
+    self.assertEqual(fields['enable_gmc'], 24)
+
+    options_c = oriented_object_detector.MpOrientedObjectDetectorOptionsC
+    self.assertEqual(options_c.tracking.offset, 184)
+    self.assertEqual(options_c.result_callback.offset, 216)
+    self.assertEqual(ctypes.sizeof(options_c), 224)
+
+  def test_build_oriented_tracking_options_c_marshalling(self):
+    """The TrackingOptions->ctypes marshalling fills the struct; no model needed."""
+    tracking = oriented_object_detector.TrackingOptions(
+        tracker_type=oriented_object_detector.TrackerType.BOTSORT,
+        track_buffer=25,
+    )
+    tracking_c = oriented_object_detector._build_oriented_tracking_options_c(  # pylint: disable=protected-access
+        tracking
+    )
+    self.assertEqual(tracking_c.tracker_type, 2)
+    self.assertEqual(tracking_c.track_buffer, 25)
 
   @unittest.skipUnless(
       _MODEL_PRESENT,
