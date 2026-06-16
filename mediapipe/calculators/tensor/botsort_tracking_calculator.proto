@@ -1,0 +1,40 @@
+// Copyright 2026 The MediaPipe Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package mediapipe;
+
+import "mediapipe/framework/calculator.proto";
+
+// Options for BotsortTrackingCalculator. Defaults equal upstream BoTSORT
+// TrackerParams. Motion-only: there is no ReID/appearance knob.
+//
+// Extension number 471230017 belongs to the tiled-detection family
+// (471230013/14/15 are the tiled graphs; 471230016 is
+// DetectionLabelIdCodecCalculatorOptions). 471230016 was already taken, so this
+// uses the next free number.
+message BotsortTrackingCalculatorOptions {
+  extend mediapipe.CalculatorOptions {
+    optional BotsortTrackingCalculatorOptions ext = 471230017;
+  }
+  optional float track_high_threshold = 1 [default = 0.6];
+  optional float track_low_threshold = 2 [default = 0.1];
+  optional float new_track_threshold = 3 [default = 0.7];
+  optional int32 track_buffer = 4 [default = 30];
+  optional float match_threshold = 5 [default = 0.7];
+  // Global motion compensation (sparse optical flow). Off by default (upstream
+  // parity); recommended on for moving-camera streams.
+  optional bool enable_gmc = 6 [default = false];
+}

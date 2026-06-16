@@ -3368,6 +3368,56 @@ cc_test(
 )
 
 # ---------------------------------------------------------------------------
+# botsort_tracking_calculator: api2 wrapper around the vendored motion-only
+# BoTSORT tracker (IMAGE + DETECTIONS -> DETECTIONS).
+# ---------------------------------------------------------------------------
+
+mediapipe_proto_library(
+    name = "botsort_tracking_calculator_proto",
+    srcs = ["botsort_tracking_calculator.proto"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "botsort_tracking_calculator",
+    srcs = ["botsort_tracking_calculator.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":botsort_tracking_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//third_party:opencv",
+        "//third_party/botsort",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "botsort_tracking_calculator_test",
+    srcs = ["botsort_tracking_calculator_test.cc"],
+    deps = [
+        ":botsort_tracking_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
 # detection_label_id_codec_calculator: label_id <-> string round-trip for
 # optical-flow tracker integration.
 # ---------------------------------------------------------------------------
