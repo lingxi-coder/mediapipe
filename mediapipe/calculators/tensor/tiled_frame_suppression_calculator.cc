@@ -74,6 +74,10 @@ class TiledFrameSuppressionCalculator : public Node {
         const size_t fresh_count = combined.size();
         for (const Detection& t : tr) {
           int best_idx = -1;
+          // Seed with the IoU threshold and accept on `iou >= best_iou`: the
+          // boundary is intentionally inclusive, so a fresh box at exactly the
+          // threshold counts as an overlap match (track_id transferred) rather
+          // than producing a separate gap-fill box.
           float best_iou = options_.iou_threshold();
           for (size_t i = 0; i < fresh_count; ++i) {
             const Detection& f = combined[i];

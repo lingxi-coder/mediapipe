@@ -397,5 +397,80 @@ TEST(TiledFrameSuppressionCalculatorTest, NoTrackIdNoOp) {
   EXPECT_FALSE(out[0].has_track_id());
 }
 
+// class_agnostic=false: a tracker det and a fresh det share geometry (high IoU)
+// but carry DIFFERENT label_ids. The class-mismatch `continue` skips the only
+// candidate, so the tracker det finds no overlap match and is appended as a
+// gap-fill (size 2). The fresh det does NOT receive the tracker's track_id;
+// the gap-fill box carries it instead.
+TEST(TiledFrameSuppressionCalculatorTest, ClassMismatchDoesNotTransferTrackId) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: false
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  // fresh: label_id 0, no track_id. tracker: SAME box, label_id 1, track_id "9".
+  PushDets(&runner, "DETECTIONS", {Det(0.9f, 0, 0.10f, 0.10f, 0.40f, 0.40f)});
+  Detection tracked = Det(0.8f, 1, 0.10f, 0.10f, 0.40f, 0.40f);
+  tracked.set_track_id("9");
+  PushDets(&runner, "TRACKER_DETECTIONS", {tracked});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  // Class mismatch => no transfer => tracker det kept as gap-fill (different
+  // class, so NMS does not dedup it against the fresh det either).
+  ASSERT_EQ(out.size(), 2u);
+  // The fresh (label_id 0) box has no track_id; the gap-fill (label_id 1) box
+  // carries "9".
+  bool fresh_has_no_id = false;
+  bool gapfill_has_id = false;
+  for (const auto& d : out) {
+    ASSERT_EQ(d.label_id_size(), 1);
+    if (d.label_id(0) == 0) {
+      fresh_has_no_id = !d.has_track_id();
+    } else if (d.label_id(0) == 1) {
+      gapfill_has_id = d.has_track_id() && d.track_id() == "9";
+    }
+  }
+  EXPECT_TRUE(fresh_has_no_id);
+  EXPECT_TRUE(gapfill_has_id);
+}
+
+// The guard `!combined[best_idx].has_track_id()` prevents overwriting an id the
+// fresh det already carries: a fresh det with track_id "1" overlapping a tracker
+// det with track_id "9" KEEPS "1".
+TEST(TiledFrameSuppressionCalculatorTest, DoesNotOverwriteExistingFreshTrackId) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.5
+        class_agnostic: true
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  // fresh: SAME box, already has track_id "1". tracker: track_id "9".
+  Detection fresh = Det(0.9f, 0, 0.10f, 0.10f, 0.40f, 0.40f);
+  fresh.set_track_id("1");
+  PushDets(&runner, "DETECTIONS", {fresh});
+  Detection tracked = Det(0.8f, 0, 0.10f, 0.10f, 0.40f, 0.40f);
+  tracked.set_track_id("9");
+  PushDets(&runner, "TRACKER_DETECTIONS", {tracked});
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].track_id(), "1");
+}
+
 }  // namespace
 }  // namespace mediapipe
