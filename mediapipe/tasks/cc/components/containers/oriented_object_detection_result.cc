@@ -50,6 +50,7 @@ OrientedObjectDetectionResult ConvertToOrientedObjectDetectionResult(
     od.width = d.width() * w;
     od.height = d.height() * h;
     od.rotation = d.rotation();
+    if (d.has_track_id()) od.track_id = d.track_id();
     result.detections.push_back(std::move(od));
   }
   return result;

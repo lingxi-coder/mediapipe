@@ -66,5 +66,27 @@ TEST(OrientedObjectDetectionResultTest, PopulatesCategoryNameFromLabel) {
   EXPECT_EQ(*cat.display_name, "Ship");
 }
 
+TEST(OrientedObjectDetectionResultTest, ConvertMapsTrackId) {
+  mediapipe::OrientedDetection d;
+  d.add_score(0.9f); d.add_label_id(1);
+  d.set_cx(0.5f); d.set_cy(0.5f); d.set_width(0.2f);
+  d.set_height(0.1f); d.set_rotation(0.3f);
+  d.set_track_id("42");
+  auto result = ConvertToOrientedObjectDetectionResult({d}, {100, 100});
+  ASSERT_EQ(result.detections.size(), 1u);
+  ASSERT_TRUE(result.detections[0].track_id.has_value());
+  EXPECT_EQ(*result.detections[0].track_id, "42");
+}
+
+TEST(OrientedObjectDetectionResultTest, ConvertNoTrackId) {
+  mediapipe::OrientedDetection d;
+  d.add_score(0.9f); d.add_label_id(1);
+  d.set_cx(0.5f); d.set_cy(0.5f); d.set_width(0.2f);
+  d.set_height(0.1f); d.set_rotation(0.3f);
+  auto result = ConvertToOrientedObjectDetectionResult({d}, {100, 100});
+  ASSERT_EQ(result.detections.size(), 1u);
+  EXPECT_FALSE(result.detections[0].track_id.has_value());
+}
+
 }  // namespace
 }  // namespace mediapipe::tasks::components::containers

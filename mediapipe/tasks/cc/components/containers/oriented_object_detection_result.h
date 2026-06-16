@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef MEDIAPIPE_TASKS_CC_COMPONENTS_CONTAINERS_ORIENTED_OBJECT_DETECTION_RESULT_H_
 #define MEDIAPIPE_TASKS_CC_COMPONENTS_CONTAINERS_ORIENTED_OBJECT_DETECTION_RESULT_H_
 
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -32,6 +34,9 @@ struct OrientedObjectDetection {
   float width = 0.0f;     // pixels
   float height = 0.0f;    // pixels
   float rotation = 0.0f;  // radians, counter-clockwise
+  // Optional persistent track ID (set by BoTSORT tracking). std::nullopt when
+  // the detection is not part of a track.
+  std::optional<std::string> track_id = std::nullopt;
 };
 
 struct OrientedObjectDetectionResult {
