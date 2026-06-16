@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -339,6 +341,37 @@ TEST(TiledObbTrackMergeGraphTest, EmitsTrackIdAcrossFrames) {
   ASSERT_EQ(last[0].label_id_size(), 1);
   EXPECT_EQ(last[0].label_id(0), kLabelId);
   EXPECT_NEAR(last[0].width(), 0.2f, 1e-4);
+
+  // Track-id STABILITY: the same object must keep its id across consecutive
+  // frames. Collect the ids on the last two output frames and assert at least
+  // one id appears on BOTH (matches the calculator unit test's stability
+  // property). With a 3-frame feed BoTSORT has confirmed the track by frame 2,
+  // so its id is present on both frames 1 and 2.
+  ASSERT_GE(merged.size(), 2u);
+  auto track_ids = [](const Packet& p) {
+    std::vector<std::string> ids;
+    for (const OrientedDetection& d :
+         p.Get<std::vector<OrientedDetection>>()) {
+      if (d.has_track_id() && !d.track_id().empty()) {
+        ids.push_back(d.track_id());
+      }
+    }
+    return ids;
+  };
+  const std::vector<std::string> prev_ids =
+      track_ids(merged[merged.size() - 2]);
+  const std::vector<std::string> last_ids = track_ids(merged.back());
+  ASSERT_FALSE(prev_ids.empty());
+  ASSERT_FALSE(last_ids.empty());
+  bool shared_id = false;
+  for (const std::string& id : last_ids) {
+    if (std::find(prev_ids.begin(), prev_ids.end(), id) != prev_ids.end()) {
+      shared_id = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(shared_id)
+      << "expected a track id to persist across the last two frames";
 }
 
 }  // namespace

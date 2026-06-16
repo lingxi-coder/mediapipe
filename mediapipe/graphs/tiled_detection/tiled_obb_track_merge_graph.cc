@@ -30,6 +30,12 @@ namespace tiled_detection {
 // ids via OrientedBotsortTrackingCalculator (ID-only; geometry unchanged). One
 // packet per source frame.
 //
+// Unlike the axis-aligned TiledBoxTrackMergeGraph -- which fuses fresh +
+// tracker detections via TiledFrameSuppression with gap-fill -- this OBB
+// version is a simpler linear chain with NO gap-fill, because BoTSORT runs
+// ID-only on AABBs and rotation is not tracked (so tracker-only oriented boxes
+// can't be emitted).
+//
 // Inputs:  ORIENTED_DETECTIONS (vector<vector<OrientedDetection>>),
 //          BATCH_INFO (TensorBatchInfo), IMAGE (ImageFrame).
 // Outputs: ORIENTED_DETECTIONS (vector<OrientedDetection>, track_id set).
