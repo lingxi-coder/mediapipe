@@ -90,6 +90,29 @@ struct MpTilingOptions {
   int max_scheduled_tiles;
 };
 
+// Tracker selection for the tiled VIDEO/LIVE_STREAM path. Mirrors
+// YoloObjectDetectorOptions::TrackingOptions field-for-field.
+//
+// tracker_type: 0 = unspecified (-> BOX_TRACKER), 1 = BOX_TRACKER (optical-flow,
+// default), 2 = BOTSORT (tracking-by-detection, motion-only). Numerically equal
+// to the C++/proto enum. A zero-initialized MpTrackingOptions therefore means
+// BOX_TRACKER -- byte-identical to a C caller who never set tracking at all.
+//
+// The threshold/buffer knobs are honored only for BOTSORT. A plain C struct
+// cannot distinguish "unset" from 0, so a BOTSORT caller MUST set the knobs
+// explicitly (a zero-init struct yields 0.0 thresholds); the C++ struct defaults
+// (0.6/0.1/0.7/30/0.7) are not reachable through a zero-init C struct.
+// BOX_TRACKER ignores the knobs. (Same convention as score_threshold.)
+struct MpTrackingOptions {
+  int tracker_type;
+  float track_high_threshold;
+  float track_low_threshold;
+  float new_track_threshold;
+  int track_buffer;
+  float match_threshold;
+  bool enable_gmc;
+};
+
 struct MpYoloObjectDetectorOptions {
   struct MpBaseOptions base_options;
 
@@ -125,6 +148,9 @@ struct MpYoloObjectDetectorOptions {
 
   // Static tiling configuration. Zero-initialized => tiling disabled.
   struct MpTilingOptions tiling;
+
+  // Tracker selection. Zero-initialized => BOX_TRACKER (the existing default).
+  struct MpTrackingOptions tracking;
 
   // Result callback for live-stream mode. Must be set iff running_mode is
   // MP_RUNNING_MODE_LIVE_STREAM. Passed arguments are valid only for the

@@ -55,10 +55,10 @@ static_assert(sizeof(MpTilingOptions::enable_motion_scheduling) == 1,
 static_assert(offsetof(MpYoloObjectDetectorOptions, tiling) >
                   offsetof(MpYoloObjectDetectorOptions, num_classes),
               "tiling must follow num_classes");
-static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) ==
+static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) ==
                   offsetof(MpYoloObjectDetectorOptions, tiling) +
                       sizeof(MpTilingOptions),
-              "result_callback must immediately follow tiling");
+              "tracking must immediately follow tiling");
 
 // Absolute anchors so the Python layout test cross-checks the WHOLE parent
 // prefix (base_options + scalars), not just tiling's relative placement. If the
@@ -66,8 +66,8 @@ static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) ==
 // (incl. MpBaseOptionsC) must be updated in lockstep.
 static_assert(offsetof(MpYoloObjectDetectorOptions, tiling) == 136,
               "parent prefix size pinned for the Python ctypes mirror");
-static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 184, "");
-static_assert(sizeof(MpYoloObjectDetectorOptions) == 192, "");
+static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 216, "");
+static_assert(sizeof(MpYoloObjectDetectorOptions) == 224, "");
 
 namespace {
 

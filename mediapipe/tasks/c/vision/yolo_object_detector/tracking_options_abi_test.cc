@@ -1,0 +1,65 @@
+/* Copyright 2026 The MediaPipe Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+// Pins the byte layout of the YOLO C-API MpTrackingOptions struct. The Python
+// ctypes mirror (MpTrackingOptionsC and the `tracking` field of
+// MpYoloObjectDetectorOptionsC in
+// mediapipe/tasks/python/vision/yolo_object_detector.py) MUST match these
+// offsets. If the C struct is ever reordered, these static_asserts fail at
+// compile time -- a loud signal that the Python binding would otherwise be
+// silently corrupted. 64-bit targets (int=4, float=4, bool=1, pointer=8,
+// native alignment); stable across arm64 / x86-64 / Windows LLP64.
+
+#include <cstddef>
+
+#include "mediapipe/framework/port/gtest.h"
+#include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
+
+static_assert(sizeof(MpTrackingOptions) == 28,
+              "MpTrackingOptions layout pinned for the Python ctypes mirror");
+static_assert(offsetof(MpTrackingOptions, tracker_type) == 0, "");
+static_assert(offsetof(MpTrackingOptions, track_high_threshold) == 4, "");
+static_assert(offsetof(MpTrackingOptions, track_low_threshold) == 8, "");
+static_assert(offsetof(MpTrackingOptions, new_track_threshold) == 12, "");
+static_assert(offsetof(MpTrackingOptions, track_buffer) == 16, "");
+static_assert(offsetof(MpTrackingOptions, match_threshold) == 20, "");
+static_assert(offsetof(MpTrackingOptions, enable_gmc) == 24, "");
+// Pin the bool field's WIDTH (1 byte): a c_bool->c_int swap on the Python side
+// would NOT change any offset (the 3 trailing pad bytes absorb the widening),
+// so an offset-only check cannot catch it; this size pin can.
+static_assert(sizeof(MpTrackingOptions::enable_gmc) == 1,
+              "enable_gmc must stay 1 byte (matches Python c_bool)");
+
+// `tracking` immediately follows `tiling` in the parent options struct.
+static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) ==
+                  offsetof(MpYoloObjectDetectorOptions, tiling) +
+                      sizeof(MpTilingOptions),
+              "tracking must immediately follow tiling");
+
+// Absolute anchors so the Python layout test cross-checks the WHOLE parent
+// prefix, not just tracking's relative placement. If the prefix ever changes,
+// this fails loudly and the Python ctypes mirror must be updated in lockstep.
+static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) == 184,
+              "tracking offset pinned for the Python ctypes mirror");
+static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 216, "");
+static_assert(sizeof(MpYoloObjectDetectorOptions) == 224, "");
+
+namespace {
+
+// The real guarantees are the compile-time static_asserts above; this gives the
+// cc_test target a runtime case to execute.
+TEST(TrackingOptionsAbiTest, LayoutPinned) { SUCCEED(); }
+
+}  // namespace
