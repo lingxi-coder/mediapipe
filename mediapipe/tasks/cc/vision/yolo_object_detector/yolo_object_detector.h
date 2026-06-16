@@ -132,6 +132,11 @@ struct YoloObjectDetectorOptions {
   // Tracker selection for the tiled VIDEO/LIVE_STREAM path (mirrors the proto
   // TrackingOptions). Honored only when tiling is enabled and running mode is
   // not IMAGE; validated at Create().
+  //
+  // NOTE: BoTSORT only emits a track_id for CONFIRMED tracks. Set
+  // track_high_threshold / new_track_threshold at or below your detection
+  // score_threshold, otherwise low-confidence detections never confirm and no
+  // track_id is ever produced.
   struct TrackingOptions {
     // NOTE: values must stay numerically equal to the proto enum
     // TrackingOptions.TrackerType (BOX_TRACKER=1, BOTSORT=2) — the converter

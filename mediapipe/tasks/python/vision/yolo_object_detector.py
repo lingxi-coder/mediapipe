@@ -305,6 +305,11 @@ class TrackingOptions:
   Mirrors the C++ YoloObjectDetectorOptions.TrackingOptions. Honored only when
   tiling is enabled and running mode is not IMAGE; otherwise ignored. BOTSORT is
   motion-only (no ReID). The knobs are used only for BOTSORT.
+
+  NOTE: BOTSORT only emits a track_id for confirmed tracks. Set
+  track_high_threshold / new_track_threshold at or below your detection
+  score_threshold, otherwise low-confidence detections never confirm and no
+  track_id is ever produced.
   """
 
   tracker_type: TrackerType = TrackerType.BOX_TRACKER

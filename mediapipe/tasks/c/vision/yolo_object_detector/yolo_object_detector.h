@@ -103,6 +103,11 @@ struct MpTilingOptions {
 // explicitly (a zero-init struct yields 0.0 thresholds); the C++ struct defaults
 // (0.6/0.1/0.7/30/0.7) are not reachable through a zero-init C struct.
 // BOX_TRACKER ignores the knobs. (Same convention as score_threshold.)
+//
+// NOTE: BoTSORT only emits a track_id for confirmed tracks. Set
+// track_high_threshold / new_track_threshold at or below your detection
+// score_threshold, otherwise low-confidence detections never confirm and no
+// track_id is ever produced.
 struct MpTrackingOptions {
   int tracker_type;
   float track_high_threshold;

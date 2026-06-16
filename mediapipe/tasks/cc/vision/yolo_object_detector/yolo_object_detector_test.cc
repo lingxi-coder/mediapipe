@@ -531,6 +531,8 @@ TEST(YoloObjectDetectorTest, TiledVideoTracksBoatsWithBotsort) {
   // track_high_threshold (0.6). With the defaults BoTSORT confirms zero tracks
   // and never emits a track_id. Lower the confirmation thresholds beneath the
   // detection scores so tracks actually form and persist across frames.
+  // NOTE: these tuned values are chosen for this synthetic low-confidence
+  // fixture and are NOT representative production defaults.
   options->tracking.track_high_threshold = 0.05f;
   options->tracking.new_track_threshold = 0.05f;
   options->tracking.track_low_threshold = 0.02f;
