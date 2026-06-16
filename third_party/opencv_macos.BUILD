@@ -61,6 +61,16 @@ cc_library(
             # library references — no protobuf chain.
             paths.join(PREFIX, "lib/libopencv_video.a"),
             paths.join(PREFIX, "lib/libopencv_features2d.a"),
+            # BoTSORT's GlobalMotionCompensation (third_party/botsort) compiles
+            # ORB- (FlannBasedMatcher) and VideoStab-based GMC methods. These
+            # are dead code in the motion-only build (GMC defaults off; only
+            # SparseOptFlow is ever selected), but the objects still link, so
+            # the symbols must resolve. Static archives only (same protobuf-ODR
+            # rationale as video/features2d above). highgui is deliberately NOT
+            # added: its only user (a debug cv::imshow) is behind #ifdef DEBUG,
+            # and the archive drags in the whole Cocoa/AppKit framework chain.
+            paths.join(PREFIX, "lib/libopencv_flann.a"),
+            paths.join(PREFIX, "lib/libopencv_videostab.a"),
             # kleidicv HAL + thread are required transitive deps of the static
             # video archive (provides NEON-optimised Scharr derivatives on arm64).
             paths.join(PREFIX, "lib/libkleidicv.a"),
