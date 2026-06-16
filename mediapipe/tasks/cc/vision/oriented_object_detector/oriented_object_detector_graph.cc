@@ -422,6 +422,14 @@ class OrientedObjectDetectorGraph : public tasks::core::ModelTaskGraph {
         mo.set_class_agnostic(task_options.class_agnostic_nms());
         mo.set_max_detections(task_options.max_results());
         auto* mt = mo.mutable_tracking();
+        // Pin the OBB-proto <-> TiledTrackingGraph TrackerType values so an enum
+        // reorder is a build error, not a silent tracker miswire.
+        static_assert(static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::TRACKER_UNSPECIFIED) ==
+                          static_cast<int>(::mediapipe::TiledTrackingGraphOptions::TRACKER_UNSPECIFIED));
+        static_assert(static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::BOX_TRACKER) ==
+                          static_cast<int>(::mediapipe::TiledTrackingGraphOptions::BOX_TRACKER));
+        static_assert(static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::BOTSORT) ==
+                          static_cast<int>(::mediapipe::TiledTrackingGraphOptions::BOTSORT));
         mt->set_tracker_type(
             static_cast<::mediapipe::TiledTrackingGraphOptions::TrackerType>(
                 task_options.tracking().tracker_type()));
