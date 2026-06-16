@@ -66,4 +66,26 @@ message TiledBoxMergeGraphOptions {
   // Cap on the number of kept detections after NMS; -1 means uncapped. 0 is
   // rejected at graph init (note: TiledObbMergeGraph treats 0 as keep-none).
   optional int32 max_detections = 3 [default = -1];
+  // Tracker selection forwarded to TiledTrackingGraph (stream mode only).
+  optional TiledTrackingGraphOptions tracking = 4;
+}
+
+// Tracker selection + motion-only BoTSORT knobs for TiledTrackingGraph. Mirrors
+// the detector-level TrackingOptions; the YOLO graph builder copies fields in.
+message TiledTrackingGraphOptions {
+  extend .mediapipe.CalculatorOptions {
+    optional TiledTrackingGraphOptions ext = 471230018;
+  }
+  enum TrackerType {
+    TRACKER_UNSPECIFIED = 0;  // -> BOX_TRACKER
+    BOX_TRACKER = 1;          // optical-flow propagation (existing)
+    BOTSORT = 2;              // tracking-by-detection, motion-only
+  }
+  optional TrackerType tracker_type = 1 [default = BOX_TRACKER];
+  optional float track_high_threshold = 2 [default = 0.6];
+  optional float track_low_threshold = 3 [default = 0.1];
+  optional float new_track_threshold = 4 [default = 0.7];
+  optional int32 track_buffer = 5 [default = 30];
+  optional float match_threshold = 6 [default = 0.7];
+  optional bool enable_gmc = 7 [default = false];
 }

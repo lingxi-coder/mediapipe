@@ -62,6 +62,9 @@ class TiledBoxTrackMergeGraph : public Subgraph {
     auto merged_fresh = merge.Out("DETECTIONS").Cast<std::vector<Detection>>();
 
     auto& track = graph.AddNode("mediapipe.tiled_detection.TiledTrackingGraph");
+    if (options.has_tracking()) {
+      track.GetOptions<TiledTrackingGraphOptions>().CopyFrom(options.tracking());
+    }
     graph.In("IMAGE") >> track.In("IMAGE");
     merged_fresh >> track.In("DETECTIONS");
 

@@ -135,6 +135,9 @@ cc_library(
     name = "tiled_tracking_graph",
     srcs = ["tiled_tracking_graph.cc"],
     deps = [
+        ":tiled_detection_graphs_cc_proto",
+        "//mediapipe/calculators/tensor:botsort_tracking_calculator",
+        "//mediapipe/calculators/tensor:botsort_tracking_calculator_cc_proto",
         "//mediapipe/calculators/tensor:detection_label_id_codec_calculator",
         "//mediapipe/calculators/tensor:detection_label_id_codec_calculator_cc_proto",
         "//mediapipe/calculators/tensor:detections_tick_gate_calculator",
@@ -155,7 +158,9 @@ cc_test(
     srcs = ["tiled_tracking_graphs_test.cc"],
     deps = [
         ":tiled_box_track_merge_graph",
+        ":tiled_detection_graphs_cc_proto",
         ":tiled_tracking_graph",
+        "//mediapipe/calculators/tensor:botsort_tracking_calculator",
         "//mediapipe/calculators/tensor:tiling_matrix_utils",
         "//mediapipe/calculators/tensor:tiling_types",
         "//mediapipe/framework:calculator_framework",

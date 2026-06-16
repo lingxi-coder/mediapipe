@@ -13,12 +13,14 @@
 // limitations under the License.
 
 #include "absl/status/statusor.h"
+#include "mediapipe/calculators/tensor/botsort_tracking_calculator.pb.h"
 #include "mediapipe/calculators/tensor/detection_label_id_codec_calculator.pb.h"
 #include "mediapipe/framework/api2/builder.h"
 #include "mediapipe/framework/calculator.pb.h"
 #include "mediapipe/framework/formats/detection.pb.h"
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/subgraph.h"
+#include "mediapipe/graphs/tiled_detection/tiled_detection_graphs.pb.h"
 
 namespace mediapipe {
 namespace tiled_detection {
@@ -44,6 +46,29 @@ class TiledTrackingGraph : public Subgraph {
     api2::builder::Graph graph;
     auto image = graph.In("IMAGE").Cast<ImageFrame>();
     auto fresh = graph.In("DETECTIONS").Cast<std::vector<Detection>>();
+    const auto& opts = sc->Options<TiledTrackingGraphOptions>();
+
+    if (opts.tracker_type() == TiledTrackingGraphOptions::BOTSORT) {
+      // BoTSORT carries label_id/score natively, so no label-id codec is
+      // needed: route the fresh detections straight through the tracker and a
+      // tick gate keyed on the fresh stream (one packet per source frame).
+      auto& bot = graph.AddNode("BotsortTrackingCalculator");
+      auto& bo = bot.GetOptions<BotsortTrackingCalculatorOptions>();
+      bo.set_track_high_threshold(opts.track_high_threshold());
+      bo.set_track_low_threshold(opts.track_low_threshold());
+      bo.set_new_track_threshold(opts.new_track_threshold());
+      bo.set_track_buffer(opts.track_buffer());
+      bo.set_match_threshold(opts.match_threshold());
+      bo.set_enable_gmc(opts.enable_gmc());
+      image >> bot.In("IMAGE");
+      fresh >> bot.In("DETECTIONS");
+
+      auto& gate = graph.AddNode("DetectionsTickGateCalculator");
+      fresh >> gate.In("TICK");
+      bot.Out("DETECTIONS") >> gate.In("DATA");
+      gate.Out("DETECTIONS") >> graph.Out("TRACKER_DETECTIONS");
+      return graph.GetConfig();
+    }
 
     auto& encode = graph.AddNode("DetectionLabelIdCodecCalculator");
     encode.GetOptions<DetectionLabelIdCodecCalculatorOptions>().set_direction(

@@ -29,6 +29,7 @@
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
 #include "mediapipe/framework/port/status_matchers.h"
+#include "mediapipe/graphs/tiled_detection/tiled_detection_graphs.pb.h"
 
 namespace mediapipe {
 namespace {
@@ -134,6 +135,50 @@ TEST(TiledTrackingGraphTest, EmitsOnePacketPerFrameNoStall) {
       EXPECT_EQ(d.label_size(), 0);
     }
   }
+}
+
+// TiledTrackingGraph with tracker_type: BOTSORT. Routes the fresh detections
+// through BotsortTrackingCalculator + a tick gate (no label-id codec). Feeds 2
+// frames and asserts EXACTLY one TRACKER_DETECTIONS packet per source frame.
+TEST(TiledTrackingGraphTest, BotsortEmitsOnePacketPerFrame) {
+  auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+    input_stream: "image"
+    input_stream: "dets"
+    output_stream: "tracker"
+    node {
+      calculator: "mediapipe.tiled_detection.TiledTrackingGraph"
+      input_stream: "IMAGE:image"
+      input_stream: "DETECTIONS:dets"
+      output_stream: "TRACKER_DETECTIONS:tracker"
+      node_options {
+        [type.googleapis.com/mediapipe.TiledTrackingGraphOptions] {
+          tracker_type: BOTSORT
+        }
+      }
+    }
+  )pb");
+
+  std::vector<Packet> out;
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.Initialize(config));
+  MP_ASSERT_OK(graph.ObserveOutputStream("tracker", [&](const Packet& p) {
+    out.push_back(p);
+    return absl::OkStatus();
+  }));
+  MP_ASSERT_OK(graph.StartRun({}));
+  for (int i = 0; i < 2; ++i) {
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "image", Adopt(WhiteFrame(200, 200).release()).At(Timestamp(i))));
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "dets",
+        MakePacket<std::vector<Detection>>(
+            std::vector<Detection>{Box(0.9f, 8, 0.3f, 0.3f, 0.2f, 0.2f)})
+            .At(Timestamp(i))));
+  }
+  MP_ASSERT_OK(graph.CloseAllPacketSources());
+  MP_ASSERT_OK(graph.WaitUntilDone());
+
+  ASSERT_EQ(out.size(), 2u);  // one TRACKER_DETECTIONS packet per source frame
 }
 
 // TiledBoxTrackMergeGraph: per-batch DETECTIONS + BATCH_INFO + IMAGE -> merged
