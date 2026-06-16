@@ -360,8 +360,13 @@ TEST(OrientedObjectDetectorCApiTest, BotsortInImageModeRejectedThroughBinding) {
       MpOrientedObjectDetectorCreate(&options, &detector, &error_msg);
 
   EXPECT_NE(status, kMpOk);
+  EXPECT_EQ(detector, nullptr);
   if (detector) MpOrientedObjectDetectorClose(detector, /*error_msg=*/nullptr);
   ASSERT_NE(error_msg, nullptr);
+  // Assert the BOTSORT-specific validation message, not just a non-OK status:
+  // with no model path set, Create would also fail at model load even if the
+  // `tracking` field were silently dropped. The substring below appears ONLY in
+  // the tracking validation, so this can only pass if tracking is wired through.
   EXPECT_NE(std::string(error_msg).find("tracking.tracker_type=BOTSORT"),
             std::string::npos);
   MpErrorFree(error_msg);
