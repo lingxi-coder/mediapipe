@@ -74,6 +74,8 @@ message TiledBoxMergeGraphOptions {
 // the detector-level TrackingOptions; the YOLO graph builder copies fields in.
 message TiledTrackingGraphOptions {
   extend .mediapipe.CalculatorOptions {
+    // 471230018: next free in the tiled-detection family (471230016/017 are taken
+    // by DetectionLabelIdCodecCalculatorOptions and BotsortTrackingCalculatorOptions).
     optional TiledTrackingGraphOptions ext = 471230018;
   }
   enum TrackerType {

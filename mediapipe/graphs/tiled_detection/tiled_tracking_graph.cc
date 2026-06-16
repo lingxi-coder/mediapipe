@@ -32,6 +32,10 @@ namespace tiled_detection {
 // DETECTIONS) -[DECODE string->label_id, drop unclassifiable]->
 // DetectionsTickGate(TICK=DETECTIONS) -> TRACKER_DETECTIONS.
 //
+// When tracker_type is BOTSORT, the ENCODE/ObjectTrackingSubgraphCpu/DECODE
+// codec path is replaced by BotsortTrackingCalculator + the same tick gate
+// (BoTSORT carries label_id/score natively, so no codec is needed).
+//
 // Inputs:
 //   IMAGE       - ImageFrame (the source video frame; fed to optical flow).
 //   DETECTIONS  - std::vector<Detection> (merged-fresh, frame-normalized,
@@ -50,8 +54,7 @@ class TiledTrackingGraph : public Subgraph {
 
     if (opts.tracker_type() == TiledTrackingGraphOptions::BOTSORT) {
       // BoTSORT carries label_id/score natively, so no label-id codec is
-      // needed: route the fresh detections straight through the tracker and a
-      // tick gate keyed on the fresh stream (one packet per source frame).
+      // needed: route the fresh detections straight through the tracker.
       auto& bot = graph.AddNode("BotsortTrackingCalculator");
       auto& bo = bot.GetOptions<BotsortTrackingCalculatorOptions>();
       bo.set_track_high_threshold(opts.track_high_threshold());
@@ -63,6 +66,10 @@ class TiledTrackingGraph : public Subgraph {
       image >> bot.In("IMAGE");
       fresh >> bot.In("DETECTIONS");
 
+      // BoTSORT already emits exactly one packet per source frame, so the tick
+      // gate is not needed to enforce the 1:1 cadence here. It is retained for
+      // parity with the default branch and to normalize the output to the
+      // source-frame timestamp (keyed on the fresh stream).
       auto& gate = graph.AddNode("DetectionsTickGateCalculator");
       fresh >> gate.In("TICK");
       bot.Out("DETECTIONS") >> gate.In("DATA");

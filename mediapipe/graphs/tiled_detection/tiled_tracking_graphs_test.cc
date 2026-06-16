@@ -138,8 +138,11 @@ TEST(TiledTrackingGraphTest, EmitsOnePacketPerFrameNoStall) {
 }
 
 // TiledTrackingGraph with tracker_type: BOTSORT. Routes the fresh detections
-// through BotsortTrackingCalculator + a tick gate (no label-id codec). Feeds 2
-// frames and asserts EXACTLY one TRACKER_DETECTIONS packet per source frame.
+// through BotsortTrackingCalculator + a tick gate (no label-id codec). Feeds 3
+// frames (same object drifting a couple normalized units so BoTSORT can confirm
+// the track) and asserts EXACTLY one TRACKER_DETECTIONS packet per source frame,
+// then validates the "no codec needed for BOTSORT" claim on the last packet: the
+// tracked detection still carries the original label_id and a score natively.
 TEST(TiledTrackingGraphTest, BotsortEmitsOnePacketPerFrame) {
   auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
     input_stream: "image"
@@ -166,19 +169,29 @@ TEST(TiledTrackingGraphTest, BotsortEmitsOnePacketPerFrame) {
     return absl::OkStatus();
   }));
   MP_ASSERT_OK(graph.StartRun({}));
-  for (int i = 0; i < 2; ++i) {
+  constexpr int kLabelId = 5;  // distinct, to prove it survives the tracker
+  for (int i = 0; i < 3; ++i) {
+    const float drift = 0.01f * i;  // same object drifting a couple norm units
     MP_ASSERT_OK(graph.AddPacketToInputStream(
         "image", Adopt(WhiteFrame(200, 200).release()).At(Timestamp(i))));
     MP_ASSERT_OK(graph.AddPacketToInputStream(
         "dets",
-        MakePacket<std::vector<Detection>>(
-            std::vector<Detection>{Box(0.9f, 8, 0.3f, 0.3f, 0.2f, 0.2f)})
+        MakePacket<std::vector<Detection>>(std::vector<Detection>{
+            Box(0.9f, kLabelId, 0.3f + drift, 0.3f + drift, 0.2f, 0.2f)})
             .At(Timestamp(i))));
   }
   MP_ASSERT_OK(graph.CloseAllPacketSources());
   MP_ASSERT_OK(graph.WaitUntilDone());
 
-  ASSERT_EQ(out.size(), 2u);  // one TRACKER_DETECTIONS packet per source frame
+  ASSERT_EQ(out.size(), 3u);  // one TRACKER_DETECTIONS packet per source frame
+  // BoTSORT may need a frame to confirm a track; assert on the last output. The
+  // tracked detection must carry label_id + score natively (no codec path), and
+  // the label_id must equal the one fed in.
+  const auto& last = out.back().Get<std::vector<Detection>>();
+  ASSERT_FALSE(last.empty());
+  EXPECT_GT(last[0].label_id_size(), 0);
+  EXPECT_GT(last[0].score_size(), 0);
+  EXPECT_EQ(last[0].label_id(0), kLabelId);
 }
 
 // TiledBoxTrackMergeGraph: per-batch DETECTIONS + BATCH_INFO + IMAGE -> merged
