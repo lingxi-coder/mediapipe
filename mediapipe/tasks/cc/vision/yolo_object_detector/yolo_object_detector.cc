@@ -212,6 +212,39 @@ absl::StatusOr<std::unique_ptr<YoloObjectDetector>> YoloObjectDetector::Create(
         "mode; motion scheduling is meaningless in IMAGE mode.",
         MediaPipeTasksStatus::kRunnerUnexpectedInputError);
   }
+  if (options_proto->tracking().tracker_type() ==
+      YoloObjectDetectorOptionsProto::TrackingOptions::BOTSORT) {
+    if (options->running_mode == core::RunningMode::IMAGE) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT requires VIDEO or LIVE_STREAM running "
+          "mode; tracking is not available in IMAGE mode.",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+    if (!tiling_enabled) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT requires tiling to be enabled; the "
+          "non-tiled path has no tracker stage.",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+    if (options_proto->tiling().enable_motion_scheduling()) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT is incompatible with "
+          "tiling.enable_motion_scheduling: BoTSORT cannot gap-fill SKIP "
+          "frames (it emits no detections on a detection-less frame).",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+    if (options_proto->num_classes() < 1 ||
+        options_proto->num_classes() > 256) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tracking.tracker_type=BOTSORT requires num_classes in [1, 256] "
+          "(BoTSORT stores the class id as uint8).",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+  }
   auto detector =
       core::VisionTaskApiFactory::Create<YoloObjectDetector,
                                          YoloObjectDetectorOptionsProto>(

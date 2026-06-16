@@ -31,6 +31,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "mediapipe/framework/deps/file_path.h"
 #include "mediapipe/framework/formats/image.h"
 #include "mediapipe/framework/formats/image_frame.h"
@@ -681,6 +683,74 @@ TEST(YoloObjectDetectorTest, TiledVideoSchedulingStaticFramesKeepBoats) {
   MP_ASSERT_OK(detector->Close());
   EXPECT_GE(frames_with_boat, kFrames - 1)
       << "tracker should keep boats present across static (SKIPped) frames";
+}
+
+// ---------------------------------------------------------------------------
+// BOTSORT tracker-selection validation — all fire at Create() before the model
+// loads (no model_asset_path set), so no fixture is required. BOTSORT requires
+// stream mode + tiling + no motion-scheduling + num_classes in [1, 256].
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorTrackingValidationTest, BotsortInImageModeRejected) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->running_mode = core::RunningMode::IMAGE;
+  options->num_classes = 80;
+  options->tiling.tile_rows = 2;
+  options->tiling.tile_cols = 2;
+  options->tracking.tracker_type =
+      YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+  auto result = YoloObjectDetector::Create(std::move(options));
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  // Assert on the BOTSORT message so the check is not vacuous (no model is
+  // loaded; a missing model also yields kInvalidArgument, so the code alone
+  // cannot prove our validation fired).
+  EXPECT_THAT(result.status().message(),
+              testing::HasSubstr("IMAGE mode"));
+}
+
+TEST(YoloObjectDetectorTrackingValidationTest, BotsortWithoutTilingRejected) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->running_mode = core::RunningMode::LIVE_STREAM;
+  options->result_callback = [](absl::StatusOr<YoloObjectDetectorResult>,
+                                const Image&, int64_t) {};
+  options->num_classes = 80;
+  // tiling left at default 1x1 (disabled)
+  options->tracking.tracker_type =
+      YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+  auto result = YoloObjectDetector::Create(std::move(options));
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(result.status().message(),
+              testing::HasSubstr("requires tiling"));
+}
+
+TEST(YoloObjectDetectorTrackingValidationTest,
+     BotsortWithMotionSchedulingRejected) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->running_mode = core::RunningMode::VIDEO;
+  options->num_classes = 80;
+  options->tiling.tile_rows = 2;
+  options->tiling.tile_cols = 2;
+  options->tiling.enable_motion_scheduling = true;
+  options->tracking.tracker_type =
+      YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+  auto result = YoloObjectDetector::Create(std::move(options));
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(result.status().message(),
+              testing::HasSubstr("enable_motion_scheduling"));
+}
+
+TEST(YoloObjectDetectorTrackingValidationTest,
+     BotsortWithTooManyClassesRejected) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->running_mode = core::RunningMode::VIDEO;
+  options->num_classes = 300;  // > 256: uint8_t class-id limit
+  options->tiling.tile_rows = 2;
+  options->tiling.tile_cols = 2;
+  options->tracking.tracker_type =
+      YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+  auto result = YoloObjectDetector::Create(std::move(options));
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(result.status().message(),
+              testing::HasSubstr("num_classes in [1, 256]"));
 }
 
 }  // namespace
