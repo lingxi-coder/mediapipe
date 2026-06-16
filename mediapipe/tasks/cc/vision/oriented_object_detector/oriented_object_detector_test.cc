@@ -147,12 +147,18 @@ TEST(OrientedObjectDetectorOptionsConverterTest, MapsTrackingOptions) {
   options->tracking.tracker_type =
       OrientedObjectDetectorOptions::TrackingOptions::kBotsort;
   options->tracking.track_high_threshold = 0.55f;
+  options->tracking.track_low_threshold = 0.15f;
+  options->tracking.new_track_threshold = 0.65f;
+  options->tracking.track_buffer = 25;
   options->tracking.match_threshold = 0.75f;
   options->tracking.enable_gmc = true;
   auto proto = ConvertOrientedObjectDetectorOptionsToProto(options.get());
   EXPECT_EQ(proto->tracking().tracker_type(),
             proto::OrientedObjectDetectorOptions::TrackingOptions::BOTSORT);
   EXPECT_FLOAT_EQ(proto->tracking().track_high_threshold(), 0.55f);
+  EXPECT_FLOAT_EQ(proto->tracking().track_low_threshold(), 0.15f);
+  EXPECT_FLOAT_EQ(proto->tracking().new_track_threshold(), 0.65f);
+  EXPECT_EQ(proto->tracking().track_buffer(), 25);
   EXPECT_FLOAT_EQ(proto->tracking().match_threshold(), 0.75f);
   EXPECT_TRUE(proto->tracking().enable_gmc());
 }

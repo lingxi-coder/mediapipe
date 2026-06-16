@@ -147,6 +147,8 @@ ConvertOrientedObjectDetectorOptionsToProto(
       options->tiling.tile_local_nms_iou_threshold);
   tiling->set_max_detections_after_tile_nms(
       options->tiling.max_detections_after_tile_nms);
+  static_assert(static_cast<int>(OrientedObjectDetectorOptions::TrackingOptions::kTrackerUnspecified) ==
+                    static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::TRACKER_UNSPECIFIED));
   static_assert(static_cast<int>(OrientedObjectDetectorOptions::TrackingOptions::kBotsort) ==
                     static_cast<int>(OrientedObjectDetectorOptionsProto::TrackingOptions::BOTSORT));
   static_assert(static_cast<int>(OrientedObjectDetectorOptions::TrackingOptions::kBoxTracker) ==
