@@ -49,6 +49,9 @@ void CppConvertToDetection(
     out->keypoints = nullptr;
     out->keypoints_count = 0;
   }
+
+  out->track_id =
+      in.track_id.has_value() ? strdup(in.track_id->c_str()) : nullptr;
 }
 
 void CppConvertToDetectionResult(
@@ -73,6 +76,8 @@ void CppCloseDetection(MpDetection* in) {
   }
   delete[] in->keypoints;
   in->keypoints = nullptr;
+  free(const_cast<char*>(in->track_id));
+  in->track_id = nullptr;
 }
 
 void CppCloseDetectionResult(MpDetectionResult* in) {

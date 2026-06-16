@@ -45,6 +45,11 @@ struct MpDetection {
 
   // The number of elements in the keypoints array. 0 if keypoints do not exist.
   uint32_t keypoints_count;
+
+  // Optional persistent track ID (e.g. from BoTSORT), as a NUL-terminated
+  // string. `nullptr` when the detection is not part of a track. Owned by the
+  // result; freed by the detector's CloseResult.
+  const char* track_id;
 };
 
 // Detection results of a model.

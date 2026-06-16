@@ -15,11 +15,16 @@ limitations under the License.
 
 #include "mediapipe/tasks/c/components/containers/detection_result_converter.h"
 
+#include <optional>
+#include <string>
+
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/tasks/c/components/containers/detection_result.h"
 #include "mediapipe/tasks/cc/components/containers/detection_result.h"
 
 namespace mediapipe::tasks::c::components::containers {
+
+namespace cc = ::mediapipe::tasks::components::containers;
 
 TEST(DetectionResultConverterTest, ConvertsDetectionResultCustomCategory) {
   mediapipe::tasks::components::containers::DetectionResult
@@ -69,6 +74,29 @@ TEST(DetectionResultConverterTest, FreesMemory) {
 
   CppCloseDetectionResult(&c_detection_result);
   EXPECT_EQ(c_detection_result.detections, nullptr);
+}
+
+TEST(DetectionResultConverterTest, ConvertsTrackId) {
+  cc::Detection in;
+  in.categories.push_back({/*index=*/1, /*score=*/0.9f, "", ""});
+  in.track_id = std::string("42");
+
+  MpDetection out;
+  CppConvertToDetection(in, &out);
+  ASSERT_NE(out.track_id, nullptr);
+  EXPECT_STREQ(out.track_id, "42");
+  CppCloseDetection(&out);
+  EXPECT_EQ(out.track_id, nullptr);
+}
+
+TEST(DetectionResultConverterTest, NoTrackIdIsNull) {
+  cc::Detection in;
+  in.categories.push_back({/*index=*/1, /*score=*/0.9f, "", ""});
+
+  MpDetection out;
+  CppConvertToDetection(in, &out);
+  EXPECT_EQ(out.track_id, nullptr);
+  CppCloseDetection(&out);
 }
 
 }  // namespace mediapipe::tasks::c::components::containers
