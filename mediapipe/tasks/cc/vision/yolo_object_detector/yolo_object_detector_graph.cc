@@ -492,6 +492,13 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
         // Both enums share numeric values (UNSPECIFIED=0/BOX_TRACKER=1/
         // BOTSORT=2), so the static_cast across enum types is valid.
         auto* mtracking = mo.mutable_tracking();
+        // Pin the YOLO-proto <-> TiledTrackingGraph TrackerType values.
+        static_assert(static_cast<int>(YoloObjectDetectorOptionsProto::TrackingOptions::TRACKER_UNSPECIFIED) ==
+                          static_cast<int>(::mediapipe::TiledTrackingGraphOptions::TRACKER_UNSPECIFIED));
+        static_assert(static_cast<int>(YoloObjectDetectorOptionsProto::TrackingOptions::BOX_TRACKER) ==
+                          static_cast<int>(::mediapipe::TiledTrackingGraphOptions::BOX_TRACKER));
+        static_assert(static_cast<int>(YoloObjectDetectorOptionsProto::TrackingOptions::BOTSORT) ==
+                          static_cast<int>(::mediapipe::TiledTrackingGraphOptions::BOTSORT));
         mtracking->set_tracker_type(
             static_cast<::mediapipe::TiledTrackingGraphOptions::TrackerType>(
                 task_options.tracking().tracker_type()));

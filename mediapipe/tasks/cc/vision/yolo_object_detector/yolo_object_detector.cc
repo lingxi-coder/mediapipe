@@ -150,6 +150,11 @@ ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options) {
   tiling->set_enable_motion_scheduling(options->tiling.enable_motion_scheduling);
   tiling->set_max_scheduled_tiles(options->tiling.max_scheduled_tiles);
   auto* tracking = options_proto->mutable_tracking();
+  // Pin the struct<->proto TrackerType values so a reorder is a build error.
+  static_assert(static_cast<int>(YoloObjectDetectorOptions::TrackingOptions::kBoxTracker) ==
+                    static_cast<int>(YoloObjectDetectorOptionsProto::TrackingOptions::BOX_TRACKER));
+  static_assert(static_cast<int>(YoloObjectDetectorOptions::TrackingOptions::kBotsort) ==
+                    static_cast<int>(YoloObjectDetectorOptionsProto::TrackingOptions::BOTSORT));
   tracking->set_tracker_type(
       static_cast<YoloObjectDetectorOptionsProto::TrackingOptions::TrackerType>(
           options->tracking.tracker_type));
