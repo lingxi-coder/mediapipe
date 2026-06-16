@@ -129,6 +129,27 @@ struct YoloObjectDetectorOptions {
   };
   TilingOptions tiling;
 
+  // Tracker selection for the tiled VIDEO/LIVE_STREAM path (mirrors the proto
+  // TrackingOptions). Honored only when tiling is enabled and running mode is
+  // not IMAGE; validated at Create().
+  struct TrackingOptions {
+    // NOTE: values must stay numerically equal to the proto enum
+    // TrackingOptions.TrackerType (BOX_TRACKER=1, BOTSORT=2) — the converter
+    // static_casts between them.
+    enum TrackerType {
+      kBoxTracker = 1,  // optical-flow propagation (default)
+      kBotsort = 2,     // tracking-by-detection, motion-only
+    };
+    TrackerType tracker_type = kBoxTracker;
+    float track_high_threshold = 0.6f;
+    float track_low_threshold = 0.1f;
+    float new_track_threshold = 0.7f;
+    int track_buffer = 30;
+    float match_threshold = 0.7f;
+    bool enable_gmc = false;
+  };
+  TrackingOptions tracking;
+
   // The user-defined result callback for processing live stream data.
   // The result callback should only be specified when the running mode is set
   // to RunningMode::LIVE_STREAM.

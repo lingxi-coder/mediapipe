@@ -97,4 +97,23 @@ message YoloObjectDetectorOptions {
     optional int32 max_scheduled_tiles = 8 [default = 0];
   }
   optional TilingOptions tiling = 10;
+
+  // Tracker selection for the tiled VIDEO/LIVE_STREAM path. tracker_type is
+  // honored only when tiling is enabled and running mode is not IMAGE
+  // (validated at Create()); otherwise there is no tracker node.
+  message TrackingOptions {
+    enum TrackerType {
+      TRACKER_UNSPECIFIED = 0;  // -> BOX_TRACKER
+      BOX_TRACKER = 1;          // optical-flow propagation (existing default)
+      BOTSORT = 2;              // tracking-by-detection, motion-only
+    }
+    optional TrackerType tracker_type = 1 [default = BOX_TRACKER];
+    optional float track_high_threshold = 2 [default = 0.6];
+    optional float track_low_threshold = 3 [default = 0.1];
+    optional float new_track_threshold = 4 [default = 0.7];
+    optional int32 track_buffer = 5 [default = 30];
+    optional float match_threshold = 6 [default = 0.7];
+    optional bool enable_gmc = 7 [default = false];
+  }
+  optional TrackingOptions tracking = 11;
 }

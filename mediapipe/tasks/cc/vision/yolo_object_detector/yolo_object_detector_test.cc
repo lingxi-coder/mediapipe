@@ -52,6 +52,11 @@ namespace {
 
 using ::mediapipe::file::JoinPath;
 using ::mediapipe::tasks::components::containers::DetectionResult;
+// The generated options proto (mirrors the alias used in the .cc); needed to
+// name the proto-side TrackingOptions enum in the converter round-trip test.
+using YoloObjectDetectorOptionsProto =
+    ::mediapipe::tasks::vision::yolo_object_detector::proto::
+        YoloObjectDetectorOptions;
 
 // Path prefix used by all testdata files (mirrors the sibling task tests).
 constexpr char kTestDataDirectory[] = "/mediapipe/tasks/testdata/vision/";
@@ -129,6 +134,35 @@ TEST(YoloObjectDetectorOptionsTest, TilingOptionsConvertToProto) {
   auto proto2 = ConvertYoloObjectDetectorOptionsToProto(options.get());
   EXPECT_TRUE(proto2->tiling().enable_motion_scheduling());
   EXPECT_EQ(proto2->tiling().max_scheduled_tiles(), 4);
+}
+
+// ---------------------------------------------------------------------------
+// Options passthrough test — no model fixture required.
+// Verifies that the nested TrackingOptions struct is mapped into the options
+// proto by ConvertYoloObjectDetectorOptionsToProto (tracker selection +
+// thresholds), including the struct-enum <-> proto-enum static_cast.
+// ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorOptionsConverterTest, MapsTrackingOptions) {
+  auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->tracking.tracker_type =
+      YoloObjectDetectorOptions::TrackingOptions::kBotsort;
+  options->tracking.track_high_threshold = 0.55f;
+  options->tracking.track_low_threshold = 0.15f;
+  options->tracking.new_track_threshold = 0.65f;
+  options->tracking.track_buffer = 25;
+  options->tracking.match_threshold = 0.75f;
+  options->tracking.enable_gmc = true;
+
+  auto proto = ConvertYoloObjectDetectorOptionsToProto(options.get());
+
+  EXPECT_EQ(proto->tracking().tracker_type(),
+            YoloObjectDetectorOptionsProto::TrackingOptions::BOTSORT);
+  EXPECT_FLOAT_EQ(proto->tracking().track_high_threshold(), 0.55f);
+  EXPECT_FLOAT_EQ(proto->tracking().track_low_threshold(), 0.15f);
+  EXPECT_FLOAT_EQ(proto->tracking().new_track_threshold(), 0.65f);
+  EXPECT_EQ(proto->tracking().track_buffer(), 25);
+  EXPECT_FLOAT_EQ(proto->tracking().match_threshold(), 0.75f);
+  EXPECT_TRUE(proto->tracking().enable_gmc());
 }
 
 // ---------------------------------------------------------------------------

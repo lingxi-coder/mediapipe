@@ -149,6 +149,16 @@ ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options) {
       options->tiling.max_detections_after_tile_nms);
   tiling->set_enable_motion_scheduling(options->tiling.enable_motion_scheduling);
   tiling->set_max_scheduled_tiles(options->tiling.max_scheduled_tiles);
+  auto* tracking = options_proto->mutable_tracking();
+  tracking->set_tracker_type(
+      static_cast<YoloObjectDetectorOptionsProto::TrackingOptions::TrackerType>(
+          options->tracking.tracker_type));
+  tracking->set_track_high_threshold(options->tracking.track_high_threshold);
+  tracking->set_track_low_threshold(options->tracking.track_low_threshold);
+  tracking->set_new_track_threshold(options->tracking.new_track_threshold);
+  tracking->set_track_buffer(options->tracking.track_buffer);
+  tracking->set_match_threshold(options->tracking.match_threshold);
+  tracking->set_enable_gmc(options->tracking.enable_gmc);
   return options_proto;
 }
 

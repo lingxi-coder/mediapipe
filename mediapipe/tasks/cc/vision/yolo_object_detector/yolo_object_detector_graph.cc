@@ -488,6 +488,23 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
         mo.set_iou_threshold(task_options.iou_threshold());
         mo.set_class_agnostic(true);
         mo.set_max_detections(task_options.max_results());
+        // Forward the user's tracker selection into the tracking subgraph.
+        // Both enums share numeric values (UNSPECIFIED=0/BOX_TRACKER=1/
+        // BOTSORT=2), so the static_cast across enum types is valid.
+        auto* mtracking = mo.mutable_tracking();
+        mtracking->set_tracker_type(
+            static_cast<::mediapipe::TiledTrackingGraphOptions::TrackerType>(
+                task_options.tracking().tracker_type()));
+        mtracking->set_track_high_threshold(
+            task_options.tracking().track_high_threshold());
+        mtracking->set_track_low_threshold(
+            task_options.tracking().track_low_threshold());
+        mtracking->set_new_track_threshold(
+            task_options.tracking().new_track_threshold());
+        mtracking->set_track_buffer(task_options.tracking().track_buffer());
+        mtracking->set_match_threshold(
+            task_options.tracking().match_threshold());
+        mtracking->set_enable_gmc(task_options.tracking().enable_gmc());
         yolo_decode.Out(kDetectionsTag) >> merge.In(kDetectionsTag);
         front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
         // The tracker needs the source video frame; reuse the ImageFrame the
