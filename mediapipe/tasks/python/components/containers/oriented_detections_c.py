@@ -29,6 +29,7 @@ class MpOrientedDetectionC(ctypes.Structure):
       ('width', ctypes.c_float),
       ('height', ctypes.c_float),
       ('rotation', ctypes.c_float),
+      ('track_id', ctypes.c_char_p),
   ]
 
 

@@ -92,6 +92,17 @@ py_test(
 )
 
 py_test(
+    name = "oriented_detections_test",
+    srcs = ["oriented_detections_test.py"],
+    deps = [
+        "//mediapipe/tasks/python/components/containers:category_c",
+        "//mediapipe/tasks/python/components/containers:oriented_detections",
+        "//mediapipe/tasks/python/components/containers:oriented_detections_c",
+        "@mediapipe_pip_deps_absl_py//:pkg",
+    ],
+)
+
+py_test(
     name = "bounding_box_test",
     srcs = ["bounding_box_test.py"],
     deps = [

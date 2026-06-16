@@ -14,7 +14,7 @@
 """Oriented (rotated bounding box) detections data class."""
 
 import dataclasses
-from typing import Any, List
+from typing import Any, List, Optional
 
 from mediapipe.tasks.python.components.containers import category as category_lib
 from mediapipe.tasks.python.components.containers import category_c as category_c_lib
@@ -33,6 +33,8 @@ class OrientedDetection:
     width: Box width, in pixels.
     height: Box height, in pixels.
     rotation: Rotation angle in radians, counter-clockwise.
+    track_id: Optional persistent track ID string (e.g. from BoTSORT); None when
+      not tracked.
   """
 
   categories: List[category_lib.Category]
@@ -41,6 +43,7 @@ class OrientedDetection:
   width: float
   height: float
   rotation: float
+  track_id: Optional[str] = None
 
   def __eq__(self, other: Any) -> bool:
     if not isinstance(other, OrientedDetection):
@@ -52,6 +55,7 @@ class OrientedDetection:
         and self.width == other.width
         and self.height == other.height
         and self.rotation == other.rotation
+        and self.track_id == other.track_id
     )
 
   @classmethod
@@ -65,6 +69,7 @@ class OrientedDetection:
     py_categories = category_lib.create_list_of_categories_from_ctypes(
         c_categories
     )
+    track_id = c_obj.track_id.decode('utf-8') if c_obj.track_id else None
     return OrientedDetection(
         categories=py_categories,
         cx=c_obj.cx,
@@ -72,6 +77,7 @@ class OrientedDetection:
         width=c_obj.width,
         height=c_obj.height,
         rotation=c_obj.rotation,
+        track_id=track_id,
     )
 
 
