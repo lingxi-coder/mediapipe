@@ -26,6 +26,7 @@
 #include "mediapipe/framework/formats/detection.pb.h"
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/location_data.pb.h"
+#include "mediapipe/framework/formats/oriented_detection.pb.h"
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
 #include "mediapipe/framework/port/status_matchers.h"
@@ -52,6 +53,19 @@ Detection Box(float score, int label_id, float xmin, float ymin, float w,
   bb->set_ymin(ymin);
   bb->set_width(w);
   bb->set_height(h);
+  return d;
+}
+
+OrientedDetection Obb(float cx, float cy, float w, float h, float score,
+                      int label_id) {
+  OrientedDetection d;
+  d.set_cx(cx);
+  d.set_cy(cy);
+  d.set_width(w);
+  d.set_height(h);
+  d.set_rotation(0.0f);
+  d.add_score(score);
+  d.add_label_id(label_id);
   return d;
 }
 
@@ -248,6 +262,83 @@ TEST(TiledBoxTrackMergeGraphTest, FreshDetectionFlowsThroughWithTracker) {
   const auto& dets = merged[0].Get<std::vector<Detection>>();
   ASSERT_EQ(dets.size(), 1u);
   EXPECT_NEAR(dets[0].score(0), 0.9f, 1e-5);
+}
+
+// TiledObbTrackMergeGraph: per-batch ORIENTED_DETECTIONS + BATCH_INFO + IMAGE ->
+// merged ORIENTED_DETECTIONS with BoTSORT track ids. Feeds 3 frames of a single
+// full-frame tile carrying one oriented detection (drifting a couple normalized
+// units so BoTSORT can confirm the track) and asserts EXACTLY one merged packet
+// per source frame at the source timestamp, and that the last frame's output
+// carries a track_id (BoTSORT only emits ids for confirmed tracks).
+TEST(TiledObbTrackMergeGraphTest, EmitsTrackIdAcrossFrames) {
+  auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+    input_stream: "dets"
+    input_stream: "info"
+    input_stream: "image"
+    output_stream: "merged"
+    node {
+      calculator: "mediapipe.tiled_detection.TiledObbTrackMergeGraph"
+      input_stream: "ORIENTED_DETECTIONS:dets"
+      input_stream: "BATCH_INFO:info"
+      input_stream: "IMAGE:image"
+      output_stream: "ORIENTED_DETECTIONS:merged"
+      node_options {
+        [type.googleapis.com/mediapipe.TiledObbMergeGraphOptions] {
+          iou_threshold: 0.5
+          class_agnostic: true
+          tracking {
+            tracker_type: BOTSORT
+            track_high_threshold: 0.05
+            new_track_threshold: 0.05
+          }
+        }
+      }
+    }
+  )pb");
+
+  std::vector<Packet> merged;
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.Initialize(config));
+  MP_ASSERT_OK(graph.ObserveOutputStream("merged", [&](const Packet& p) {
+    merged.push_back(p);
+    return absl::OkStatus();
+  }));
+  MP_ASSERT_OK(graph.StartRun({}));
+
+  constexpr int kLabelId = 3;
+  for (int i = 0; i < 3; ++i) {
+    const float drift = 0.01f * i;  // same object drifting a couple norm units
+    auto geom = Geom1(200, 200);
+    // ONE batch, ONE full-frame tile row holding one oriented detection.
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "dets",
+        MakePacket<std::vector<std::vector<OrientedDetection>>>(
+            std::vector<std::vector<OrientedDetection>>{
+                {Obb(0.5f + drift, 0.5f + drift, 0.2f, 0.2f, 0.9f, kLabelId)}})
+            .At(Timestamp(i))));
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "info", MakePacket<TensorBatchInfo>(Info1(i, geom)).At(Timestamp(i))));
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "image", Adopt(WhiteFrame(200, 200).release()).At(Timestamp(i))));
+  }
+  MP_ASSERT_OK(graph.CloseAllPacketSources());
+  MP_ASSERT_OK(graph.WaitUntilDone());
+
+  ASSERT_EQ(merged.size(), 3u);  // one merged packet per source frame
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(merged[i].Timestamp(), Timestamp(i));
+    // Geometry is unchanged by the tracker (ID-only): one box per frame.
+    ASSERT_EQ(merged[i].Get<std::vector<OrientedDetection>>().size(), 1u);
+  }
+  // BoTSORT confirms a track after a couple frames; assert on the last output.
+  const auto& last = merged.back().Get<std::vector<OrientedDetection>>();
+  ASSERT_EQ(last.size(), 1u);
+  EXPECT_TRUE(last[0].has_track_id());
+  EXPECT_FALSE(last[0].track_id().empty());
+  // The fresh detection geometry/label is preserved (ID-only association).
+  ASSERT_EQ(last[0].label_id_size(), 1);
+  EXPECT_EQ(last[0].label_id(0), kLabelId);
+  EXPECT_NEAR(last[0].width(), 0.2f, 1e-4);
 }
 
 }  // namespace

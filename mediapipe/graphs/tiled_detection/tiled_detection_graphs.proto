@@ -51,6 +51,10 @@ message TiledObbMergeGraphOptions {
   optional int32 max_detections = 2 [default = -1];
   // If true, NMS suppresses across classes (class labels are ignored).
   optional bool class_agnostic = 3 [default = false];
+  // Tracker selection forwarded to the OBB stream tracking calculator. Honored
+  // only by TiledObbTrackMergeGraph (stream mode). UNSPECIFIED/BOX_TRACKER are
+  // ignored here (OBB supports BOTSORT only; the detector Create() validates).
+  optional TiledTrackingGraphOptions tracking = 4;
 }
 
 // Options for the tiled axis-aligned box merge subgraph: merges per-tile
