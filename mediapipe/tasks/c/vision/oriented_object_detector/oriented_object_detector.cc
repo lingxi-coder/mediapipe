@@ -35,6 +35,7 @@ limitations under the License.
 #include "mediapipe/tasks/c/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/c/vision/core/image_processing_options_converter.h"
 #include "mediapipe/tasks/c/vision/oriented_object_detector/tiling_options_converter.h"
+#include "mediapipe/tasks/c/vision/oriented_object_detector/tracking_options_converter.h"
 #include "mediapipe/tasks/cc/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/cc/vision/core/running_mode.h"
 #include "mediapipe/tasks/cc/vision/oriented_object_detector/oriented_object_detector.h"
@@ -95,6 +96,7 @@ void CppConvertToDetectorOptions(const MpOrientedObjectDetectorOptions& in,
       static_cast<ObbNs::OrientedObjectDetectorOptions::Layout>(in.layout);
   out->num_classes = in.num_classes;
   CppConvertToTilingOptions(in.tiling, &out->tiling);
+  CppConvertToTrackingOptions(in.tracking, &out->tracking);
 }
 
 absl::Status CppOrientedObjectDetectorCreate(
