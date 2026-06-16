@@ -405,18 +405,54 @@ class OrientedObjectDetectorGraph : public tasks::core::ModelTaskGraph {
 
       // Merge tile-local detections back to frame space + global rotated NMS;
       // emits one packet per source frame at the source frame timestamp.
-      auto& merge =
-          graph.AddNode("mediapipe.tiled_detection.TiledObbMergeGraph");
-      auto& mo = merge.GetOptions<::mediapipe::TiledObbMergeGraphOptions>();
-      mo.set_iou_threshold(task_options.iou_threshold());
-      mo.set_class_agnostic(task_options.class_agnostic_nms());
-      mo.set_max_detections(task_options.max_results());
-      obb_decode.Out(kOrientedDetectionsTag) >>
-          merge.In(kOrientedDetectionsTag);
-      front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
-
-      detections_pre_label = merge.Out(kOrientedDetectionsTag)
-                                 .Cast<std::vector<OrientedDetection>>();
+      // When stream mode + tiling + BOTSORT is selected, route through the
+      // track-merge subgraph (which additionally consumes the source IMAGE for
+      // GMC); otherwise use the plain merge subgraph (default path, byte-
+      // identical to before).
+      const bool obb_tracking =
+          task_options.base_options().use_stream_mode() &&
+          TilingEnabled(tiling) &&
+          task_options.tracking().tracker_type() ==
+              proto::OrientedObjectDetectorOptions::TrackingOptions::BOTSORT;
+      if (obb_tracking) {
+        auto& merge = graph.AddNode(
+            "mediapipe.tiled_detection.TiledObbTrackMergeGraph");
+        auto& mo = merge.GetOptions<::mediapipe::TiledObbMergeGraphOptions>();
+        mo.set_iou_threshold(task_options.iou_threshold());
+        mo.set_class_agnostic(task_options.class_agnostic_nms());
+        mo.set_max_detections(task_options.max_results());
+        auto* mt = mo.mutable_tracking();
+        mt->set_tracker_type(
+            static_cast<::mediapipe::TiledTrackingGraphOptions::TrackerType>(
+                task_options.tracking().tracker_type()));
+        mt->set_track_high_threshold(
+            task_options.tracking().track_high_threshold());
+        mt->set_track_low_threshold(
+            task_options.tracking().track_low_threshold());
+        mt->set_new_track_threshold(
+            task_options.tracking().new_track_threshold());
+        mt->set_track_buffer(task_options.tracking().track_buffer());
+        mt->set_match_threshold(task_options.tracking().match_threshold());
+        mt->set_enable_gmc(task_options.tracking().enable_gmc());
+        obb_decode.Out(kOrientedDetectionsTag) >>
+            merge.In(kOrientedDetectionsTag);
+        front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
+        to_frame.Out(kImageCpuTag) >> merge.In(kImageTag);
+        detections_pre_label = merge.Out(kOrientedDetectionsTag)
+                                   .Cast<std::vector<OrientedDetection>>();
+      } else {
+        auto& merge =
+            graph.AddNode("mediapipe.tiled_detection.TiledObbMergeGraph");
+        auto& mo = merge.GetOptions<::mediapipe::TiledObbMergeGraphOptions>();
+        mo.set_iou_threshold(task_options.iou_threshold());
+        mo.set_class_agnostic(task_options.class_agnostic_nms());
+        mo.set_max_detections(task_options.max_results());
+        obb_decode.Out(kOrientedDetectionsTag) >>
+            merge.In(kOrientedDetectionsTag);
+        front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
+        detections_pre_label = merge.Out(kOrientedDetectionsTag)
+                                   .Cast<std::vector<OrientedDetection>>();
+      }
 
       // The tiled path has no preprocessing node to forward the input image,
       // so pass it through explicitly as the IMAGE output.
