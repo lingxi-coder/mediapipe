@@ -599,7 +599,10 @@ config_setting(
         "MEDIAPIPE_NO_JNI": "1",
     },
     values = {"crosstool_top": "//external:android/crosstool"},
-    visibility = ["//mediapipe/framework:__pkg__"],
+    visibility = [
+        "//mediapipe/framework:__pkg__",
+        "//mediapipe/gpu:__pkg__",
+    ],
 )
 
 cc_library(
@@ -803,6 +806,7 @@ cc_test(
         ":tensor",
         ":tensor_opencv",
         "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:opencv_core",
         "@com_google_absl//absl/status",
     ],
 )

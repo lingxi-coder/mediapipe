@@ -16,13 +16,13 @@
 #define MEDIAPIPE_GPU_GPU_BUFFER_FORMAT_H_
 
 #include <cstdint>
+#include <ostream>
+#include <string>
 
 #ifdef __APPLE__
 #include <CoreVideo/CoreVideo.h>
-// Fork change: enable the CVPixelBuffer-backed GpuBuffer + Metal texture bridge
-// on macOS too. Upstream gates this to iOS (`!TARGET_OS_OSX`), but CoreVideo /
-// CVMetalTextureCache / Metal interop are all available on macOS, and the Metal
-// zero-copy preprocessing path (Phase 5) needs `metalTextureWithGpuBuffer:`.
+// CoreVideo and CVMetalTextureCache provide the CVPixelBuffer-backed GpuBuffer
+// bridge used by Metal zero-copy preprocessing on both iOS and macOS.
 #define MEDIAPIPE_GPU_BUFFER_USE_CV_PIXEL_BUFFER 1
 #endif  // defined(__APPLE__)
 
@@ -208,6 +208,12 @@ struct GpuBufferSpec {
   int height;
   GpuBufferFormat format;
 };
+
+inline std::ostream& operator<<(std::ostream& os, const GpuBufferSpec& spec) {
+  std::string format_str(reinterpret_cast<const char*>(&spec.format), 4);
+  return os << "GpuBufferSpec{width: " << spec.width
+            << ", height: " << spec.height << ", format: " << format_str << "}";
+}
 
 // BufferSpec equality operators
 inline bool operator==(const GpuBufferSpec& lhs, const GpuBufferSpec& rhs) {

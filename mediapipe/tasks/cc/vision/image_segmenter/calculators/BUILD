@@ -25,7 +25,6 @@ mediapipe_proto_library(
     srcs = ["tensors_to_segmentation_calculator.proto"],
     deps = [
         "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework/formats:image_format_proto",
         "//mediapipe/tasks/cc/vision/image_segmenter/proto:segmenter_options_proto",
         "//mediapipe/util:label_map_proto",
     ],
@@ -107,10 +106,10 @@ cc_library(
     deps = [
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/gpu:gl_base",
-        "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_program",
-        "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_shader",
-        "@org_tensorflow//tensorflow/lite/delegates/gpu/gl:gl_texture",
-        "@org_tensorflow//tensorflow/lite/delegates/gpu/gl/converters:util",
+        "@litert//tflite/delegates/gpu/gl:gl_program",
+        "@litert//tflite/delegates/gpu/gl:gl_shader",
+        "@litert//tflite/delegates/gpu/gl:gl_texture",
+        "@litert//tflite/delegates/gpu/gl/converters:util",
     ],
 )
 

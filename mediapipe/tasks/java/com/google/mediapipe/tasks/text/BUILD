@@ -59,6 +59,7 @@ android_library(
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/core",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:libmediapipe_tasks_jni_lib",
         "//third_party:autovalue",
+        "@maven//:androidx_annotation_annotation",
         "@maven//:com_google_guava_guava",
     ],
 )
@@ -111,6 +112,7 @@ android_library(
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/utils:cosinesimilarity",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:core_java",
         "//third_party:autovalue",
+        "@maven//:androidx_annotation_annotation",
         "@maven//:com_google_guava_guava",
     ],
 )
@@ -125,4 +127,36 @@ mediapipe_jni_binary(
     uses_explicit_exports = False,
     version_script = "//mediapipe/tasks/java:textgenai_version_script.lds",
     deps = [],
+)
+
+android_library(
+    name = "textsummarizer",
+    srcs = [
+        "textsummarizer/TextSummarizer.java",
+        "textsummarizer/TextSummarizerResult.java",
+        "textsummarizer/TextSummarizerStreamingResult.java",
+    ],
+    manifest = "textsummarizer/AndroidManifest.xml",
+    deps = [
+        ":libmediapipe_tasks_textgenai_jni_lib",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core",
+        "//third_party:autovalue",
+        "@maven//:com_google_guava_guava",
+    ],
+)
+
+android_library(
+    name = "textproofreader",
+    srcs = [
+        "textproofreader/TextProofreader.java",
+        "textproofreader/TextProofreaderResult.java",
+        "textproofreader/TextProofreaderStreamingResult.java",
+    ],
+    manifest = "textproofreader/AndroidManifest.xml",
+    deps = [
+        ":libmediapipe_tasks_textgenai_jni_lib",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core",
+        "//third_party:autovalue",
+        "@maven//:com_google_guava_guava",
+    ],
 )

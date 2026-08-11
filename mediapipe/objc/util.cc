@@ -14,10 +14,25 @@
 
 #include "mediapipe/objc/util.h"
 
-#import <CoreGraphics/CGImage.h>
+#include <iterator>
+
+#if defined(__APPLE__)
+
+#import <Accelerate/Accelerate.h>          // IWYU pragma: keep
+#import <CoreFoundation/CoreFoundation.h>  // IWYU pragma: keep
+#import <CoreGraphics/CGImage.h>           // IWYU pragma: keep
+#import <CoreGraphics/CoreGraphics.h>      // IWYU pragma: keep
+#import <CoreVideo/CoreVideo.h>            // IWYU pragma: keep
+
+#include "mediapipe/objc/CFHolder.h"  // IWYU pragma: keep
+
+#endif  // defined(__APPLE__)
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <memory>
+#include <vector>
 
 #include "absl/base/macros.h"
 #include "absl/log/absl_check.h"
@@ -208,7 +223,7 @@ vImage_Error vImageConvertCVPixelBuffers(CVPixelBufferRef src,
   int dst_buffer_count =
       vImageConverter_GetNumberOfDestinationBuffers(converter);
   vImage_Buffer buffers[8];
-  if (src_buffer_count + dst_buffer_count > ABSL_ARRAYSIZE(buffers)) {
+  if (src_buffer_count + dst_buffer_count > std::size(buffers)) {
     vImageConverter_Release(converter);
     return kvImageMemoryAllocationError;
   }
@@ -325,8 +340,8 @@ absl::Status CreateCVPixelBufferForImageFramePacket(
   auto image_frame = std::const_pointer_cast<mediapipe::ImageFrame>(
       mediapipe::SharedPtrWithPacket<mediapipe::ImageFrame>(
           image_frame_packet));
-  MP_ASSIGN_OR_RETURN(*out_buffer, CreateCVPixelBufferForImageFrame(
-                                       image_frame, can_overwrite));
+  ABSL_ASSIGN_OR_RETURN(*out_buffer, CreateCVPixelBufferForImageFrame(
+                                         image_frame, can_overwrite));
   return absl::OkStatus();
 }
 
@@ -349,9 +364,9 @@ absl::StatusOr<CFHolder<CVPixelBufferRef>> CreateCVPixelBufferForImageFrame(
       if (can_overwrite) {
         v_dest = v_image;
       } else {
-        MP_ASSIGN_OR_RETURN(pixel_buffer,
-                            CreateCVPixelBufferWithoutPool(
-                                frame.Width(), frame.Height(), pixel_format));
+        ABSL_ASSIGN_OR_RETURN(pixel_buffer,
+                              CreateCVPixelBufferWithoutPool(
+                                  frame.Width(), frame.Height(), pixel_format));
         status = CVPixelBufferLockBaseAddress(*pixel_buffer,
                                               kCVPixelBufferLock_ReadOnly);
         RET_CHECK(status == kCVReturnSuccess)
@@ -466,9 +481,9 @@ absl::StatusOr<CFHolder<CVPixelBufferRef>> CreateCVPixelBufferCopyingImageFrame(
   }
 
   CVReturn cv_err;
-  MP_ASSIGN_OR_RETURN(pixel_buffer, CreateCVPixelBufferWithoutPool(
-                                        image_frame.Width(),
-                                        image_frame.Height(), pixel_format));
+  ABSL_ASSIGN_OR_RETURN(pixel_buffer, CreateCVPixelBufferWithoutPool(
+                                          image_frame.Width(),
+                                          image_frame.Height(), pixel_format));
   cv_err =
       CVPixelBufferLockBaseAddress(*pixel_buffer, kCVPixelBufferLock_ReadOnly);
   RET_CHECK(cv_err == kCVReturnSuccess)
@@ -483,7 +498,7 @@ absl::StatusOr<CFHolder<CVPixelBufferRef>> CreateCVPixelBufferCopyingImageFrame(
   RET_CHECK(cv_err == kCVReturnSuccess)
       << "CVPixelBufferUnlockBaseAddress failed: " << cv_err;
 
-  MP_RETURN_IF_ERROR(status);
+  ABSL_RETURN_IF_ERROR(status);
 
   return pixel_buffer;
 }
@@ -631,6 +646,10 @@ std::unique_ptr<mediapipe::ImageFrame> CreateImageFrameForCVPixelBuffer(
       image_format = mediapipe::ImageFormat::GRAY8;
       break;
 
+    case kCVPixelFormatType_OneComponent32Float:
+      image_format = mediapipe::ImageFormat::VEC32F1;
+      break;
+
     default: {
       char format_str[5] = {static_cast<char>(pixel_format >> 24 & 0xFF),
                             static_cast<char>(pixel_format >> 16 & 0xFF),
@@ -688,7 +707,7 @@ CFDictionaryRef GetCVPixelBufferAttributesForGlCompatibility() {
         kCFBooleanTrue};
 
     attrs = CFDictionaryCreate(
-        kCFAllocatorDefault, keys, values, ABSL_ARRAYSIZE(values),
+        kCFAllocatorDefault, keys, values, std::size(values),
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFRelease(empty_dict);
   }
@@ -733,4 +752,40 @@ void DumpCVPixelFormats() {
     CFRelease(desc);
   }
   CFRelease(pf_descs);
+}
+
+vImage_Error vImageExtractChannelAndConvertToFloat(const vImage_Buffer* src,
+                                                   vImage_Buffer* dst,
+                                                   int channel_index) {
+  if (src == nullptr || dst == nullptr || src->data == nullptr ||
+      dst->data == nullptr) {
+    return kvImageNullPointerArgument;
+  }
+  if (channel_index < 0 || channel_index > 3) {
+    return kvImageInvalidParameter;
+  }
+  if (src->width != dst->width || src->height != dst->height) {
+    return kvImageBufferSizeMismatch;
+  }
+
+  vImagePixelCount width = src->width;
+  vImagePixelCount height = src->height;
+
+  // Performs dynamic heap allocation via std::vector.
+  std::vector<uint8_t> temp_buffer(width * height);
+  vImage_Buffer temp_vimage_buffer = {
+      .data = temp_buffer.data(),
+      .height = height,
+      .width = width,
+      .rowBytes = static_cast<size_t>(width),
+  };
+
+  vImage_Error vimage_error = vImageExtractChannel_ARGB8888(
+      src, &temp_vimage_buffer, channel_index, kvImageNoFlags);
+  if (vimage_error != kvImageNoError) {
+    return vimage_error;
+  }
+
+  return vImageConvert_Planar8toPlanarF(&temp_vimage_buffer, dst, 1.0f, 0.0f,
+                                        kvImageNoFlags);
 }

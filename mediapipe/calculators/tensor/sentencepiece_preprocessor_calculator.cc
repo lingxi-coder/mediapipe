@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "mediapipe/calculators/tensor/gecko_preprocessor_calculator.h"
+#include "mediapipe/calculators/tensor/sentencepiece_preprocessor_calculator.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +23,7 @@
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "mediapipe/calculators/tensor/gecko_preprocessor_calculator.pb.h"
+#include "mediapipe/calculators/tensor/sentencepiece_preprocessor_calculator.pb.h"
 #include "mediapipe/framework/api3/calculator.h"
 #include "mediapipe/framework/api3/calculator_context.h"
 #include "mediapipe/framework/formats/tensor.h"
@@ -44,14 +44,16 @@ using ::mediapipe::tasks::metadata::ModelMetadataExtractor;
 using ::mediapipe::tasks::text::tokenizers::SentencePieceTokenizer;
 using ::mediapipe::tasks::text::tokenizers::Tokenizer;
 
-class GeckoPreprocessorCalculatorImpl
-    : public api3::Calculator<GeckoPreprocessorCalculatorNode,
-                              GeckoPreprocessorCalculatorImpl> {
+class SentencePiecePreprocessorCalculatorImpl
+    : public api3::Calculator<SentencePiecePreprocessorCalculatorNode,
+                              SentencePiecePreprocessorCalculatorImpl> {
  public:
   absl::Status Open(
-      api3::CalculatorContext<GeckoPreprocessorCalculatorNode>& cc) override;
+      api3::CalculatorContext<SentencePiecePreprocessorCalculatorNode>& cc)
+      override;
   absl::Status Process(
-      api3::CalculatorContext<GeckoPreprocessorCalculatorNode>& cc) override;
+      api3::CalculatorContext<SentencePiecePreprocessorCalculatorNode>& cc)
+      override;
 
  private:
   std::vector<int> GetPaddedTokens(const std::vector<int>& token_ids);
@@ -64,8 +66,8 @@ class GeckoPreprocessorCalculatorImpl
   MemoryManager* memory_manager_ = nullptr;
 };
 
-absl::Status GeckoPreprocessorCalculatorImpl::Open(
-    api3::CalculatorContext<GeckoPreprocessorCalculatorNode>& cc) {
+absl::Status SentencePiecePreprocessorCalculatorImpl::Open(
+    api3::CalculatorContext<SentencePiecePreprocessorCalculatorNode>& cc) {
   const auto& options = cc.options.Get();
   RET_CHECK(options.has_max_seq_len()) << "max_seq_len is required";
   RET_CHECK_GT(options.max_seq_len(), 0) << "max_seq_len must be positive";
@@ -79,7 +81,7 @@ absl::Status GeckoPreprocessorCalculatorImpl::Open(
   }
 
   if (options.has_sentence_piece_model()) {
-    MP_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         sentence_piece_model_handler_,
         tasks::core::ExternalFileHandler::CreateFromExternalFile(
             &options.sentence_piece_model()));
@@ -115,9 +117,9 @@ absl::Status GeckoPreprocessorCalculatorImpl::Open(
         "No SentencePiece tokenizer process unit found in metadata.");
   }
 
-  MP_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
-                      tasks::text::tokenizers::CreateTokenizerFromProcessUnit(
-                          tokenizer_process_unit, metadata_extractor));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
+                        tasks::text::tokenizers::CreateTokenizerFromProcessUnit(
+                            tokenizer_process_unit, metadata_extractor));
   auto* raw_tokenizer = dynamic_cast<SentencePieceTokenizer*>(tokenizer.get());
   if (raw_tokenizer == nullptr) {
     return absl::InternalError(
@@ -128,7 +130,7 @@ absl::Status GeckoPreprocessorCalculatorImpl::Open(
   return absl::OkStatus();
 }
 
-std::vector<int> GeckoPreprocessorCalculatorImpl::GetPaddedTokens(
+std::vector<int> SentencePiecePreprocessorCalculatorImpl::GetPaddedTokens(
     const std::vector<int>& token_ids) {
   const size_t max_token_size = (token_ids.size() <= max_seq_len_ - 2)
                                     ? token_ids.size()
@@ -143,8 +145,8 @@ std::vector<int> GeckoPreprocessorCalculatorImpl::GetPaddedTokens(
   return padded_tokens;
 }
 
-absl::Status GeckoPreprocessorCalculatorImpl::Process(
-    api3::CalculatorContext<GeckoPreprocessorCalculatorNode>& cc) {
+absl::Status SentencePiecePreprocessorCalculatorImpl::Process(
+    api3::CalculatorContext<SentencePiecePreprocessorCalculatorNode>& cc) {
   std::vector<int> token_ids;
   tokenizer_->Encode(cc.text_in.GetOrDie(), &token_ids);
 

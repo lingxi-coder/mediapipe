@@ -12,20 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+package com.google.mediapipe.tasks.core;
 
-package mediapipe;
-
-import "mediapipe/tasks/cc/core/proto/external_file.proto";
-
-option java_multiple_files = true;
-option java_package = "com.google.mediapipe.calculators.tensor";
-option java_outer_classname = "GeckoPreprocessorCalculatorOptionsProto";
-
-message GeckoPreprocessorCalculatorOptions {
-  // Max sequence length to input to processor.
-  optional int32 max_seq_len = 1;
-
-  // The sentence piece model file.
-  mediapipe.tasks.core.proto.ExternalFile sentence_piece_model = 2;
+/**
+ * Contract interface defining runtime JNI library getters for MediaPipe Tasks.
+ *
+ * <p>Implemented by {@link JniConfig} to enforce a compile-time contract across variants.
+ */
+public interface JniConfigContract {
+  /** Returns the JNI library name for Vision tasks. */
+  String getVisionJniLib();
 }

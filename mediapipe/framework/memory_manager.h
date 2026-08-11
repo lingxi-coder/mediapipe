@@ -16,15 +16,16 @@
 
 #include <cstddef>
 #include <memory>
+#include <utility>
 
 // Defines MEDIAPIPE_TENSOR_USE_AHWB
 #include "mediapipe/framework/port.h"
+#include "mediapipe/gpu/multi_pool.h"
 
 #include "mediapipe/framework/formats/cpu_buffer_pool.h"
 
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
 #include "mediapipe/framework/formats/hardware_buffer_pool.h"
-#include "mediapipe/gpu/multi_pool.h"
 #endif
 
 namespace mediapipe {
@@ -57,11 +58,18 @@ namespace mediapipe {
 //                     Tensor::Shape{kTensorSize}, &memory_manager_);
 class MemoryManager {
  public:
-  // cpu_buffer_pool_capacity == 0 (default) => no CPU pooling; GetCpuBufferPool()
-  // returns nullptr and Tensor CPU allocation is unchanged.
-  explicit MemoryManager(size_t cpu_buffer_pool_capacity = 0) {
+  // If prefer_ahwb is true, Tensors written on CPU and read as OpenGL buffers
+  // or vice versa use Android Hardware Buffers as storage when supported.
+  explicit MemoryManager(MultiPoolOptions options = kDefaultMultiPoolOptions,
+                         bool prefer_ahwb = false,
+                         size_t cpu_buffer_pool_capacity = 0) {
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
-    hardware_buffer_pool_ = std::make_shared<HardwareBufferPool>();
+    hardware_buffer_pool_ =
+        std::make_shared<HardwareBufferPool>(std::move(options));
+    prefer_ahwb_ = prefer_ahwb;
+#else
+    static_cast<void>(options);
+    static_cast<void>(prefer_ahwb);
 #endif
     if (cpu_buffer_pool_capacity > 0) {
       cpu_buffer_pool_ =
@@ -69,18 +77,15 @@ class MemoryManager {
     }
   }
 
+  // Convenience overload for the CPU tensor pool. A zero capacity leaves CPU
+  // allocation unchanged and GetCpuBufferPool() returns nullptr.
+  explicit MemoryManager(size_t cpu_buffer_pool_capacity)
+      : MemoryManager(kDefaultMultiPoolOptions, /*prefer_ahwb=*/false,
+                      cpu_buffer_pool_capacity) {}
+
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
   std::shared_ptr<HardwareBufferPool> GetAndroidHardwareBufferPool() const {
     return hardware_buffer_pool_;
-  }
-
-  explicit MemoryManager(const MultiPoolOptions& options,
-                         size_t cpu_buffer_pool_capacity = 0)
-      : hardware_buffer_pool_(std::make_shared<HardwareBufferPool>(options)) {
-    if (cpu_buffer_pool_capacity > 0) {
-      cpu_buffer_pool_ =
-          std::make_shared<CpuBufferPool>(cpu_buffer_pool_capacity);
-    }
   }
 #endif
 
@@ -89,9 +94,18 @@ class MemoryManager {
     return cpu_buffer_pool_;
   }
 
+  bool PreferAhwb() const {
+#ifdef MEDIAPIPE_TENSOR_USE_AHWB
+    return prefer_ahwb_;
+#else
+    return false;
+#endif
+  }
+
  private:
 #ifdef MEDIAPIPE_TENSOR_USE_AHWB
   std::shared_ptr<HardwareBufferPool> hardware_buffer_pool_;
+  bool prefer_ahwb_ = false;
 #endif
   std::shared_ptr<CpuBufferPool> cpu_buffer_pool_;
 };

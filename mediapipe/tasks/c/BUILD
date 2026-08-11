@@ -61,12 +61,7 @@ cc_binary(
         "//mediapipe/tasks/c/vision/yolo_object_detector:yolo_object_detector_c_lib",
         "//mediapipe/tasks/c/vision/oriented_object_detector:oriented_object_detector_c_lib",
         "//mediapipe/tasks/c/vision/pose_landmarker:pose_landmarker_c_lib",
-    ] + select({
-        "@platforms//os:windows": [],
-        "//mediapipe/tasks:build_for_3p": [],
-        "//conditions:default": [
-        ],
-    }),
+    ],
 )
 
 # Genrule to provide a consistent libmediapipe.so output in bazel-bin.
@@ -92,4 +87,14 @@ genrule(
     srcs = glob(["prebuilts/darwin_arm64/libmediapipe.dylib"]) or [":mediapipe_source"],
     outs = ["libmediapipe.dylib"],
     cmd = "cp $< $@",
+)
+
+alias(
+    name = "libmediapipe",
+    actual = select({
+        "@platforms//os:windows": ":libmediapipe.dll",
+        "@platforms//os:osx": ":libmediapipe.dylib",
+        "//conditions:default": ":libmediapipe.so",
+    }),
+    visibility = ["//visibility:public"],
 )

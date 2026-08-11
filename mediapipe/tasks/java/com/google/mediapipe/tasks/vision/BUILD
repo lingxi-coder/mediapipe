@@ -253,6 +253,36 @@ android_library(
 )
 
 android_library(
+    name = "interactivesegmenter_no_native",
+    srcs = [
+        "interactivesegmenter/InteractiveSegmenter.java",
+        "interactivesegmenter/InteractiveSegmenterOptions.java",
+        "interactivesegmenter/Stroke.java",
+    ],
+    manifest = "interactivesegmenter/AndroidManifest.xml",
+    deps = [
+        "//mediapipe/java/com/google/mediapipe/framework:android_framework",
+        "//mediapipe/java/com/google/mediapipe/framework/image",
+        "//mediapipe/tasks/cc/core/proto:base_options_java_proto_lite",
+        "//mediapipe/tasks/cc/vision/interactive_segmenter/proto:stroke_java_proto_lite",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:normalizedkeypoint",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:core_java",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:jni_config_stub",
+        "//third_party:autovalue",
+        "@maven//:com_google_guava_guava",
+    ],
+)
+
+android_library(
+    name = "interactivesegmenter",
+    exports = [
+        ":core",
+        ":interactivesegmenter_no_native",
+    ],
+    deps = ["@maven//:com_google_guava_guava"],
+)
+
+android_library(
     name = "imageembedder",
     srcs = [
         "imageembedder/ImageEmbedder.java",
@@ -271,7 +301,9 @@ android_library(
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:embedding",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:embeddingresult",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/utils:cosinesimilarity",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:core_java",
         "//third_party:autovalue",
+        "@maven//:androidx_annotation_annotation",
         "@maven//:com_google_guava_guava",
     ],
 )
@@ -408,6 +440,7 @@ android_library(
         "//mediapipe/tasks/cc/vision/image_segmenter/calculators:tensors_to_segmentation_calculator_java_proto_lite",
         "//mediapipe/tasks/cc/vision/image_segmenter/proto:image_segmenter_graph_options_java_proto_lite",
         "//mediapipe/tasks/cc/vision/image_segmenter/proto:segmenter_options_java_proto_lite",
+        "//mediapipe/tasks/cc/vision/interactive_segmenter/proto:stroke_java_proto_lite",
         "//mediapipe/tasks/cc/vision/interactive_segmenter_legacy/proto:region_of_interest_java_proto_lite",
         "//mediapipe/tasks/cc/vision/object_detector/proto:object_detector_options_java_proto_lite",
         "//mediapipe/tasks/cc/vision/pose_detector/proto:pose_detector_graph_options_java_proto_lite",
@@ -425,6 +458,7 @@ android_library(
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/processors:classifieroptions",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/utils:cosinesimilarity",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:core_java",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:jni_config_stub",
         "//mediapipe/util:color_java_proto_lite",
         "//third_party:any_java_proto",
         "//third_party:autovalue",

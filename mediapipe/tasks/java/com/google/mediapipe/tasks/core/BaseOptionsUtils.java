@@ -22,7 +22,9 @@ import com.google.mediapipe.calculator.proto.InferenceCalculatorProto;
 import com.google.mediapipe.tasks.core.proto.AccelerationProto;
 import com.google.mediapipe.tasks.core.proto.BaseOptionsProto;
 import com.google.mediapipe.tasks.core.proto.ExternalFileProto;
+import com.google.mediapipe.tasks.core.proto.ExternalFileProto.ExternalFile;
 import com.google.protobuf.ByteString;
+import java.nio.ByteBuffer;
 
 /** Utility for {@link BaseOptions}. */
 public final class BaseOptionsUtils {
@@ -81,10 +83,8 @@ public final class BaseOptionsUtils {
     options
         .modelAssetBuffer()
         .ifPresent(
-            modelBuffer -> {
-              modelBuffer.rewind();
-              externalFileBuilder.setFileContent(ByteString.copyFrom(modelBuffer));
-            });
+            modelBuffer ->
+                externalFileBuilder.mergeFrom(createExternalFileFromBuffer(modelBuffer)));
     AccelerationProto.Acceleration.Builder accelerationBuilder =
         AccelerationProto.Acceleration.newBuilder();
     switch (options.delegate()) {
@@ -113,6 +113,30 @@ public final class BaseOptionsUtils {
                         accelerationBuilder,
                         (BaseOptions.DelegateOptions.GpuOptions) delegateOptions));
         break;
+      case NPU:
+        accelerationBuilder.setLitert(
+            InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt
+                .getDefaultInstance());
+        options
+            .delegateOptions()
+            .ifPresent(
+                delegateOptions ->
+                    setDelegateOptions(
+                        accelerationBuilder,
+                        (BaseOptions.DelegateOptions.NpuOptions) delegateOptions));
+        break;
+      case LITERT:
+        accelerationBuilder.setLitert(
+            InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt
+                .getDefaultInstance());
+        options
+            .delegateOptions()
+            .ifPresent(
+                delegateOptions ->
+                    setDelegateOptions(
+                        accelerationBuilder,
+                        (BaseOptions.DelegateOptions.LiteRtOptions) delegateOptions));
+        break;
     }
 
     return BaseOptionsProto.BaseOptions.newBuilder()
@@ -130,6 +154,68 @@ public final class BaseOptionsUtils {
 
   private static void setDelegateOptions(
       AccelerationProto.Acceleration.Builder accelerationBuilder,
+      BaseOptions.DelegateOptions.NpuOptions options) {
+    accelerationBuilder.setLitert(
+        InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.newBuilder()
+            .setNpu(
+                InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Npu.newBuilder()
+                    .setDispatchLibraryPath(options.dispatchLibraryDirectory())
+                    .setCompilerPluginLibraryPath(options.compilerPluginLibraryDirectory()))
+            .build());
+  }
+
+  private static void setDelegateOptions(
+      AccelerationProto.Acceleration.Builder accelerationBuilder,
+      BaseOptions.DelegateOptions.LiteRtOptions options) {
+    InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Builder litertBuilder =
+        InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.newBuilder();
+    options
+        .cpuOptions()
+        .ifPresent(
+            cpuOptions -> {
+              InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Cpu.Builder
+                  cpuBuilder =
+                      InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Cpu
+                          .newBuilder();
+              litertBuilder.setCpu(cpuBuilder.build());
+            });
+    options
+        .gpuOptions()
+        .ifPresent(
+            gpuOptions -> {
+              InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Gpu.Builder
+                  gpuBuilder =
+                      InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Gpu
+                          .newBuilder();
+              InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Gpu.CacheOptions
+                      .Builder cacheOptionsBuilder =
+                  InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Gpu
+                      .CacheOptions.newBuilder();
+              gpuOptions.cachedKernelPath().ifPresent(cacheOptionsBuilder::setSerializationDir);
+              gpuOptions.modelToken().ifPresent(cacheOptionsBuilder::setModelCacheKey);
+              if (gpuOptions.cachedKernelPath().isPresent()
+                  && gpuOptions.modelToken().isPresent()) {
+                cacheOptionsBuilder.setSerializeProgramCache(true);
+              }
+              gpuBuilder.setCacheOptions(cacheOptionsBuilder);
+              litertBuilder.setGpu(gpuBuilder.build());
+            });
+    options
+        .npuOptions()
+        .ifPresent(
+            npuOptions -> {
+              litertBuilder.setNpu(
+                  InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.LiteRt.Npu
+                      .newBuilder()
+                      .setDispatchLibraryPath(npuOptions.dispatchLibraryDirectory())
+                      .setCompilerPluginLibraryPath(npuOptions.compilerPluginLibraryDirectory())
+                      .build());
+            });
+    accelerationBuilder.setLitert(litertBuilder.build());
+  }
+
+  private static void setDelegateOptions(
+      AccelerationProto.Acceleration.Builder accelerationBuilder,
       BaseOptions.DelegateOptions.GpuOptions options) {
     InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.Gpu.Builder gpuBuilder =
         InferenceCalculatorProto.InferenceCalculatorOptions.Delegate.Gpu.newBuilder()
@@ -139,4 +225,22 @@ public final class BaseOptionsUtils {
     options.modelToken().ifPresent(gpuBuilder::setModelToken);
     accelerationBuilder.setGpu(gpuBuilder.build());
   }
+
+  public static ExternalFile createExternalFileFromBuffer(ByteBuffer modelBuffer) {
+    ExternalFile.Builder externalFileBuilder = ExternalFile.newBuilder();
+    if (modelBuffer.isDirect()) {
+      externalFileBuilder.setFilePointerMeta(
+          ExternalFileProto.FilePointerMeta.newBuilder()
+              .setPointer(nativeGetDirectBufferAddress(modelBuffer) + modelBuffer.position())
+              .setLength(modelBuffer.remaining())
+              .build());
+    } else {
+      ByteBuffer duplicateBuffer = modelBuffer.duplicate();
+      duplicateBuffer.rewind();
+      externalFileBuilder.setFileContent(ByteString.copyFrom(duplicateBuffer));
+    }
+    return externalFileBuilder.build();
+  }
+
+  private static native long nativeGetDirectBufferAddress(ByteBuffer buffer);
 }
