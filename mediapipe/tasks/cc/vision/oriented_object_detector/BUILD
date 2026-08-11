@@ -29,6 +29,7 @@ cc_library(
         "//mediapipe/framework/formats:image",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
         "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:status",
         "//mediapipe/tasks/cc:common",
         "//mediapipe/tasks/cc/components/containers:oriented_object_detection_result",
         "//mediapipe/tasks/cc/core:base_options",
@@ -44,7 +45,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@org_tensorflow//tensorflow/lite/core/api:op_resolver",
+        "@litert//tflite/core/api:op_resolver",
     ],
 )
 
@@ -70,6 +71,7 @@ cc_library(
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
         "//mediapipe/framework/formats:rect_cc_proto",
         "//mediapipe/framework/formats:tensor",
+        "//mediapipe/framework/port:status",
         "//mediapipe/graphs/tiled_detection:tiled_detection_front_graph",
         "//mediapipe/graphs/tiled_detection:tiled_detection_graphs_cc_proto",
         "//mediapipe/graphs/tiled_detection:tiled_obb_merge_graph",

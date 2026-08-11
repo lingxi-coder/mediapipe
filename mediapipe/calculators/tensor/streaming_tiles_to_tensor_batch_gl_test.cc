@@ -34,11 +34,11 @@
 #include "mediapipe/framework/port/status_matchers.h"
 #include "mediapipe/gpu/gl_base.h"
 #include "mediapipe/gpu/gl_context.h"
-#include "tensorflow/lite/delegates/gpu/common/types.h"
-#include "tensorflow/lite/delegates/gpu/gl/command_queue.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_buffer.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_texture.h"
-#include "tensorflow/lite/delegates/gpu/gl/request_gpu_info.h"
+#include "tflite/delegates/gpu/common/types.h"
+#include "tflite/delegates/gpu/gl/command_queue.h"
+#include "tflite/delegates/gpu/gl/gl_buffer.h"
+#include "tflite/delegates/gpu/gl/gl_texture.h"
+#include "tflite/delegates/gpu/gl/request_gpu_info.h"
 
 namespace mediapipe {
 namespace {

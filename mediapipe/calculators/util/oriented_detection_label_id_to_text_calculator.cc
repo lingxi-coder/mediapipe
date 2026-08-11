@@ -94,11 +94,11 @@ absl::Status OrientedDetectionLabelIdToTextCalculator::Open(
         << "Only can set one of the following fields in the CalculatorOptions: "
            "label_map_path, label, and label_items.";
     std::string string_path;
-    MP_ASSIGN_OR_RETURN(string_path,
+    ABSL_ASSIGN_OR_RETURN(string_path,
                         PathToResourceAsFile(options.label_map_path()));
-    MP_ASSIGN_OR_RETURN(std::unique_ptr<mediapipe::Resource> label_map,
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<mediapipe::Resource> label_map,
                         cc->GetResources().Get(string_path));
-    MP_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         local_label_map_,
         BuildLabelMapFromFiles(label_map->ToStringView(),
                                /*display_names_file_contents=*/{}));

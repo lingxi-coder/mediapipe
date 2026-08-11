@@ -28,6 +28,7 @@ limitations under the License.
 #include "mediapipe/framework/formats/image.h"
 #include "mediapipe/framework/formats/rect.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/graphs/tiled_detection/tiled_detection_graphs.pb.h"
 #include "mediapipe/tasks/cc/common.h"
 #include "mediapipe/tasks/cc/components/processors/image_preprocessing_graph.h"
@@ -170,11 +171,11 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
  public:
   absl::StatusOr<CalculatorGraphConfig> GetConfig(
       SubgraphContext* sc) override {
-    MP_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         const auto* model_resources,
         CreateModelResources<YoloObjectDetectorOptionsProto>(sc));
     Graph graph;
-    MP_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto output_streams,
         BuildYoloObjectDetectionTask(
             sc->Options<YoloObjectDetectorOptionsProto>(), *model_resources,
@@ -205,7 +206,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       const tasks::core::ModelResources& model_resources,
       Source<Image> image_in,
       Graph& graph) {
-    MP_RETURN_IF_ERROR(SanityCheckOptions(task_options));
+    ABSL_RETURN_IF_ERROR(SanityCheckOptions(task_options));
     auto& model = *model_resources.GetTfLiteModel();
     if (model.subgraphs()->size() != 1) {
       return CreateStatusWithPayload(
@@ -229,7 +230,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
     // Resolve label items from model metadata (empty map if the model has no
     // label file). Used for both category-name mapping and for resolving
     // category_allowlist/category_denylist names to class indices.
-    MP_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto label_items,
         GetLabelItemsFromMetadata(model_resources,
                                   task_options.display_names_locale()));
@@ -265,7 +266,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       // decoder-level filters (applied before the score/NMS cap, matching
       // upstream semantics). Empty lists => no filtering; an all-unknown
       // allowlist resolves to an empty set (a no-op, not "drop all").
-      MP_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           auto allow_idx,
           ResolveCategoryIndices(label_items, task_options.category_allowlist(),
                                  task_options.category_denylist()));
@@ -309,7 +310,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       bool use_gpu =
           components::processors::DetermineImagePreprocessingGpuBackend(
               task_options.base_options().acceleration());
-      MP_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           components::processors::ConfigureImagePreprocessingGraph(
               model_resources, use_gpu, task_options.base_options().gpu_origin(),
               &preprocessing.GetOptions<tasks::components::processors::proto::
@@ -328,7 +329,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
 
       // YOLO decode: raw tensors -> batched axis-aligned Detections.
       auto& yolo_decode = graph.AddNode("YoloTensorsToDetectionsCalculator");
-      MP_RETURN_IF_ERROR(configure_yolo_decode(yolo_decode));
+      ABSL_RETURN_IF_ERROR(configure_yolo_decode(yolo_decode));
       model_output_tensors >> yolo_decode.In(kTensorTag);
 
       // Flatten batch (single-image Task: N==1) -> std::vector<Detection>.
@@ -391,7 +392,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       // Model input dims [N,H,W,C]; validation (float32/4D/normalization)
       // lives in the shared //mediapipe/tasks/cc/vision/utils:
       // tiled_detection_utils ValidateTiledModelInputAndGetDims.
-      MP_ASSIGN_OR_RETURN(const TiledModelInputDims dims,
+      ABSL_ASSIGN_OR_RETURN(const TiledModelInputDims dims,
                           ValidateTiledModelInputAndGetDims(model_resources));
 
       // mediapipe::Image -> ImageFrame (the tiled front consumes ImageFrame).
@@ -458,7 +459,7 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       // tile-local (in-decoder, per batch row) NMS options. The merge graph
       // consumes the BATCHED decode output directly (no flatten).
       auto& yolo_decode = graph.AddNode("YoloTensorsToDetectionsCalculator");
-      MP_RETURN_IF_ERROR(configure_yolo_decode(yolo_decode));
+      ABSL_RETURN_IF_ERROR(configure_yolo_decode(yolo_decode));
       {
         auto& opts = yolo_decode.GetOptions<
             ::mediapipe::YoloTensorsToDetectionsCalculatorOptions>();

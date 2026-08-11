@@ -25,7 +25,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/core/model_resources.h"
 #include "mediapipe/tasks/cc/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/cc/vision/utils/image_tensor_specs.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tflite/schema/schema_generated.h"
 
 namespace mediapipe {
 namespace tasks {

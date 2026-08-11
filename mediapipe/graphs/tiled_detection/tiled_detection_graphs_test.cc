@@ -31,6 +31,7 @@
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/framework/port/status_matchers.h"
 
 namespace mediapipe {
@@ -134,21 +135,21 @@ absl::StatusOr<std::vector<Packet>> RunMergeGraph(
     std::vector<std::pair<Packet, TensorBatchInfo>> batches) {
   std::vector<Packet> merged_packets;
   CalculatorGraph graph;
-  MP_RETURN_IF_ERROR(graph.Initialize(config));
-  MP_RETURN_IF_ERROR(graph.ObserveOutputStream("merged", [&](const Packet& p) {
+  ABSL_RETURN_IF_ERROR(graph.Initialize(config));
+  ABSL_RETURN_IF_ERROR(graph.ObserveOutputStream("merged", [&](const Packet& p) {
     merged_packets.push_back(p);
     return absl::OkStatus();
   }));
-  MP_RETURN_IF_ERROR(graph.StartRun({}));
+  ABSL_RETURN_IF_ERROR(graph.StartRun({}));
   for (int i = 0; i < static_cast<int>(batches.size()); ++i) {
-    MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+    ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
         "dets", batches[i].first.At(Timestamp(i))));
-    MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+    ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
         "info", MakePacket<TensorBatchInfo>(std::move(batches[i].second))
                     .At(Timestamp(i))));
   }
-  MP_RETURN_IF_ERROR(graph.CloseAllPacketSources());
-  MP_RETURN_IF_ERROR(graph.WaitUntilDone());
+  ABSL_RETURN_IF_ERROR(graph.CloseAllPacketSources());
+  ABSL_RETURN_IF_ERROR(graph.WaitUntilDone());
   return merged_packets;
 }
 

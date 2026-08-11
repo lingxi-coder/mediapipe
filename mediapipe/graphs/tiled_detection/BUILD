@@ -205,6 +205,7 @@ cc_test(
         "//mediapipe/framework/formats:tensor",
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status",
         "//mediapipe/framework/port:status_matchers",
         "@com_google_absl//absl/status",
     ],

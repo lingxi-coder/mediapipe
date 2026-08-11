@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mediapipe/framework/port/proto_ns.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/tasks/cc/common.h"
 #include "mediapipe/tasks/cc/core/model_resources.h"
 #include "mediapipe/tasks/cc/metadata/metadata_extractor.h"
@@ -74,7 +75,7 @@ GetLabelItemsFromMetadata(const core::ModelResources& model_resources,
   }
 
   // Read label file contents.
-  MP_ASSIGN_OR_RETURN(absl::string_view labels_file,
+  ABSL_ASSIGN_OR_RETURN(absl::string_view labels_file,
                       metadata_extractor->GetAssociatedFile(labels_filename));
 
   // Optionally read locale-matched display names file.
@@ -85,7 +86,7 @@ GetLabelItemsFromMetadata(const core::ModelResources& model_resources,
           display_names_locale);
   absl::string_view display_names_file;
   if (!display_names_filename.empty()) {
-    MP_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         display_names_file,
         metadata_extractor->GetAssociatedFile(display_names_filename));
   }

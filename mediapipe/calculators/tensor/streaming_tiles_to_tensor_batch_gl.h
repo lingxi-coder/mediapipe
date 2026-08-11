@@ -26,11 +26,11 @@
 #include "mediapipe/framework/port/status.h"
 #include "mediapipe/framework/port/statusor.h"
 #include "mediapipe/gpu/gl_context.h"
-#include "tensorflow/lite/delegates/gpu/common/types.h"
-#include "tensorflow/lite/delegates/gpu/gl/command_queue.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_buffer.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_program.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_texture.h"
+#include "tflite/delegates/gpu/common/types.h"
+#include "tflite/delegates/gpu/gl/command_queue.h"
+#include "tflite/delegates/gpu/gl/gl_buffer.h"
+#include "tflite/delegates/gpu/gl/gl_program.h"
+#include "tflite/delegates/gpu/gl/gl_texture.h"
 
 namespace mediapipe {
 

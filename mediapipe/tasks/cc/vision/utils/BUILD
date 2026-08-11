@@ -135,6 +135,7 @@ cc_library(
     hdrs = ["detection_label_resolution.h"],
     deps = [
         "//mediapipe/framework/port:core_proto",
+        "//mediapipe/framework/port:status",
         "//mediapipe/tasks/cc:common",
         "//mediapipe/tasks/cc/core:model_resources",
         "//mediapipe/tasks/cc/metadata:metadata_extractor",
@@ -146,7 +147,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_protobuf//:protobuf",
-        "@org_tensorflow//tensorflow/lite/schema:schema_fbs",
+        "@litert//tflite/schema:schema_fbs",
     ],
 )
 
@@ -173,7 +174,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@flatbuffers//:runtime_cc",
-        "@org_tensorflow//tensorflow/lite/schema:schema_fbs",
+        "@litert//tflite/schema:schema_fbs",
     ],
 )
 

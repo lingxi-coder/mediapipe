@@ -53,11 +53,11 @@
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_gl.h"
 #include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/gpu/gl_calculator_helper.h"
-#include "tensorflow/lite/delegates/gpu/common/types.h"
-#include "tensorflow/lite/delegates/gpu/gl/command_queue.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_buffer.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_texture.h"
-#include "tensorflow/lite/delegates/gpu/gl/request_gpu_info.h"
+#include "tflite/delegates/gpu/common/types.h"
+#include "tflite/delegates/gpu/gl/command_queue.h"
+#include "tflite/delegates/gpu/gl/gl_buffer.h"
+#include "tflite/delegates/gpu/gl/gl_texture.h"
+#include "tflite/delegates/gpu/gl/request_gpu_info.h"
 #elif MEDIAPIPE_METAL_ENABLED
 #import <Metal/Metal.h>
 
@@ -174,17 +174,17 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     if (options_.enable_gpu_zero_copy() && kInImageGpu(cc).IsConnected()) {
       RET_CHECK_EQ(meta_.input_channels(), 3)
           << "GPU zero-copy path supports RGB (input_channels == 3) only";
-      MP_RETURN_IF_ERROR(gl_helper_.Open(cc));
+      ABSL_RETURN_IF_ERROR(gl_helper_.Open(cc));
       const int H = meta_.input_height();
       const int W = meta_.input_width();
       const int C = meta_.input_channels();
-      MP_RETURN_IF_ERROR(gl_helper_.RunInGlContext([&]() -> absl::Status {
+      ABSL_RETURN_IF_ERROR(gl_helper_.RunInGlContext([&]() -> absl::Status {
         tflite::gpu::GpuInfo gpu_info;
-        MP_RETURN_IF_ERROR(tflite::gpu::gl::RequestGpuInfo(&gpu_info));
+        ABSL_RETURN_IF_ERROR(tflite::gpu::gl::RequestGpuInfo(&gpu_info));
         RET_CHECK(gpu_info.IsApiOpenGl31OrAbove())
             << "enable_gpu_zero_copy requires OpenGL ES 3.1.";
         command_queue_ = tflite::gpu::gl::NewCommandQueue(gpu_info);
-        MP_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             gl_writer_,
             TiledBatchGlWriter::Create(gl_helper_.GetGlContext(), W, H, C,
                                        BorderMode::kReplicate,
@@ -214,7 +214,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
           << "Metal zero-copy path supports RGB (input_channels == 3) only";
       metal_helper_ = [[MPPMetalHelper alloc] initWithCalculatorContext:cc];
       RET_CHECK(metal_helper_ != nil) << "failed creating MPPMetalHelper";
-      MP_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           metal_writer_,
           TiledBatchMetalWriter::Create(metal_helper_.mtlDevice,
                                         meta_.input_width(),
@@ -380,7 +380,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       std::shared_ptr<const TileBatchGeometry> geom =
           BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
 
-      MP_RETURN_IF_ERROR(gl_helper_.RunInGlContext([&]() -> absl::Status {
+      ABSL_RETURN_IF_ERROR(gl_helper_.RunInGlContext([&]() -> absl::Status {
         auto src = gl_helper_.CreateSourceTexture(gpu);
         // GpuBuffer textures are 4-channel (e.g. BGRA32); GL sampling returns
         // normalized [0,1], so alpha=1 (NOT 1/255) matches the CPU uint8/255.
@@ -395,7 +395,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                                        /*offset=*/0, /*has_ownership=*/false);
         for (int r = 0; r < rows; ++r) {
           const RotatedRect rr = RoiToRotatedRect(geom->effective_pixel_rois[r]);
-          MP_RETURN_IF_ERROR(gl_writer_->WriteTileRow(
+          ABSL_RETURN_IF_ERROR(gl_writer_->WriteTileRow(
               input_texture, tex_size, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f,
               command_queue_.get(), &dest));
         }
@@ -403,7 +403,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
         // via the same shader (no GLES buffer-clear extension needed).
         const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
         for (int r = rows; r < N; ++r) {
-          MP_RETURN_IF_ERROR(gl_writer_->WriteTileRow(
+          ABSL_RETURN_IF_ERROR(gl_writer_->WriteTileRow(
               input_texture, tex_size, full, r, /*alpha=*/0.0f, /*beta=*/0.0f,
               command_queue_.get(), &dest));
         }
@@ -497,7 +497,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
           // floats/pixel (RGB + 0.0).
           const RotatedRect rr =
               RoiToRotatedRect(geom->effective_pixel_rois[0]);
-          MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
+          ABSL_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
               texture, rr, /*tile_row=*/0, /*alpha=*/1.0f, /*beta=*/0.0f,
               command_buffer, write_view.buffer()));
           [command_buffer commit];
@@ -541,14 +541,14 @@ class StreamingTilesToTensorBatchCalculator : public Node {
           for (int r = 0; r < rows; ++r) {
             const RotatedRect rr =
                 RoiToRotatedRect(geom->effective_pixel_rois[r]);
-            MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
+            ABSL_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
                 texture, rr, r, /*alpha=*/1.0f, /*beta=*/0.0f, command_buffer,
                 write_view.buffer()));
           }
           // Clear padding rows [rows, N): alpha=0,beta=0 writes zeros.
           const RotatedRect full = RoiToRotatedRect(TilePixelRoi{0, 0, fw, fh});
           for (int r = rows; r < N; ++r) {
-            MP_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
+            ABSL_RETURN_IF_ERROR(metal_writer_->WriteTileRow(
                 texture, full, r, /*alpha=*/0.0f, /*beta=*/0.0f, command_buffer,
                 write_view.buffer()));
           }

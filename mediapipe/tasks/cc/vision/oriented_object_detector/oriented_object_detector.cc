@@ -30,6 +30,7 @@ limitations under the License.
 #include "mediapipe/framework/formats/oriented_detection.pb.h"
 #include "mediapipe/framework/formats/image.h"
 #include "mediapipe/framework/formats/rect.pb.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/tasks/cc/common.h"
 #include "mediapipe/tasks/cc/components/containers/oriented_object_detection_result.h"
 #include "mediapipe/tasks/cc/core/base_options.h"
@@ -41,7 +42,7 @@ limitations under the License.
 #include "mediapipe/tasks/cc/vision/core/vision_task_api_factory.h"
 #include "mediapipe/tasks/cc/vision/oriented_object_detector/proto/oriented_object_detector_options.pb.h"
 #include "mediapipe/tasks/cc/vision/utils/tiled_detection_utils.h"
-#include "tensorflow/lite/core/api/op_resolver.h"
+#include "tflite/core/api/op_resolver.h"
 
 namespace mediapipe {
 namespace tasks {
@@ -275,18 +276,18 @@ absl::StatusOr<OrientedObjectDetectorResult> OrientedObjectDetector::Detect(
   }
   tasks::core::PacketMap input_packets;
   if (tiling_enabled_) {
-    MP_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         CheckTiledImageProcessingOptions(image_processing_options));
     input_packets = {{kImageInStreamName, MakePacket<Image>(std::move(image))}};
   } else {
-    MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
+    ABSL_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
                         ConvertToNormalizedRect(image_processing_options, image,
                                                 /*roi_allowed=*/false));
     input_packets = {
         {kImageInStreamName, MakePacket<Image>(std::move(image))},
         {kNormRectName, MakePacket<NormalizedRect>(std::move(norm_rect))}};
   }
-  MP_ASSIGN_OR_RETURN(auto output_packets,
+  ABSL_ASSIGN_OR_RETURN(auto output_packets,
                       ProcessImageData(std::move(input_packets)));
   if (output_packets[kOrientedDetectionsOutStreamName].IsEmpty()) {
     return {ConvertToOrientedObjectDetectionResult({}, {0, 0})};
@@ -310,14 +311,14 @@ OrientedObjectDetector::DetectForVideo(
   }
   tasks::core::PacketMap input_packets;
   if (tiling_enabled_) {
-    MP_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         CheckTiledImageProcessingOptions(image_processing_options));
     input_packets = {
         {kImageInStreamName,
          MakePacket<Image>(std::move(image))
              .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}};
   } else {
-    MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
+    ABSL_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
                         ConvertToNormalizedRect(image_processing_options, image,
                                                 /*roi_allowed=*/false));
     input_packets = {
@@ -328,7 +329,7 @@ OrientedObjectDetector::DetectForVideo(
          MakePacket<NormalizedRect>(std::move(norm_rect))
              .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}};
   }
-  MP_ASSIGN_OR_RETURN(auto output_packets,
+  ABSL_ASSIGN_OR_RETURN(auto output_packets,
                       ProcessVideoData(std::move(input_packets)));
   if (output_packets[kOrientedDetectionsOutStreamName].IsEmpty()) {
     return {ConvertToOrientedObjectDetectionResult({}, {0, 0})};
@@ -350,14 +351,14 @@ absl::Status OrientedObjectDetector::DetectAsync(
         MediaPipeTasksStatus::kRunnerUnexpectedInputError);
   }
   if (tiling_enabled_) {
-    MP_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         CheckTiledImageProcessingOptions(image_processing_options));
     return SendLiveStreamData(
         {{kImageInStreamName,
           MakePacket<Image>(std::move(image))
               .At(Timestamp(timestamp_ms * kMicroSecondsPerMilliSecond))}});
   }
-  MP_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
+  ABSL_ASSIGN_OR_RETURN(NormalizedRect norm_rect,
                       ConvertToNormalizedRect(image_processing_options, image,
                                              /*roi_allowed=*/false));
   return SendLiveStreamData(

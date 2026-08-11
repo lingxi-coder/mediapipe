@@ -251,21 +251,21 @@ absl::Status RunControlVariant(std::shared_ptr<GpuResources> gpu_resources,
   )pb");
 
   CalculatorGraph graph;
-  MP_RETURN_IF_ERROR(graph.Initialize(config));
-  MP_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(graph.Initialize(config));
+  ABSL_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
+  ABSL_RETURN_IF_ERROR(
       graph.ObserveOutputStream("detections", [final_out](const Packet& p) {
         final_out->push_back(p);
         return absl::OkStatus();
       }));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
-  MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+  ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "image", Adopt(rgb.release()).At(Timestamp(0))));
-  MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+  ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "tile_plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
-  MP_RETURN_IF_ERROR(graph.WaitUntilIdle());
-  MP_RETURN_IF_ERROR(graph.CloseAllInputStreams());
+  ABSL_RETURN_IF_ERROR(graph.WaitUntilIdle());
+  ABSL_RETURN_IF_ERROR(graph.CloseAllInputStreams());
   return graph.WaitUntilDone();
 }
 
@@ -370,36 +370,36 @@ absl::Status RunZeroCopyVariant(std::shared_ptr<GpuResources> gpu_resources,
   )pb");
 
   CalculatorGraph graph;
-  MP_RETURN_IF_ERROR(graph.Initialize(config));
-  MP_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(graph.Initialize(config));
+  ABSL_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
+  ABSL_RETURN_IF_ERROR(
       graph.ObserveOutputStream("detections", [out](const Packet& p) {
         out->final_out.push_back(p);
         return absl::OkStatus();
       }));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       graph.ObserveOutputStream("zero_copy_debug", [out](const Packet& p) {
         out->zero_copy_debug.push_back(p);
         return absl::OkStatus();
       }));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       graph.ObserveOutputStream("front_tensors", [out](const Packet& p) {
         out->front_tensors.push_back(p);
         return absl::OkStatus();
       }));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       graph.ObserveOutputStream("cache_stats", [out](const Packet& p) {
         out->cache_stats.push_back(p);
         return absl::OkStatus();
       }));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
-  MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+  ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "image_gpu", MakePacket<GpuBuffer>(gpu_frame).At(Timestamp(0))));
-  MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+  ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "tile_plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
-  MP_RETURN_IF_ERROR(graph.WaitUntilIdle());
-  MP_RETURN_IF_ERROR(graph.CloseAllInputStreams());
+  ABSL_RETURN_IF_ERROR(graph.WaitUntilIdle());
+  ABSL_RETURN_IF_ERROR(graph.CloseAllInputStreams());
   return graph.WaitUntilDone();
 }
 

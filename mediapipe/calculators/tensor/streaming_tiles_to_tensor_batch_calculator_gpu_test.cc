@@ -181,26 +181,26 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
           options_body));
 
   CalculatorGraph graph;
-  MP_RETURN_IF_ERROR(graph.Initialize(config));
-  MP_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
-  MP_RETURN_IF_ERROR(graph.ObserveOutputStream("tensors", [out](const Packet& p) {
+  ABSL_RETURN_IF_ERROR(graph.Initialize(config));
+  ABSL_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
+  ABSL_RETURN_IF_ERROR(graph.ObserveOutputStream("tensors", [out](const Packet& p) {
     out->tensors.push_back(p);
     return absl::OkStatus();
   }));
-  MP_RETURN_IF_ERROR(graph.ObserveOutputStream("info", [out](const Packet& p) {
+  ABSL_RETURN_IF_ERROR(graph.ObserveOutputStream("info", [out](const Packet& p) {
     out->info.push_back(p);
     return absl::OkStatus();
   }));
-  MP_RETURN_IF_ERROR(graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
+  ABSL_RETURN_IF_ERROR(graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
   GpuBuffer input = CreateTestRgba8GpuBuffer(in_w, in_h);
   TilePlan plan;
   plan.tiles = tiles;
-  MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+  ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "image_gpu", MakePacket<GpuBuffer>(input).At(Timestamp(0))));
-  MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+  ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "tile_plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
-  MP_RETURN_IF_ERROR(graph.WaitUntilIdle());
-  MP_RETURN_IF_ERROR(graph.CloseAllInputStreams());
+  ABSL_RETURN_IF_ERROR(graph.WaitUntilIdle());
+  ABSL_RETURN_IF_ERROR(graph.CloseAllInputStreams());
   return graph.WaitUntilDone();
 }
 

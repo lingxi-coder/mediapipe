@@ -29,15 +29,16 @@
 #include "mediapipe/calculators/tensor/image_to_tensor_utils.h"
 #include "mediapipe/framework/port/ret_check.h"
 #include "mediapipe/framework/port/status.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/gpu/gl_context.h"
-#include "tensorflow/lite/delegates/gpu/common/types.h"
-#include "tensorflow/lite/delegates/gpu/gl/command_queue.h"
-#include "tensorflow/lite/delegates/gpu/gl/converters/util.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_buffer.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_call.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_program.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_shader.h"
-#include "tensorflow/lite/delegates/gpu/gl/gl_texture.h"
+#include "tflite/delegates/gpu/common/types.h"
+#include "tflite/delegates/gpu/gl/command_queue.h"
+#include "tflite/delegates/gpu/gl/converters/util.h"
+#include "tflite/delegates/gpu/gl/gl_buffer.h"
+#include "tflite/delegates/gpu/gl/gl_call.h"
+#include "tflite/delegates/gpu/gl/gl_program.h"
+#include "tflite/delegates/gpu/gl/gl_shader.h"
+#include "tflite/delegates/gpu/gl/gl_texture.h"
 
 namespace mediapipe {
 namespace {
@@ -105,7 +106,7 @@ void main() {
 absl::Status SetMat4x4(const tflite::gpu::gl::GlProgram& program,
                        const std::string& name, float* data) {
   GLint uniform_id;
-  MP_RETURN_IF_ERROR(TFLITE_GPU_CALL_GL(glGetUniformLocation, &uniform_id,
+  ABSL_RETURN_IF_ERROR(TFLITE_GPU_CALL_GL(glGetUniformLocation, &uniform_id,
                                         program.id(), name.c_str()));
   return TFLITE_GPU_CALL_GL(glProgramUniformMatrix4fv, program.id(), uniform_id,
                             1, GL_TRUE, data);
@@ -143,10 +144,10 @@ absl::StatusOr<std::unique_ptr<TiledBatchGlWriter>> TiledBatchGlWriter::Create(
       custom_zero_border_mode_def, kShaderCode);
 
   tflite::gpu::gl::GlShader shader;
-  MP_RETURN_IF_ERROR(tflite::gpu::gl::GlShader::CompileShader(
+  ABSL_RETURN_IF_ERROR(tflite::gpu::gl::GlShader::CompileShader(
       GL_COMPUTE_SHADER, full_shader_source, &shader));
   tflite::gpu::gl::GlProgram program;
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       tflite::gpu::gl::GlProgram::CreateWithShader(shader, &program));
 
   return absl::WrapUnique(new TiledBatchGlWriter(
@@ -166,7 +167,7 @@ absl::Status TiledBatchGlWriter::WriteTileRow(
                                          texture_size.h,
                                          /*flip_horizontally=*/false,
                                          &transform_mat);
-  MP_RETURN_IF_ERROR(texture.BindAsSampler2D(0));
+  ABSL_RETURN_IF_ERROR(texture.BindAsSampler2D(0));
 
   // a) Filtering.
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -190,24 +191,24 @@ absl::Status TiledBatchGlWriter::WriteTileRow(
     }
   }
 
-  MP_RETURN_IF_ERROR(dest->BindToIndex(0));
-  MP_RETURN_IF_ERROR(program_.SetParameter({"input_data", 0}));
-  MP_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(dest->BindToIndex(0));
+  ABSL_RETURN_IF_ERROR(program_.SetParameter({"input_data", 0}));
+  ABSL_RETURN_IF_ERROR(
       SetMat4x4(program_, "transform_matrix", transform_mat.data()));
-  MP_RETURN_IF_ERROR(program_.SetParameter(
+  ABSL_RETURN_IF_ERROR(program_.SetParameter(
       {"out_size", tflite::gpu::int2(out_w_, out_h_)}));
-  MP_RETURN_IF_ERROR(program_.SetParameter({"alpha", alpha}));
-  MP_RETURN_IF_ERROR(program_.SetParameter({"beta", beta}));
+  ABSL_RETURN_IF_ERROR(program_.SetParameter({"alpha", alpha}));
+  ABSL_RETURN_IF_ERROR(program_.SetParameter({"beta", beta}));
   // The one tiling-specific uniform: offset the linear write index to this
   // tile's batch row. row_base = tile_row * out_height * out_width.
-  MP_RETURN_IF_ERROR(program_.SetParameter(
+  ABSL_RETURN_IF_ERROR(program_.SetParameter(
       {"row_base", tile_row * out_h_ * out_w_}));
 
   tflite::gpu::uint3 num_workgroups = tflite::gpu::DivideRoundUp(
       tflite::gpu::uint3{static_cast<uint32_t>(out_w_),
                          static_cast<uint32_t>(out_h_), 1},
       workgroup_size_);
-  MP_RETURN_IF_ERROR(command_queue->Dispatch(program_, num_workgroups));
+  ABSL_RETURN_IF_ERROR(command_queue->Dispatch(program_, num_workgroups));
 
   // Resetting to MediaPipe texture param defaults.
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

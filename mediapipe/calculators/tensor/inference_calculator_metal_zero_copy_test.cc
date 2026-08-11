@@ -32,6 +32,7 @@
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/framework/port/status_matchers.h"
 #include "mediapipe/gpu/gpu_shared_data_internal.h"
 
@@ -141,14 +142,14 @@ class InferenceMetalZeroCopyTest : public testing::Test {
   // (N>1 rejection) test.
   absl::Status RunStatus(bool zero_copy, int batch, int channels) {
     CalculatorGraph graph;
-    MP_RETURN_IF_ERROR(graph.Initialize(Config(zero_copy)));
-    MP_RETURN_IF_ERROR(graph.SetGpuResources(gpu_resources_));
-    MP_RETURN_IF_ERROR(graph.StartRun({}));
-    MP_RETURN_IF_ERROR(graph.AddPacketToInputStream(
+    ABSL_RETURN_IF_ERROR(graph.Initialize(Config(zero_copy)));
+    ABSL_RETURN_IF_ERROR(graph.SetGpuResources(gpu_resources_));
+    ABSL_RETURN_IF_ERROR(graph.StartRun({}));
+    ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
         "tensors",
         MakePacket<std::vector<Tensor>>(MakeInput(batch, channels))
             .At(Timestamp(0))));
-    MP_RETURN_IF_ERROR(graph.CloseAllInputStreams());
+    ABSL_RETURN_IF_ERROR(graph.CloseAllInputStreams());
     // WaitUntilDone surfaces the calculator Process() error (the N==1 guard).
     return graph.WaitUntilDone();
   }
