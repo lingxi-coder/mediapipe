@@ -21,9 +21,16 @@ limitations under the License.
 
 namespace mediapipe::tasks::c::vision::oriented_object_detector {
 
-// Copies a plain-C MpOrientedTrackingOptions into the C++ TrackingOptions
-// sub-struct. All 7 fields are copied 1:1 (tracker_type via static_cast).
+// Copies the legacy fields into the C++ TrackingOptions sub-struct. The legacy
+// conversion defaults nominal_frame_rate to 30 without reading it because that
+// field occupied padding in the previous public ABI.
 void CppConvertToTrackingOptions(
+    const MpOrientedTrackingOptions& in,
+    ::mediapipe::tasks::vision::oriented_object_detector::
+        OrientedObjectDetectorOptions::TrackingOptions* out);
+
+// V2 conversion reads nominal_frame_rate; zero retains the 30 FPS default.
+void CppConvertToTrackingOptionsV2(
     const MpOrientedTrackingOptions& in,
     ::mediapipe::tasks::vision::oriented_object_detector::
         OrientedObjectDetectorOptions::TrackingOptions* out);

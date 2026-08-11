@@ -25,7 +25,7 @@ namespace {
 using CppTrackingOptions = ::mediapipe::tasks::vision::yolo_object_detector::
     YoloObjectDetectorOptions::TrackingOptions;
 
-TEST(TrackingOptionsConverterTest, CopiesAllScalarFields) {
+TEST(TrackingOptionsConverterTest, V2CopiesAllScalarFields) {
   MpTrackingOptions in = {};
   in.tracker_type = 2;  // BOTSORT
   in.track_high_threshold = 0.55f;
@@ -34,9 +34,10 @@ TEST(TrackingOptionsConverterTest, CopiesAllScalarFields) {
   in.track_buffer = 25;
   in.match_threshold = 0.75f;
   in.enable_gmc = true;
+  in.nominal_frame_rate = 60;
 
   CppTrackingOptions out;
-  CppConvertToTrackingOptions(in, &out);
+  CppConvertToTrackingOptionsV2(in, &out);
 
   EXPECT_EQ(out.tracker_type, CppTrackingOptions::kBotsort);
   EXPECT_FLOAT_EQ(out.track_high_threshold, 0.55f);
@@ -45,6 +46,28 @@ TEST(TrackingOptionsConverterTest, CopiesAllScalarFields) {
   EXPECT_EQ(out.track_buffer, 25);
   EXPECT_FLOAT_EQ(out.match_threshold, 0.75f);
   EXPECT_TRUE(out.enable_gmc);
+  EXPECT_EQ(out.nominal_frame_rate, 60);
+}
+
+TEST(TrackingOptionsConverterTest, LegacyIgnoresNominalFrameRate) {
+  MpTrackingOptions in = {};
+  in.tracker_type = 2;
+  in.nominal_frame_rate = 240;
+
+  CppTrackingOptions out;
+  CppConvertToTrackingOptions(in, &out);
+
+  EXPECT_EQ(out.tracker_type, CppTrackingOptions::kBotsort);
+  EXPECT_EQ(out.nominal_frame_rate, 30);
+}
+
+TEST(TrackingOptionsConverterTest, V2DefaultsZeroNominalFrameRate) {
+  MpTrackingOptions in = {};
+  CppTrackingOptions out;
+
+  CppConvertToTrackingOptionsV2(in, &out);
+
+  EXPECT_EQ(out.nominal_frame_rate, 30);
 }
 
 TEST(TrackingOptionsConverterTest, MapsTrackerTypeEnumValues) {
@@ -59,6 +82,7 @@ TEST(TrackingOptionsConverterTest, MapsTrackerTypeEnumValues) {
   unspecified.tracker_type = 0;  // unspecified -> 0 (treated as BOX_TRACKER downstream)
   CppConvertToTrackingOptions(unspecified, &out);
   EXPECT_EQ(static_cast<int>(out.tracker_type), 0);
+  EXPECT_EQ(out.nominal_frame_rate, 30);
 }
 
 }  // namespace

@@ -32,6 +32,7 @@ constexpr char kNodeConfig[] = R"pb(
   input_stream: "DETECTIONS:dets"
   input_stream: "BATCH_INFO:info"
   output_stream: "DETECTIONS:merged"
+  output_stream: "OBSERVED_ROIS:rois"
 )pb";
 
 Detection Box(float xmin, float ymin, float w, float h) {
@@ -116,6 +117,15 @@ TEST(MergeTileBoxAccumulatorTest, ProjectsTileLocalToFrame) {
   EXPECT_NEAR(bb0.height(), 0.40f, 1e-5);  // 0.4*1.0
   const auto& bb1 = merged[1].location_data().relative_bounding_box();
   EXPECT_NEAR(bb1.xmin(), 0.65f, 1e-5);    // 0.5 + 0.3*0.5
+
+  const auto& rois = runner.Outputs()
+                         .Tag("OBSERVED_ROIS")
+                         .packets[0]
+                         .Get<std::vector<TilePixelRoi>>();
+  ASSERT_EQ(rois.size(), 2u);
+  EXPECT_EQ(rois[0].x, 0);
+  EXPECT_EQ(rois[0].width, 50);
+  EXPECT_EQ(rois[1].x, 50);
 }
 
 TEST(MergeTileBoxAccumulatorTest, DropsPaddedRowsAndWaitsForAllBatches) {
@@ -154,6 +164,12 @@ TEST(MergeTileBoxAccumulatorTest, DropsPaddedRowsAndWaitsForAllBatches) {
   ASSERT_EQ(packets.size(), 1);  // ONE merged result for the source frame
   EXPECT_EQ(packets[0].Timestamp(), Timestamp(77));
   EXPECT_EQ(packets[0].Get<std::vector<Detection>>().size(), 2);
+  const auto& rois = runner.Outputs()
+                         .Tag("OBSERVED_ROIS")
+                         .packets[0]
+                         .Get<std::vector<TilePixelRoi>>();
+  ASSERT_EQ(rois.size(), 1u);
+  EXPECT_EQ(rois[0].width, 100);
 }
 
 // Mirrors the empty-frame protocol guards of the OrientedDetection merge:
@@ -176,6 +192,12 @@ TEST(MergeTileBoxAccumulatorTest, EmptyFrameWithoutDetectionsPacketEmitsEmptyRes
   ASSERT_EQ(packets.size(), 1);
   EXPECT_EQ(packets[0].Timestamp(), Timestamp(1234));
   EXPECT_TRUE(packets[0].Get<std::vector<Detection>>().empty());
+  ASSERT_EQ(runner.Outputs().Tag("OBSERVED_ROIS").packets.size(), 1u);
+  EXPECT_TRUE(runner.Outputs()
+                  .Tag("OBSERVED_ROIS")
+                  .packets[0]
+                  .Get<std::vector<TilePixelRoi>>()
+                  .empty());
 }
 
 // A batch whose detections packet is missing (bound-only) still counts toward
@@ -216,6 +238,12 @@ TEST(MergeTileBoxAccumulatorTest, MissingDetectionsPacketStillCountsBatch) {
   ASSERT_EQ(packets.size(), 1);
   EXPECT_EQ(packets[0].Timestamp(), Timestamp(50));
   EXPECT_EQ(packets[0].Get<std::vector<Detection>>().size(), 1);
+  const auto& rois = runner.Outputs()
+                         .Tag("OBSERVED_ROIS")
+                         .packets[0]
+                         .Get<std::vector<TilePixelRoi>>();
+  ASSERT_EQ(rois.size(), 1u);
+  EXPECT_EQ(rois[0].width, 100);
 }
 
 }  // namespace

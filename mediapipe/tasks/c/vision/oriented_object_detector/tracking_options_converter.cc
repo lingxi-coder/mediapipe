@@ -22,12 +22,11 @@ namespace mediapipe::tasks::c::vision::oriented_object_detector {
 
 namespace ObbNs = ::mediapipe::tasks::vision::oriented_object_detector;
 
-void CppConvertToTrackingOptions(
+namespace {
+
+void CopyCommonTrackingOptions(
     const MpOrientedTrackingOptions& in,
     ObbNs::OrientedObjectDetectorOptions::TrackingOptions* out) {
-  // tracker_type copied verbatim: 0/1/2 == unspecified/kBoxTracker/kBotsort.
-  // Knobs copied 1:1; honored only for BOTSORT. BOX_TRACKER is rejected at the
-  // cc Create(), not here.
   out->tracker_type =
       static_cast<ObbNs::OrientedObjectDetectorOptions::TrackingOptions::
                       TrackerType>(in.tracker_type);
@@ -37,6 +36,28 @@ void CppConvertToTrackingOptions(
   out->track_buffer = in.track_buffer;
   out->match_threshold = in.match_threshold;
   out->enable_gmc = in.enable_gmc;
+}
+
+}  // namespace
+
+void CppConvertToTrackingOptions(
+    const MpOrientedTrackingOptions& in,
+    ObbNs::OrientedObjectDetectorOptions::TrackingOptions* out) {
+  // tracker_type copied verbatim: 0/1/2 == unspecified/kBoxTracker/kBotsort.
+  // Knobs copied 1:1; honored only for BOTSORT. BOX_TRACKER is rejected at the
+  // cc Create(), not here.
+  CopyCommonTrackingOptions(in, out);
+  // This offset was padding in the previous public struct layout. Do not read
+  // it through the legacy entry point.
+  out->nominal_frame_rate = 30;
+}
+
+void CppConvertToTrackingOptionsV2(
+    const MpOrientedTrackingOptions& in,
+    ObbNs::OrientedObjectDetectorOptions::TrackingOptions* out) {
+  CopyCommonTrackingOptions(in, out);
+  out->nominal_frame_rate =
+      in.nominal_frame_rate == 0 ? 30 : in.nominal_frame_rate;
 }
 
 }  // namespace mediapipe::tasks::c::vision::oriented_object_detector

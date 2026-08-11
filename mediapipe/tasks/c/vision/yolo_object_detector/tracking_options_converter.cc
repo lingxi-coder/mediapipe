@@ -22,12 +22,11 @@ namespace mediapipe::tasks::c::vision::yolo_object_detector {
 
 namespace YoloNs = ::mediapipe::tasks::vision::yolo_object_detector;
 
-void CppConvertToTrackingOptions(
+namespace {
+
+void CopyCommonTrackingOptions(
     const MpTrackingOptions& in,
     YoloNs::YoloObjectDetectorOptions::TrackingOptions* out) {
-  // tracker_type is copied verbatim: 0/1/2 are numerically equal to the C++
-  // enum (kBoxTracker=1, kBotsort=2; 0 = unspecified -> treated as BOX_TRACKER
-  // by the cc layer). Knobs are copied 1:1; honored only for BOTSORT.
   out->tracker_type =
       static_cast<YoloNs::YoloObjectDetectorOptions::TrackingOptions::
                       TrackerType>(in.tracker_type);
@@ -37,6 +36,29 @@ void CppConvertToTrackingOptions(
   out->track_buffer = in.track_buffer;
   out->match_threshold = in.match_threshold;
   out->enable_gmc = in.enable_gmc;
+}
+
+}  // namespace
+
+void CppConvertToTrackingOptions(
+    const MpTrackingOptions& in,
+    YoloNs::YoloObjectDetectorOptions::TrackingOptions* out) {
+  // tracker_type is copied verbatim: 0/1/2 are numerically equal to the C++
+  // enum (kBoxTracker=1, kBotsort=2; 0 = unspecified -> treated as BOX_TRACKER
+  // by the cc layer). Knobs are copied 1:1; honored only for BOTSORT.
+  CopyCommonTrackingOptions(in, out);
+  // This offset was padding in the previous public struct layout. Do not read
+  // it through the legacy entry point because old callers may leave it
+  // indeterminate even though sizeof(the parent options struct) is unchanged.
+  out->nominal_frame_rate = 30;
+}
+
+void CppConvertToTrackingOptionsV2(
+    const MpTrackingOptions& in,
+    YoloNs::YoloObjectDetectorOptions::TrackingOptions* out) {
+  CopyCommonTrackingOptions(in, out);
+  out->nominal_frame_rate =
+      in.nominal_frame_rate == 0 ? 30 : in.nominal_frame_rate;
 }
 
 }  // namespace mediapipe::tasks::c::vision::yolo_object_detector

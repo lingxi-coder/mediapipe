@@ -116,6 +116,10 @@ struct MpTrackingOptions {
   int track_buffer;
   float match_threshold;
   bool enable_gmc;
+  // Nominal input frame rate used to scale BoTSORT's retention window. Read
+  // only by MpYoloObjectDetectorCreateV2; the legacy Create always uses 30 FPS
+  // because this offset was padding in the previous public ABI.
+  int nominal_frame_rate;
 };
 
 struct MpYoloObjectDetectorOptions {
@@ -172,6 +176,13 @@ MP_EXPORT MpStatus
 MpYoloObjectDetectorCreate(struct MpYoloObjectDetectorOptions* options,
                            MpYoloObjectDetectorPtr* detector_out,
                            char** error_msg);
+
+// Creates a YoloObjectDetector and honors tracking.nominal_frame_rate. Use
+// this entry point with the current options struct; zero means 30 FPS.
+MP_EXPORT MpStatus
+MpYoloObjectDetectorCreateV2(struct MpYoloObjectDetectorOptions* options,
+                             MpYoloObjectDetectorPtr* detector_out,
+                             char** error_msg);
 
 // Performs detection on a single image.
 MP_EXPORT MpStatus MpYoloObjectDetectorDetectImage(

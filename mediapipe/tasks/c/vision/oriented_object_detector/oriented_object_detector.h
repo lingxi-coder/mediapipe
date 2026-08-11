@@ -94,6 +94,10 @@ struct MpOrientedTrackingOptions {
   int track_buffer;
   float match_threshold;
   bool enable_gmc;
+  // Nominal input frame rate used to scale BoTSORT's retention window. Read
+  // only by MpOrientedObjectDetectorCreateV2; the legacy Create always uses 30
+  // FPS because this offset was padding in the previous public ABI.
+  int nominal_frame_rate;
 };
 
 // Options for configuring a MediaPipe oriented (OBB) object detector task.
@@ -149,6 +153,12 @@ struct MpOrientedObjectDetectorOptions {
 
 // Creates an OrientedObjectDetector from the provided `options`.
 MP_EXPORT MpStatus MpOrientedObjectDetectorCreate(
+    struct MpOrientedObjectDetectorOptions* options,
+    MpOrientedObjectDetectorPtr* detector_out, char** error_msg);
+
+// Creates an OrientedObjectDetector and honors tracking.nominal_frame_rate.
+// Use this entry point with the current options struct; zero means 30 FPS.
+MP_EXPORT MpStatus MpOrientedObjectDetectorCreateV2(
     struct MpOrientedObjectDetectorOptions* options,
     MpOrientedObjectDetectorPtr* detector_out, char** error_msg);
 

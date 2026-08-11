@@ -54,6 +54,7 @@ cc_library(
     srcs = ["yolo_object_detector_graph.cc"],
     deps = [
         "//mediapipe/calculators/core:pass_through_calculator",
+        "//mediapipe/calculators/core:packet_presence_calculator",
         "//mediapipe/calculators/image:image_properties_calculator",
         "//mediapipe/calculators/tensor:inference_calculator",
         "//mediapipe/calculators/tensor:yolo_batch_detections_to_single_calculator",

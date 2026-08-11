@@ -119,6 +119,7 @@ message YoloObjectDetectorOptions {
     optional int32 track_buffer = 5 [default = 30];
     optional float match_threshold = 6 [default = 0.7];
     optional bool enable_gmc = 7 [default = false];
+    optional int32 nominal_frame_rate = 8 [default = 30];
   }
   optional TrackingOptions tracking = 11;
 }

@@ -21,10 +21,12 @@
 #include "mediapipe/framework/formats/image_frame_opencv.h"
 #include "mediapipe/framework/formats/location_data.pb.h"
 #include "mediapipe/framework/port/gtest.h"
+#include "mediapipe/framework/port/gmock.h"
 #include "mediapipe/framework/port/opencv_core_inc.h"
 #include "mediapipe/framework/port/opencv_imgproc_inc.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
 #include "mediapipe/framework/port/status_matchers.h"
+#include "mediapipe/calculators/tensor/tiling_types.h"
 
 namespace mediapipe {
 namespace {
@@ -80,10 +82,21 @@ Packet MakeTexturedImagePacket(int width, int height, int shift, int64_t ts) {
   return Adopt(frame.release()).At(Timestamp(ts));
 }
 
+Packet MakeFullFrameRoisPacket(int width, int height, int64_t ts) {
+  TilePixelRoi roi;
+  roi.width = width;
+  roi.height = height;
+  return MakePacket<std::vector<TilePixelRoi>>(
+             std::vector<TilePixelRoi>{roi})
+      .At(Timestamp(ts));
+}
+
 constexpr char kNodeConfig[] = R"pb(
   calculator: "BotsortTrackingCalculator"
   input_stream: "IMAGE:image"
   input_stream: "DETECTIONS:dets"
+  input_stream: "REFRESH:refresh"
+  input_stream: "OBSERVED_ROIS:rois"
   output_stream: "DETECTIONS:out"
 )pb";
 
@@ -93,6 +106,8 @@ constexpr char kGmcNodeConfig[] = R"pb(
   calculator: "BotsortTrackingCalculator"
   input_stream: "IMAGE:image"
   input_stream: "DETECTIONS:dets"
+  input_stream: "REFRESH:refresh"
+  input_stream: "OBSERVED_ROIS:rois"
   output_stream: "DETECTIONS:out"
   node_options {
     [type.googleapis.com/mediapipe.BotsortTrackingCalculatorOptions] {
@@ -115,6 +130,10 @@ TEST(BotsortTrackingCalculatorTest, PreservesLabelAndScoreAndSurfacesTrackId) {
       MakePacket<std::vector<Detection>>(
           std::vector<Detection>{MakeDet(7, 0.9f, 0.40f, 0.40f, 0.10f, 0.10f)})
           .At(Timestamp(0)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakeFullFrameRoisPacket(200, 200, 0));
   // Frame 1 (object moved slightly).
   runner.MutableInputs()->Tag("IMAGE").packets.push_back(
       MakeImagePacket(200, 200, 1));
@@ -122,6 +141,10 @@ TEST(BotsortTrackingCalculatorTest, PreservesLabelAndScoreAndSurfacesTrackId) {
       MakePacket<std::vector<Detection>>(
           std::vector<Detection>{MakeDet(7, 0.9f, 0.42f, 0.41f, 0.10f, 0.10f)})
           .At(Timestamp(1)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(1)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakeFullFrameRoisPacket(200, 200, 1));
   // Frame 2 (object moved slightly again) - guarantees a confirmed track even
   // if frame 0 produced a tentative (empty) result.
   runner.MutableInputs()->Tag("IMAGE").packets.push_back(
@@ -130,6 +153,10 @@ TEST(BotsortTrackingCalculatorTest, PreservesLabelAndScoreAndSurfacesTrackId) {
       MakePacket<std::vector<Detection>>(
           std::vector<Detection>{MakeDet(7, 0.9f, 0.44f, 0.42f, 0.10f, 0.10f)})
           .At(Timestamp(2)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(2)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakeFullFrameRoisPacket(200, 200, 2));
 
   MP_ASSERT_OK(runner.Run());
   const auto& outs = runner.Outputs().Tag("DETECTIONS").packets;
@@ -157,11 +184,141 @@ TEST(BotsortTrackingCalculatorTest, EmptyDetectionsProducesValidPacket) {
   runner.MutableInputs()->Tag("DETECTIONS").packets.push_back(
       MakePacket<std::vector<Detection>>(std::vector<Detection>{})
           .At(Timestamp(0)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakeFullFrameRoisPacket(200, 200, 0));
 
   MP_ASSERT_OK(runner.Run());
   const auto& outs = runner.Outputs().Tag("DETECTIONS").packets;
   ASSERT_EQ(outs.size(), 1u);
   EXPECT_TRUE(outs[0].Get<std::vector<Detection>>().empty());
+}
+
+TEST(BotsortTrackingCalculatorTest, SkipPredictsWithoutNegativeEvidence) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(kNodeConfig));
+
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      MakeImagePacket(200, 200, 0));
+  runner.MutableInputs()->Tag("DETECTIONS").packets.push_back(
+      MakePacket<std::vector<Detection>>(
+          std::vector<Detection>{MakeDet(3, 0.9f, 0.4f, 0.4f, 0.1f, 0.1f)})
+          .At(Timestamp(0)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakeFullFrameRoisPacket(200, 200, 0));
+
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      MakeImagePacket(200, 200, 1));
+  runner.MutableInputs()->Tag("DETECTIONS").packets.push_back(
+      MakePacket<std::vector<Detection>>(std::vector<Detection>{})
+          .At(Timestamp(1)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(false).At(Timestamp(1)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakePacket<std::vector<TilePixelRoi>>(std::vector<TilePixelRoi>{})
+          .At(Timestamp(1)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& outs = runner.Outputs().Tag("DETECTIONS").packets;
+  ASSERT_EQ(outs.size(), 2u);
+  const auto& first = outs[0].Get<std::vector<Detection>>();
+  const auto& skipped = outs[1].Get<std::vector<Detection>>();
+  ASSERT_EQ(first.size(), 1u);
+  ASSERT_EQ(skipped.size(), 1u);
+  EXPECT_EQ(first[0].track_id(), skipped[0].track_id());
+}
+
+TEST(BotsortTrackingCalculatorTest, PartialObservedRoiAppliesLocalNegativeEvidence) {
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(kNodeConfig));
+
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      MakeImagePacket(200, 100, 0));
+  runner.MutableInputs()->Tag("DETECTIONS").packets.push_back(
+      MakePacket<std::vector<Detection>>(std::vector<Detection>{
+          MakeDet(1, 0.9f, 0.05f, 0.4f, 0.1f, 0.2f),
+          MakeDet(2, 0.9f, 0.75f, 0.4f, 0.1f, 0.2f)})
+          .At(Timestamp(0)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakePacket<std::vector<TilePixelRoi>>(
+          std::vector<TilePixelRoi>{{0, 0, 200, 100}})
+          .At(Timestamp(0)));
+
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      MakeImagePacket(200, 100, 1));
+  runner.MutableInputs()->Tag("DETECTIONS").packets.push_back(
+      MakePacket<std::vector<Detection>>(std::vector<Detection>{})
+          .At(Timestamp(1)));
+  runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+      MakePacket<bool>(true).At(Timestamp(1)));
+  runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+      MakePacket<std::vector<TilePixelRoi>>(
+          std::vector<TilePixelRoi>{{0, 0, 100, 100}})
+          .At(Timestamp(1)));
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& outs = runner.Outputs().Tag("DETECTIONS").packets;
+  ASSERT_EQ(outs.size(), 2u);
+  const auto& initial = outs[0].Get<std::vector<Detection>>();
+  const auto& partial = outs[1].Get<std::vector<Detection>>();
+  ASSERT_EQ(initial.size(), 2u);
+  ASSERT_EQ(partial.size(), 1u);
+  EXPECT_EQ(partial[0].label_id(0), 2);
+}
+
+TEST(BotsortTrackingCalculatorTest, RejectsMalformedInputsAndInconsistentRefresh) {
+  auto run = [](std::vector<Detection> detections, bool refresh,
+                std::vector<TilePixelRoi> rois) {
+    CalculatorRunner runner(
+        ParseTextProtoOrDie<CalculatorGraphConfig::Node>(kNodeConfig));
+    runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+        MakeImagePacket(100, 100, 0));
+    runner.MutableInputs()->Tag("DETECTIONS").packets.push_back(
+        MakePacket<std::vector<Detection>>(std::move(detections))
+            .At(Timestamp(0)));
+    runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+        MakePacket<bool>(refresh).At(Timestamp(0)));
+    runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+        MakePacket<std::vector<TilePixelRoi>>(std::move(rois))
+            .At(Timestamp(0)));
+    return runner.Run();
+  };
+
+  Detection missing_label = MakeDet(1, 0.9f, 0.1f, 0.1f, 0.2f, 0.2f);
+  missing_label.clear_label_id();
+  auto status = run({missing_label}, true, {{0, 0, 100, 100}});
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+
+  status = run({}, true, {{0, 0, 0, 100}});
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+
+  status = run({}, false, {{0, 0, 100, 100}});
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+}
+
+TEST(BotsortTrackingCalculatorTest, RejectsEffectiveLostWindowOverflow) {
+  const char kConfig[] = R"pb(
+    calculator: "BotsortTrackingCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "DETECTIONS:dets"
+    input_stream: "REFRESH:refresh"
+    input_stream: "OBSERVED_ROIS:rois"
+    output_stream: "DETECTIONS:out"
+    node_options {
+      [type.googleapis.com/mediapipe.BotsortTrackingCalculatorOptions] {
+        nominal_frame_rate: 255
+        track_buffer: 31
+      }
+    }
+  )pb";
+  CalculatorRunner runner(
+      ParseTextProtoOrDie<CalculatorGraphConfig::Node>(kConfig));
+  EXPECT_EQ(runner.Run().code(), absl::StatusCode::kInvalidArgument);
 }
 
 // With GMC enabled the calculator constructs BoTSORT with the SparseOptFlow
@@ -185,6 +342,10 @@ TEST(BotsortTrackingCalculatorTest, GmcEnabledPathRunsAndTracks) {
             std::vector<Detection>{MakeDet(7, 0.9f, 0.40f + 0.02f * i,
                                            0.40f + 0.01f * i, 0.10f, 0.10f)})
             .At(Timestamp(i)));
+    runner.MutableInputs()->Tag("REFRESH").packets.push_back(
+        MakePacket<bool>(true).At(Timestamp(i)));
+    runner.MutableInputs()->Tag("OBSERVED_ROIS").packets.push_back(
+        MakeFullFrameRoisPacket(200, 200, i));
   }
 
   MP_ASSERT_OK(runner.Run());

@@ -1,5 +1,8 @@
 #include "GlobalMotionCompensation.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <opencv2/videostab/global_motion.hpp>
 #include <opencv2/videostab/motion_core.hpp>
 
@@ -10,6 +13,47 @@ std::map<std::string, GMC_Method> GlobalMotionCompensation::GMC_method_map = {
         {"optFlowModified", GMC_Method::OptFlowModified},
         {"OpenCV_VideoStab", GMC_Method::OpenCV_VideoStab},
 };
+
+namespace botsort_internal {
+
+cv::Mat BuildForegroundMask(
+        const cv::Size &downscaled_size, float downscale,
+        const std::vector<cv::Rect_<float>> &foreground_boxes)
+{
+    cv::Mat mask(downscaled_size, CV_8UC1, cv::Scalar(255));
+    if (downscaled_size.width <= 0 || downscaled_size.height <= 0)
+    {
+        return mask;
+    }
+
+    const float scale = downscale > 0.0F ? downscale : 1.0F;
+    for (const cv::Rect_<float> &box: foreground_boxes)
+    {
+        if (!std::isfinite(box.x) || !std::isfinite(box.y) ||
+            !std::isfinite(box.width) || !std::isfinite(box.height) ||
+            box.width <= 0.0F || box.height <= 0.0F)
+        {
+            continue;
+        }
+        const int left = std::clamp(static_cast<int>(std::floor(box.x / scale)),
+                                    0, downscaled_size.width);
+        const int top = std::clamp(static_cast<int>(std::floor(box.y / scale)),
+                                   0, downscaled_size.height);
+        const int right = std::clamp(
+                static_cast<int>(std::ceil((box.x + box.width) / scale)), 0,
+                downscaled_size.width);
+        const int bottom = std::clamp(
+                static_cast<int>(std::ceil((box.y + box.height) / scale)), 0,
+                downscaled_size.height);
+        if (right > left && bottom > top)
+        {
+            mask(cv::Rect(left, top, right - left, bottom - top)) = 0;
+        }
+    }
+    return mask;
+}
+
+}  // namespace botsort_internal
 
 
 GlobalMotionCompensation::GlobalMotionCompensation(const GMC_Params &gmc_params)
@@ -57,9 +101,10 @@ GlobalMotionCompensation::GlobalMotionCompensation(const GMC_Params &gmc_params)
 
 HomographyMatrix
 GlobalMotionCompensation::apply(const cv::Mat &frame,
-                                const std::vector<Detection> &detections)
+                                const std::vector<Detection> &detections,
+                                const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
-    return _gmc_algorithm->apply(frame, detections);
+    return _gmc_algorithm->apply(frame, detections, foreground_boxes);
 }
 
 
@@ -84,8 +129,10 @@ void ORB_GMC::_load_params_from_config(const ORB_Params &config)
 
 
 HomographyMatrix ORB_GMC::apply(const cv::Mat &frame_raw,
-                                const std::vector<Detection> &detections)
+                                const std::vector<Detection> &detections,
+                                const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
+    (void)foreground_boxes;
     // Initialization
     int height = frame_raw.rows;
     int width = frame_raw.cols;
@@ -299,8 +346,10 @@ void ECC_GMC::_load_params_from_config(const ECC_Params &config)
 
 
 HomographyMatrix ECC_GMC::apply(const cv::Mat &frame_raw,
-                                const std::vector<Detection> &detections)
+                                const std::vector<Detection> &detections,
+                                const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
+    (void)foreground_boxes;
     // Initialization
     int height = frame_raw.rows;
     int width = frame_raw.cols;
@@ -383,7 +432,8 @@ void SparseOptFlow_GMC::_load_params_from_config(
 
 HomographyMatrix
 SparseOptFlow_GMC::apply(const cv::Mat &frame_raw,
-                         const std::vector<Detection> &detections)
+                         const std::vector<Detection> &detections,
+                         const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
     // Initialization
     int height = frame_raw.rows;
@@ -404,17 +454,22 @@ SparseOptFlow_GMC::apply(const cv::Mat &frame_raw,
     }
 
 
-    // Detect keypoints
+    // Detect only background keypoints. The mask is in the same downscaled
+    // coordinate system as `frame`, including for boxes clipped at edges.
+    const cv::Mat mask = botsort_internal::BuildForegroundMask(
+            frame.size(), _downscale, foreground_boxes);
     std::vector<cv::Point2f> keypoints;
     cv::goodFeaturesToTrack(frame, keypoints, _maxCorners, _qualityLevel,
-                            _minDistance, cv::noArray(), _blockSize,
+                            _minDistance, mask, _blockSize,
                             _useHarrisDetector, _k);
 
-    if (!_first_frame_initialized || _prev_keypoints.size() == 0)
+    if (!_first_frame_initialized || _prev_keypoints.empty() ||
+        keypoints.empty())
     {
         /**
-         *  If this is the first frame, there is nothing to match
-         *  Save the keypoints and descriptors, return identity matrix 
+         *  Without features on both frames there is nothing to match. Save
+         *  the current state and return identity instead of estimating motion
+         *  from stale previous-frame keypoints through a fully masked frame.
          */
         _first_frame_initialized = true;
         _prev_frame = frame.clone();
@@ -511,8 +566,10 @@ void OpenCV_VideoStab_GMC::_load_params_from_config(
 
 HomographyMatrix
 OpenCV_VideoStab_GMC::apply(const cv::Mat &frame_raw,
-                            const std::vector<Detection> &detections)
+                            const std::vector<Detection> &detections,
+                            const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
+    (void)foreground_boxes;
     // Initialization
     int height = frame_raw.rows;
     int width = frame_raw.cols;
@@ -590,8 +647,10 @@ void OptFlowModified_GMC::_load_params_from_config(
 
 HomographyMatrix
 OptFlowModified_GMC::apply(const cv::Mat &frame,
-                           const std::vector<Detection> &detections)
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
+    (void)foreground_boxes;
     HomographyMatrix H;
     H.setIdentity();
 

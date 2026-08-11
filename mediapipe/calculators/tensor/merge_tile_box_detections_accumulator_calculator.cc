@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include <array>
+#include <set>
+#include <tuple>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -43,7 +45,9 @@ class MergeTileBoxDetectionsAccumulatorCalculator : public Node {
       "DETECTIONS"};
   static constexpr Input<TensorBatchInfo> kInInfo{"BATCH_INFO"};
   static constexpr Output<std::vector<Detection>> kOut{"DETECTIONS"};
-  MEDIAPIPE_NODE_CONTRACT(kInDets, kInInfo, kOut,
+  static constexpr Output<std::vector<TilePixelRoi>>::Optional kOutRois{
+      "OBSERVED_ROIS"};
+  MEDIAPIPE_NODE_CONTRACT(kInDets, kInInfo, kOut, kOutRois,
                           ::mediapipe::api2::TimestampChange::Arbitrary());
 
   absl::Status Process(CalculatorContext* cc) override {
@@ -61,6 +65,8 @@ class MergeTileBoxDetectionsAccumulatorCalculator : public Node {
     if (info.valid_count > 0) {
       RET_CHECK_LE(info.valid_count,
                    static_cast<int>(geom->tile_to_image_matrices.size()));
+      RET_CHECK_LE(info.valid_count,
+                   static_cast<int>(geom->effective_pixel_rois.size()));
     }
 
     std::vector<Detection> projected;
@@ -85,19 +91,46 @@ class MergeTileBoxDetectionsAccumulatorCalculator : public Node {
       }
     }
 
+    std::vector<TilePixelRoi> observed_rois;
+    if (info.valid_count > 0) {
+      observed_rois.assign(geom->effective_pixel_rois.begin(),
+                           geom->effective_pixel_rois.begin() +
+                               info.valid_count);
+    }
+
     auto merged = accumulator_.AddBatch(
         info.source_frame_timestamp, info.total_batches, std::move(projected));
+    auto merged_rois = roi_accumulator_.AddBatch(
+        info.source_frame_timestamp, info.total_batches,
+        std::move(observed_rois));
+    RET_CHECK_EQ(merged.has_value(), merged_rois.has_value())
+        << "Detection and observed-ROI accumulators completed out of lockstep";
     if (merged.has_value()) {
       kOut(cc).Send(mediapipe::api2::MakePacket<std::vector<Detection>>(
                         std::move(*merged))
                         .At(::mediapipe::Timestamp(
                             info.source_frame_timestamp)));
+      std::set<std::tuple<int, int, int, int>> seen;
+      std::vector<TilePixelRoi> deduplicated;
+      deduplicated.reserve(merged_rois->size());
+      for (const TilePixelRoi& roi : *merged_rois) {
+        if (seen.emplace(roi.x, roi.y, roi.width, roi.height).second) {
+          deduplicated.push_back(roi);
+        }
+      }
+      if (kOutRois(cc).IsConnected()) {
+        kOutRois(cc).Send(
+            mediapipe::api2::MakePacket<std::vector<TilePixelRoi>>(
+                std::move(deduplicated))
+                .At(::mediapipe::Timestamp(info.source_frame_timestamp)));
+      }
     }
     return absl::OkStatus();
   }
 
  private:
   TileFrameAccumulator<Detection> accumulator_;
+  TileFrameAccumulator<TilePixelRoi> roi_accumulator_;
 };
 
 MEDIAPIPE_REGISTER_NODE(MergeTileBoxDetectionsAccumulatorCalculator);

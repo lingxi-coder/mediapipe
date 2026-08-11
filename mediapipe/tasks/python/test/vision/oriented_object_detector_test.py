@@ -59,6 +59,12 @@ _MODEL_PRESENT = _model_available()
 
 class OrientedObjectDetectorTest(parameterized.TestCase):
 
+  def test_ctypes_uses_versioned_create_entry_point(self):
+    self.assertEqual(
+        oriented_object_detector._CTYPES_SIGNATURES[0].func_name,  # pylint: disable=protected-access
+        'MpOrientedObjectDetectorCreateV2',
+    )
+
   def test_options_construct_without_model(self):
     """Constructs OrientedObjectDetectorOptions and checks defaults; no model needed."""
     base_options = _BaseOptions(model_asset_path='/dummy/model.tflite')
@@ -183,7 +189,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
 
     options_c = oriented_object_detector.MpOrientedObjectDetectorOptionsC
     # Absolute anchors mirroring tiling_options_abi_test.cc (compiler-verified).
-    # The tracking field (sizeof 28, at offset 184) pushes result_callback to
+    # The tracking field (sizeof 32, at offset 184) pushes result_callback to
     # 216 and the parent struct to sizeof 224 (see tracking_options_abi_test.cc).
     self.assertEqual(options_c.tiling.offset, 144)
     self.assertEqual(options_c.result_callback.offset, 216)
@@ -192,7 +198,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
   def test_ctypes_tracking_layout_matches_c_abi(self):
     """ctypes tracking struct byte-matches the OBB C header (see tracking_options_abi_test.cc)."""
     self.assertEqual(
-        ctypes.sizeof(oriented_object_detector.MpOrientedTrackingOptionsC), 28
+        ctypes.sizeof(oriented_object_detector.MpOrientedTrackingOptionsC), 32
     )
     tracking_c = oriented_object_detector.MpOrientedTrackingOptionsC
     fields = {
@@ -205,6 +211,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
     self.assertEqual(fields['track_buffer'], 16)
     self.assertEqual(fields['match_threshold'], 20)
     self.assertEqual(fields['enable_gmc'], 24)
+    self.assertEqual(fields['nominal_frame_rate'], 28)
 
     options_c = oriented_object_detector.MpOrientedObjectDetectorOptionsC
     self.assertEqual(options_c.tracking.offset, 184)
@@ -222,6 +229,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
     )
     self.assertEqual(tracking_c.tracker_type, 2)
     self.assertEqual(tracking_c.track_buffer, 25)
+    self.assertEqual(tracking_c.nominal_frame_rate, 30)
 
   @unittest.skipUnless(
       _MODEL_PRESENT,

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "GlobalMotionCompensation.h"
 #include "GmcParams.h"
@@ -33,6 +34,20 @@ public:
      */
     std::vector<std::shared_ptr<Track>>
     track(const std::vector<Detection> &detections, const cv::Mat &frame);
+
+    // Advances prediction and GMC without running association. This is used
+    // for scheduler SKIP frames, where an empty detection list is not negative
+    // evidence.
+    std::vector<std::shared_ptr<Track>>
+    predict_only(const cv::Mat &frame);
+
+    // Runs one association pass over the complete tracker pool. Unmatched
+    // active/unconfirmed tracks are transitioned only when their predicted
+    // center lies in observed_rois; association itself is never partitioned
+    // by tile.
+    std::vector<std::shared_ptr<Track>> track_observed(
+            const std::vector<Detection> &detections, const cv::Mat &frame,
+            const std::vector<cv::Rect> &observed_rois);
 
 
 private:
@@ -92,6 +107,20 @@ private:
      * @param config Configuration to load
      */
     void _load_params_from_config(const TrackerParams &config);
+
+    static bool _center_is_observed(const std::shared_ptr<Track> &track,
+                                    const std::vector<cv::Rect> &observed_rois);
+    void _predict_tracks(
+            const cv::Mat &frame, const std::vector<Detection> &detections,
+            std::vector<std::shared_ptr<Track>> *tracks_pool,
+            std::vector<std::shared_ptr<Track>> *unconfirmed_tracks);
+    std::vector<cv::Rect_<float>> _foreground_boxes(
+            const std::vector<Detection> &detections,
+            const std::vector<std::shared_ptr<Track>> &tracks_pool,
+            const std::vector<std::shared_ptr<Track>> &unconfirmed_tracks)
+            const;
+    void _expire_lost_tracks(std::vector<std::shared_ptr<Track>> *removed_tracks);
+    std::vector<std::shared_ptr<Track>> _output_tracks() const;
 
 private:
     std::string _gmc_method_name;

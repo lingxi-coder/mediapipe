@@ -76,6 +76,7 @@ ObbNs::OrientedObjectDetector* GetCppDetector(
 }  // namespace
 
 void CppConvertToDetectorOptions(const MpOrientedObjectDetectorOptions& in,
+                                 bool use_tracking_options_v2,
                                  ObbNs::OrientedObjectDetectorOptions* out) {
   out->display_names_locale =
       in.display_names_locale ? std::string(in.display_names_locale) : "en";
@@ -96,15 +97,21 @@ void CppConvertToDetectorOptions(const MpOrientedObjectDetectorOptions& in,
       static_cast<ObbNs::OrientedObjectDetectorOptions::Layout>(in.layout);
   out->num_classes = in.num_classes;
   CppConvertToTilingOptions(in.tiling, &out->tiling);
-  CppConvertToTrackingOptions(in.tracking, &out->tracking);
+  if (use_tracking_options_v2) {
+    CppConvertToTrackingOptionsV2(in.tracking, &out->tracking);
+  } else {
+    CppConvertToTrackingOptions(in.tracking, &out->tracking);
+  }
 }
 
 absl::Status CppOrientedObjectDetectorCreate(
     const MpOrientedObjectDetectorOptions& options,
+    bool use_tracking_options_v2,
     MpOrientedObjectDetectorPtr* detector_out) {
   auto cpp_options = std::make_unique<ObbNs::OrientedObjectDetectorOptions>();
   CppConvertToBaseOptions(options.base_options, &cpp_options->base_options);
-  CppConvertToDetectorOptions(options, cpp_options.get());
+  CppConvertToDetectorOptions(options, use_tracking_options_v2,
+                              cpp_options.get());
   cpp_options->running_mode = static_cast<RunningMode>(options.running_mode);
 
   if (cpp_options->running_mode == RunningMode::LIVE_STREAM) {
@@ -216,7 +223,17 @@ MpStatus MpOrientedObjectDetectorCreate(
     struct MpOrientedObjectDetectorOptions* options,
     MpOrientedObjectDetectorPtr* detector_out, char** error_msg) {
   absl::Status status = mediapipe::tasks::c::vision::oriented_object_detector::
-      CppOrientedObjectDetectorCreate(*options, detector_out);
+      CppOrientedObjectDetectorCreate(
+          *options, /*use_tracking_options_v2=*/false, detector_out);
+  return mediapipe::tasks::c::core::HandleStatus(status, error_msg);
+}
+
+MpStatus MpOrientedObjectDetectorCreateV2(
+    struct MpOrientedObjectDetectorOptions* options,
+    MpOrientedObjectDetectorPtr* detector_out, char** error_msg) {
+  absl::Status status = mediapipe::tasks::c::vision::oriented_object_detector::
+      CppOrientedObjectDetectorCreate(
+          *options, /*use_tracking_options_v2=*/true, detector_out);
   return mediapipe::tasks::c::core::HandleStatus(status, error_msg);
 }
 

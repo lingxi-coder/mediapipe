@@ -154,6 +154,7 @@ TEST(YoloObjectDetectorOptionsConverterTest, MapsTrackingOptions) {
   options->tracking.track_buffer = 25;
   options->tracking.match_threshold = 0.75f;
   options->tracking.enable_gmc = true;
+  options->tracking.nominal_frame_rate = 60;
 
   auto proto = ConvertYoloObjectDetectorOptionsToProto(options.get());
 
@@ -165,6 +166,7 @@ TEST(YoloObjectDetectorOptionsConverterTest, MapsTrackingOptions) {
   EXPECT_EQ(proto->tracking().track_buffer(), 25);
   EXPECT_FLOAT_EQ(proto->tracking().match_threshold(), 0.75f);
   EXPECT_TRUE(proto->tracking().enable_gmc());
+  EXPECT_EQ(proto->tracking().nominal_frame_rate(), 60);
 }
 
 // ---------------------------------------------------------------------------
@@ -813,8 +815,13 @@ TEST(YoloObjectDetectorTrackingValidationTest, BotsortWithoutTilingRejected) {
 }
 
 TEST(YoloObjectDetectorTrackingValidationTest,
-     BotsortWithMotionSchedulingRejected) {
+     BotsortWithMotionSchedulingAccepted) {
+  const std::string model_path = ModelPath();
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "YOLO model fixture not available at " << model_path;
+  }
   auto options = std::make_unique<YoloObjectDetectorOptions>();
+  options->base_options.model_asset_path = model_path;
   options->running_mode = core::RunningMode::VIDEO;
   options->num_classes = 80;
   options->tiling.tile_rows = 2;
@@ -822,10 +829,9 @@ TEST(YoloObjectDetectorTrackingValidationTest,
   options->tiling.enable_motion_scheduling = true;
   options->tracking.tracker_type =
       YoloObjectDetectorOptions::TrackingOptions::kBotsort;
-  auto result = YoloObjectDetector::Create(std::move(options));
-  EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
-  EXPECT_THAT(result.status().message(),
-              testing::HasSubstr("enable_motion_scheduling"));
+  MP_ASSERT_OK_AND_ASSIGN(auto detector,
+                          YoloObjectDetector::Create(std::move(options)));
+  MP_ASSERT_OK(detector->Close());
 }
 
 TEST(YoloObjectDetectorTrackingValidationTest,

@@ -513,11 +513,23 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
         mtracking->set_match_threshold(
             task_options.tracking().match_threshold());
         mtracking->set_enable_gmc(task_options.tracking().enable_gmc());
+        mtracking->set_nominal_frame_rate(
+            task_options.tracking().nominal_frame_rate());
         yolo_decode.Out(kDetectionsTag) >> merge.In(kDetectionsTag);
         front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);
         // The tracker needs the source video frame; reuse the ImageFrame the
         // tiled front already consumes (to_frame's IMAGE_CPU output).
         to_frame.Out(kImageCpuTag) >> merge.In(kImageTag);
+        if (task_options.tracking().tracker_type() ==
+            YoloObjectDetectorOptionsProto::TrackingOptions::BOTSORT) {
+          if (scheduling_enabled) {
+            front.Out("REFRESH") >> merge.In("REFRESH");
+          } else {
+            auto& presence = graph.AddNode("PacketPresenceCalculator");
+            to_frame.Out(kImageCpuTag) >> presence.In("PACKET");
+            presence.Out("PRESENCE") >> merge.In("REFRESH");
+          }
+        }
         merged_dets = merge.Out(kDetectionsTag).Cast<std::vector<Detection>>();
       } else {
         auto& merge =

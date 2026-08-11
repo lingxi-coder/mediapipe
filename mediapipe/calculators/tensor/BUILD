@@ -3555,6 +3555,7 @@ cc_library(
         "//mediapipe/framework/formats:image_frame",
         "//mediapipe/framework/formats:image_frame_opencv",
         "//mediapipe/framework/formats:location_data_cc_proto",
+        ":tiling_types",
         "//third_party:opencv",
         "//third_party/botsort",
         "@com_google_absl//absl/status",

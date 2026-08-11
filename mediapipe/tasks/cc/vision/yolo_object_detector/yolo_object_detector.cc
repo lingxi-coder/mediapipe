@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/yolo_object_detector.h"
 
+#include <cmath>
 #include <functional>
 #include <map>
 #include <memory>
@@ -49,6 +50,48 @@ namespace tasks {
 namespace vision {
 namespace yolo_object_detector {
 namespace {
+
+absl::Status ValidateBotsortOptions(
+    const proto::YoloObjectDetectorOptions::TrackingOptions& tracking) {
+  const auto valid = [](float value) {
+    return std::isfinite(value) && value >= 0.0F && value <= 1.0F;
+  };
+  if (!valid(tracking.track_high_threshold())) {
+    return absl::InvalidArgumentError(
+        "tracking.track_high_threshold must be finite and in [0, 1].");
+  }
+  if (!valid(tracking.track_low_threshold())) {
+    return absl::InvalidArgumentError(
+        "tracking.track_low_threshold must be finite and in [0, 1].");
+  }
+  if (!valid(tracking.new_track_threshold())) {
+    return absl::InvalidArgumentError(
+        "tracking.new_track_threshold must be finite and in [0, 1].");
+  }
+  if (!valid(tracking.match_threshold())) {
+    return absl::InvalidArgumentError(
+        "tracking.match_threshold must be finite and in [0, 1].");
+  }
+  if (tracking.track_low_threshold() > tracking.track_high_threshold()) {
+    return absl::InvalidArgumentError(
+        "tracking.track_low_threshold must be <= tracking.track_high_threshold.");
+  }
+  if (tracking.track_buffer() < 0 || tracking.track_buffer() > 255) {
+    return absl::InvalidArgumentError(
+        "tracking.track_buffer must be in [0, 255].");
+  }
+  if (tracking.nominal_frame_rate() < 1 ||
+      tracking.nominal_frame_rate() > 255) {
+    return absl::InvalidArgumentError(
+        "tracking.nominal_frame_rate must be in [1, 255].");
+  }
+  if (std::floor(static_cast<double>(tracking.nominal_frame_rate()) / 30.0 *
+                 tracking.track_buffer()) > 255.0) {
+    return absl::InvalidArgumentError(
+        "floor(nominal_frame_rate / 30 * track_buffer) must be <= 255.");
+  }
+  return absl::OkStatus();
+}
 
 constexpr char kDetectionsOutStreamName[] = "detections_out";
 constexpr char kDetectionsTag[] = "DETECTIONS";
@@ -165,6 +208,7 @@ ConvertYoloObjectDetectorOptionsToProto(YoloObjectDetectorOptions* options) {
   tracking->set_track_buffer(options->tracking.track_buffer);
   tracking->set_match_threshold(options->tracking.match_threshold);
   tracking->set_enable_gmc(options->tracking.enable_gmc);
+  tracking->set_nominal_frame_rate(options->tracking.nominal_frame_rate);
   return options_proto;
 }
 
@@ -215,6 +259,7 @@ absl::StatusOr<std::unique_ptr<YoloObjectDetector>> YoloObjectDetector::Create(
   }
   if (options_proto->tracking().tracker_type() ==
       YoloObjectDetectorOptionsProto::TrackingOptions::BOTSORT) {
+    ABSL_RETURN_IF_ERROR(ValidateBotsortOptions(options_proto->tracking()));
     if (options->running_mode == core::RunningMode::IMAGE) {
       return CreateStatusWithPayload(
           absl::StatusCode::kInvalidArgument,
@@ -227,14 +272,6 @@ absl::StatusOr<std::unique_ptr<YoloObjectDetector>> YoloObjectDetector::Create(
           absl::StatusCode::kInvalidArgument,
           "tracking.tracker_type=BOTSORT requires tiling to be enabled; the "
           "non-tiled path has no tracker stage.",
-          MediaPipeTasksStatus::kInvalidArgumentError);
-    }
-    if (options_proto->tiling().enable_motion_scheduling()) {
-      return CreateStatusWithPayload(
-          absl::StatusCode::kInvalidArgument,
-          "tracking.tracker_type=BOTSORT is incompatible with "
-          "tiling.enable_motion_scheduling: BoTSORT cannot gap-fill SKIP "
-          "frames (it emits no detections on a detection-less frame).",
           MediaPipeTasksStatus::kInvalidArgumentError);
     }
     if (options_proto->num_classes() < 1 ||

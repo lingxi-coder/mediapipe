@@ -143,6 +143,56 @@ TEST(StreamingTilesTest, DynamicBatchNoPadding) {
   EXPECT_EQ(info.valid_count, 2);
 }
 
+TEST(StreamingTilesTest, RgbaInputDropsAlphaForRgbModel) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(1, 2, 2, 3, /*dynamic=*/true));
+
+  auto frame = std::make_unique<ImageFrame>(ImageFormat::SRGBA, 2, 2);
+  const unsigned char pixels[2][2][4] = {
+      {{10, 20, 30, 40}, {50, 60, 70, 80}},
+      {{90, 100, 110, 120}, {130, 140, 150, 160}},
+  };
+  for (int y = 0; y < 2; ++y) {
+    std::memcpy(frame->MutablePixelData() + y * frame->WidthStep(), pixels[y],
+                sizeof(pixels[y]));
+  }
+
+  TilePlan plan;
+  TileGeometry tile;
+  tile.tile_index = 0;
+  tile.x_center = 0.5f;
+  tile.y_center = 0.5f;
+  tile.width = 1.0f;
+  tile.height = 1.0f;
+  plan.tiles.push_back(tile);
+
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(frame.release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(std::move(plan)).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+
+  const auto& tensors =
+      runner.Outputs().Tag("TENSORS").packets[0].Get<std::vector<Tensor>>();
+  ASSERT_EQ(tensors.size(), 1u);
+  EXPECT_EQ(tensors[0].shape().dims, (std::vector<int>{1, 2, 2, 3}));
+  const auto read = tensors[0].GetCpuReadView();
+  const float* output = read.buffer<float>();
+  const unsigned char expected[] = {10,  20,  30,  50,  60,  70,
+                                    90,  100, 110, 130, 140, 150};
+  for (int i = 0; i < 12; ++i) {
+    EXPECT_NEAR(output[i], expected[i] / 255.0f, 1e-6f) << "index " << i;
+  }
+}
+
 // Checks that geometry is populated and that applying tile_to_image_matrices[0]
 // to the tile-center (0.5, 0.5) in tile-normalized space yields the tile's
 // frame center within 2e-2.  We use a 16x16 frame; integer pixel rounding on a

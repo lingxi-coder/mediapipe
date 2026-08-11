@@ -443,6 +443,8 @@ class OrientedObjectDetectorGraph : public tasks::core::ModelTaskGraph {
         mt->set_track_buffer(task_options.tracking().track_buffer());
         mt->set_match_threshold(task_options.tracking().match_threshold());
         mt->set_enable_gmc(task_options.tracking().enable_gmc());
+        mt->set_nominal_frame_rate(
+            task_options.tracking().nominal_frame_rate());
         obb_decode.Out(kOrientedDetectionsTag) >>
             merge.In(kOrientedDetectionsTag);
         front.Out(kBatchInfoTag) >> merge.In(kBatchInfoTag);

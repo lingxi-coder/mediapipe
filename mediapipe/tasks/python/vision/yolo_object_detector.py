@@ -149,8 +149,8 @@ class MpTilingOptionsC(ctypes.Structure):
 class MpTrackingOptionsC(ctypes.Structure):
   """Byte-matches struct MpTrackingOptions in the YOLO C header.
 
-  Layout pinned by tracking_options_abi_test.cc (sizeof 28; offsets
-  0/4/8/12/16/20/24; enable_gmc is c_bool = 1 byte). tracker_type is c_int with
+  Layout pinned by tracking_options_abi_test.cc (sizeof 32; offsets
+  0/4/8/12/16/20/24/28; enable_gmc is c_bool = 1 byte). tracker_type is c_int with
   values 0=unspecified->BOX_TRACKER, 1=BOX_TRACKER, 2=BOTSORT.
   """
 
@@ -162,6 +162,7 @@ class MpTrackingOptionsC(ctypes.Structure):
       ('track_buffer', ctypes.c_int),
       ('match_threshold', ctypes.c_float),
       ('enable_gmc', ctypes.c_bool),
+      ('nominal_frame_rate', ctypes.c_int),
   ]
 
 
@@ -193,7 +194,7 @@ class MpYoloObjectDetectorOptionsC(ctypes.Structure):
 
 _CTYPES_SIGNATURES = (
     mediapipe_c_utils.CStatusFunction(
-        'MpYoloObjectDetectorCreate',
+        'MpYoloObjectDetectorCreateV2',
         (
             ctypes.POINTER(MpYoloObjectDetectorOptionsC),
             ctypes.POINTER(ctypes.c_void_p),
@@ -319,6 +320,7 @@ class TrackingOptions:
   track_buffer: int = 30
   match_threshold: float = 0.7
   enable_gmc: bool = False
+  nominal_frame_rate: int = 30
 
 
 @dataclasses.dataclass
@@ -437,6 +439,7 @@ def _build_tracking_options_c(
       track_buffer=tracking.track_buffer,
       match_threshold=tracking.match_threshold,
       enable_gmc=tracking.enable_gmc,
+      nominal_frame_rate=tracking.nominal_frame_rate,
   )
 
 
@@ -555,7 +558,7 @@ class YoloObjectDetector:
         options.category_denylist
     )
     # tiles_keepalive holds the explicit_tiles backing array; it must stay
-    # referenced through the MpYoloObjectDetectorCreate call below (the C
+    # referenced through the MpYoloObjectDetectorCreateV2 call below (the C
     # converter copies the tiles into a std::vector synchronously during Create).
     tiling_c, tiles_keepalive = _build_tiling_options_c(options.tiling)
     tracking_c = _build_tracking_options_c(options.tracking)
@@ -586,7 +589,7 @@ class YoloObjectDetector:
     )
 
     detector_handle = ctypes.c_void_p()
-    lib.MpYoloObjectDetectorCreate(
+    lib.MpYoloObjectDetectorCreateV2(
         ctypes.byref(ctypes_options), ctypes.byref(detector_handle)
     )
     return YoloObjectDetector(

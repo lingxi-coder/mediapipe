@@ -27,7 +27,7 @@ limitations under the License.
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
 
-static_assert(sizeof(MpTrackingOptions) == 28,
+static_assert(sizeof(MpTrackingOptions) == 32,
               "MpTrackingOptions layout pinned for the Python ctypes mirror");
 static_assert(offsetof(MpTrackingOptions, tracker_type) == 0, "");
 static_assert(offsetof(MpTrackingOptions, track_high_threshold) == 4, "");
@@ -36,6 +36,7 @@ static_assert(offsetof(MpTrackingOptions, new_track_threshold) == 12, "");
 static_assert(offsetof(MpTrackingOptions, track_buffer) == 16, "");
 static_assert(offsetof(MpTrackingOptions, match_threshold) == 20, "");
 static_assert(offsetof(MpTrackingOptions, enable_gmc) == 24, "");
+static_assert(offsetof(MpTrackingOptions, nominal_frame_rate) == 28, "");
 // Pin the bool field's WIDTH (1 byte): a c_bool->c_int swap on the Python side
 // would NOT change any offset (the 3 trailing pad bytes absorb the widening),
 // so an offset-only check cannot catch it; this size pin can.
@@ -56,8 +57,8 @@ static_assert(offsetof(MpYoloObjectDetectorOptions, tracking) == 184,
 // NOTE: these parent-layout pins (result_callback == 216, sizeof == 224) are
 // intentionally duplicated in the sibling tiling_options_abi_test.cc as
 // defense-in-depth; a parent reorder must update both.
-// result_callback is 8-byte aligned; tracking ends at 212 (184+28), so 4 pad
-// bytes precede result_callback at 216 (the layout is NOT contiguous at 212).
+// result_callback is 8-byte aligned and follows the appended 32-byte tracking
+// struct at offset 216.
 static_assert(offsetof(MpYoloObjectDetectorOptions, result_callback) == 216, "");
 static_assert(sizeof(MpYoloObjectDetectorOptions) == 224, "");
 

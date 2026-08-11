@@ -283,9 +283,17 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     const int W = meta_.input_width();
     const int C = meta_.input_channels();
     const int cap = meta_.batch_capacity();
-    RET_CHECK_EQ(frame.NumberOfChannels(), C)
+    const int frame_channels = frame.NumberOfChannels();
+    int alpha_to_rgb_conversion = -1;
+    if (C == 3 && frame.Format() == ImageFormat::SRGBA) {
+      alpha_to_rgb_conversion = cv::COLOR_RGBA2RGB;
+    } else if (C == 3 && frame.Format() == ImageFormat::SBGRA) {
+      alpha_to_rgb_conversion = cv::COLOR_BGRA2RGB;
+    }
+    const bool drop_alpha = alpha_to_rgb_conversion >= 0;
+    RET_CHECK(frame_channels == C || drop_alpha)
         << "model expects " << C << " input channels but the frame has "
-        << frame.NumberOfChannels();
+        << frame_channels;
     cv::Mat src = formats::MatView(&frame);
     const int fw = frame.Width();
     const int fh = frame.Height();
@@ -329,7 +337,13 @@ class StreamingTilesToTensorBatchCalculator : public Node {
         const TilePixelRoi& proi = geom->effective_pixel_rois[r];
         cv::Mat roi = src(cv::Rect(proi.x, proi.y, proi.width, proi.height));
         cv::resize(roi, resized_workspace_, cv::Size(W, H));
-        resized_workspace_.convertTo(f32_workspace_, CV_32FC(C), 1.0 / 255.0);
+        const cv::Mat* model_input = &resized_workspace_;
+        if (drop_alpha) {
+          cv::cvtColor(resized_workspace_, rgb_workspace_,
+                       alpha_to_rgb_conversion);
+          model_input = &rgb_workspace_;
+        }
+        model_input->convertTo(f32_workspace_, CV_32FC(C), 1.0 / 255.0);
         std::memcpy(buf + static_cast<size_t>(r) * H * W * C,
                     f32_workspace_.ptr<float>(0), sizeof(float) * H * W * C);
       }
@@ -718,6 +732,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   Timestamp batch_ts_ = Timestamp(0);
   std::shared_ptr<MemoryManager> memory_manager_;  // null unless pooling enabled
   cv::Mat resized_workspace_;  // reused across rows/batches when shape matches
+  cv::Mat rgb_workspace_;      // used only when CPU input has an alpha channel
   cv::Mat f32_workspace_;
 #if MEDIAPIPE_STREAMING_TILES_ANY_GPU_ZERO_COPY
   // Shared by both GPU branches (Cache 5 AHWB pool + diagnostic counters).

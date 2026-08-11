@@ -24,9 +24,16 @@ namespace mediapipe::tasks::c::vision::yolo_object_detector {
 // Copies a plain-C MpTrackingOptions into the C++ TrackingOptions sub-struct.
 // tracker_type maps 1:1 onto the C++ TrackerType enum (kBoxTracker=1,
 // kBotsort=2; 0 = unspecified, treated as BOX_TRACKER by the cc layer); the
-// remaining knobs are copied verbatim. Declared here so unit tests can verify
-// the C->C++ mapping without constructing a live graph.
+// remaining knobs except nominal_frame_rate are copied verbatim. The legacy
+// conversion deliberately defaults nominal_frame_rate to 30 without reading
+// it because that field occupied padding in the previous public ABI.
 void CppConvertToTrackingOptions(
+    const MpTrackingOptions& in,
+    ::mediapipe::tasks::vision::yolo_object_detector::
+        YoloObjectDetectorOptions::TrackingOptions* out);
+
+// V2 conversion reads nominal_frame_rate; zero retains the 30 FPS default.
+void CppConvertToTrackingOptionsV2(
     const MpTrackingOptions& in,
     ::mediapipe::tasks::vision::yolo_object_detector::
         YoloObjectDetectorOptions::TrackingOptions* out);

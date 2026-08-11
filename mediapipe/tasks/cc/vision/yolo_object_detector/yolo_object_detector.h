@@ -152,6 +152,7 @@ struct YoloObjectDetectorOptions {
     int track_buffer = 30;
     float match_threshold = 0.7f;
     bool enable_gmc = false;
+    int nominal_frame_rate = 30;
   };
   TrackingOptions tracking;
 

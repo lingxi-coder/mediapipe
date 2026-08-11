@@ -25,7 +25,7 @@ namespace {
 using CppTrackingOptions = ::mediapipe::tasks::vision::oriented_object_detector::
     OrientedObjectDetectorOptions::TrackingOptions;
 
-TEST(OrientedTrackingOptionsConverterTest, CopiesAllScalarFields) {
+TEST(OrientedTrackingOptionsConverterTest, V2CopiesAllScalarFields) {
   MpOrientedTrackingOptions in = {};
   in.tracker_type = 2;  // BOTSORT
   in.track_high_threshold = 0.55f;
@@ -34,9 +34,10 @@ TEST(OrientedTrackingOptionsConverterTest, CopiesAllScalarFields) {
   in.track_buffer = 25;
   in.match_threshold = 0.75f;
   in.enable_gmc = true;
+  in.nominal_frame_rate = 60;
 
   CppTrackingOptions out;
-  CppConvertToTrackingOptions(in, &out);
+  CppConvertToTrackingOptionsV2(in, &out);
 
   EXPECT_EQ(out.tracker_type, CppTrackingOptions::kBotsort);
   EXPECT_FLOAT_EQ(out.track_high_threshold, 0.55f);
@@ -45,6 +46,28 @@ TEST(OrientedTrackingOptionsConverterTest, CopiesAllScalarFields) {
   EXPECT_EQ(out.track_buffer, 25);
   EXPECT_FLOAT_EQ(out.match_threshold, 0.75f);
   EXPECT_TRUE(out.enable_gmc);
+  EXPECT_EQ(out.nominal_frame_rate, 60);
+}
+
+TEST(OrientedTrackingOptionsConverterTest, LegacyIgnoresNominalFrameRate) {
+  MpOrientedTrackingOptions in = {};
+  in.tracker_type = 2;
+  in.nominal_frame_rate = 240;
+
+  CppTrackingOptions out;
+  CppConvertToTrackingOptions(in, &out);
+
+  EXPECT_EQ(out.tracker_type, CppTrackingOptions::kBotsort);
+  EXPECT_EQ(out.nominal_frame_rate, 30);
+}
+
+TEST(OrientedTrackingOptionsConverterTest, V2DefaultsZeroNominalFrameRate) {
+  MpOrientedTrackingOptions in = {};
+  CppTrackingOptions out;
+
+  CppConvertToTrackingOptionsV2(in, &out);
+
+  EXPECT_EQ(out.nominal_frame_rate, 30);
 }
 
 TEST(OrientedTrackingOptionsConverterTest, MapsTrackerTypeEnumValues) {
@@ -58,6 +81,7 @@ TEST(OrientedTrackingOptionsConverterTest, MapsTrackerTypeEnumValues) {
   uns.tracker_type = 0;
   CppConvertToTrackingOptions(uns, &out);
   EXPECT_EQ(out.tracker_type, CppTrackingOptions::kTrackerUnspecified);
+  EXPECT_EQ(out.nominal_frame_rate, 30);
 }
 
 }  // namespace

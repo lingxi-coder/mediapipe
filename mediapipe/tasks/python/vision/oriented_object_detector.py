@@ -138,8 +138,8 @@ class MpOrientedTilingOptionsC(ctypes.Structure):
 class MpOrientedTrackingOptionsC(ctypes.Structure):
   """Byte-matches struct MpOrientedTrackingOptions in the OBB C header.
 
-  Layout pinned by tracking_options_abi_test.cc (sizeof 28; offsets
-  0/4/8/12/16/20/24; enable_gmc c_bool = 1 byte). tracker_type is c_int with
+  Layout pinned by tracking_options_abi_test.cc (sizeof 32; offsets
+  0/4/8/12/16/20/24/28; enable_gmc c_bool = 1 byte). tracker_type is c_int with
   0=unspecified->no tracking, 2=BOTSORT (1=BOX_TRACKER is rejected at Create).
   """
 
@@ -151,6 +151,7 @@ class MpOrientedTrackingOptionsC(ctypes.Structure):
       ('track_buffer', ctypes.c_int),
       ('match_threshold', ctypes.c_float),
       ('enable_gmc', ctypes.c_bool),
+      ('nominal_frame_rate', ctypes.c_int),
   ]
 
 
@@ -183,7 +184,7 @@ class MpOrientedObjectDetectorOptionsC(ctypes.Structure):
 
 _CTYPES_SIGNATURES = (
     mediapipe_c_utils.CStatusFunction(
-        'MpOrientedObjectDetectorCreate',
+        'MpOrientedObjectDetectorCreateV2',
         (
             ctypes.POINTER(MpOrientedObjectDetectorOptionsC),
             ctypes.POINTER(ctypes.c_void_p),
@@ -293,6 +294,7 @@ class TrackingOptions:
   track_buffer: int = 30
   match_threshold: float = 0.7
   enable_gmc: bool = False
+  nominal_frame_rate: int = 30
 
 
 @dataclasses.dataclass
@@ -406,6 +408,7 @@ def _build_oriented_tracking_options_c(
       track_buffer=tracking.track_buffer,
       match_threshold=tracking.match_threshold,
       enable_gmc=tracking.enable_gmc,
+      nominal_frame_rate=tracking.nominal_frame_rate,
   )
 
 
@@ -530,7 +533,7 @@ class OrientedObjectDetector:
         options.category_denylist
     )
     # tiles_keepalive holds the explicit_tiles backing array; it must stay
-    # referenced through the MpOrientedObjectDetectorCreate call below (the C
+    # referenced through the MpOrientedObjectDetectorCreateV2 call below (the C
     # converter copies the tiles into a std::vector synchronously during Create).
     tiling_c, tiles_keepalive = _build_oriented_tiling_options_c(options.tiling)
     tracking_c = _build_oriented_tracking_options_c(options.tracking)
@@ -562,7 +565,7 @@ class OrientedObjectDetector:
     )
 
     detector_handle = ctypes.c_void_p()
-    lib.MpOrientedObjectDetectorCreate(
+    lib.MpOrientedObjectDetectorCreateV2(
         ctypes.byref(ctypes_options), ctypes.byref(detector_handle)
     )
     return OrientedObjectDetector(

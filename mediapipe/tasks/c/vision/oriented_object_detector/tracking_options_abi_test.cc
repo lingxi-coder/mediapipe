@@ -32,7 +32,7 @@ limitations under the License.
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/tasks/c/vision/oriented_object_detector/oriented_object_detector.h"
 
-static_assert(sizeof(MpOrientedTrackingOptions) == 28,
+static_assert(sizeof(MpOrientedTrackingOptions) == 32,
               "MpOrientedTrackingOptions layout pinned for the Python ctypes mirror");
 static_assert(offsetof(MpOrientedTrackingOptions, tracker_type) == 0, "");
 static_assert(offsetof(MpOrientedTrackingOptions, track_high_threshold) == 4, "");
@@ -41,6 +41,7 @@ static_assert(offsetof(MpOrientedTrackingOptions, new_track_threshold) == 12, ""
 static_assert(offsetof(MpOrientedTrackingOptions, track_buffer) == 16, "");
 static_assert(offsetof(MpOrientedTrackingOptions, match_threshold) == 20, "");
 static_assert(offsetof(MpOrientedTrackingOptions, enable_gmc) == 24, "");
+static_assert(offsetof(MpOrientedTrackingOptions, nominal_frame_rate) == 28, "");
 // Pin the bool field's WIDTH (1 byte): a c_bool->c_int swap on the Python side
 // would NOT change any offset (the 3 trailing pad bytes absorb the widening),
 // so an offset-only check cannot catch it; this size pin can.
@@ -58,8 +59,6 @@ static_assert(offsetof(MpOrientedObjectDetectorOptions, tracking) ==
 // this fails loudly and the Python ctypes mirror must be updated in lockstep.
 static_assert(offsetof(MpOrientedObjectDetectorOptions, tracking) == 184,
               "tracking offset pinned for the Python ctypes mirror");
-// result_callback is 8-byte aligned; tracking ends at 212 (184+28), so 4 pad
-// bytes precede result_callback at 216 (the layout is NOT contiguous at 212).
 static_assert(offsetof(MpOrientedObjectDetectorOptions, result_callback) == 216, "");
 static_assert(sizeof(MpOrientedObjectDetectorOptions) == 224, "");
 

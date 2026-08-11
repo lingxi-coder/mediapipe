@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "mediapipe/tasks/cc/vision/oriented_object_detector/oriented_object_detector.h"
 
+#include <cmath>
 #include <functional>
 #include <map>
 #include <memory>
@@ -49,6 +50,39 @@ namespace tasks {
 namespace vision {
 namespace oriented_object_detector {
 namespace {
+
+absl::Status ValidateBotsortOptions(
+    const proto::OrientedObjectDetectorOptions::TrackingOptions& tracking) {
+  const auto valid = [](float value) {
+    return std::isfinite(value) && value >= 0.0F && value <= 1.0F;
+  };
+  if (!valid(tracking.track_high_threshold()) ||
+      !valid(tracking.track_low_threshold()) ||
+      !valid(tracking.new_track_threshold()) ||
+      !valid(tracking.match_threshold())) {
+    return absl::InvalidArgumentError(
+        "tracking thresholds must be finite and in [0, 1].");
+  }
+  if (tracking.track_low_threshold() > tracking.track_high_threshold()) {
+    return absl::InvalidArgumentError(
+        "tracking.track_low_threshold must be <= tracking.track_high_threshold.");
+  }
+  if (tracking.track_buffer() < 0 || tracking.track_buffer() > 255) {
+    return absl::InvalidArgumentError(
+        "tracking.track_buffer must be in [0, 255].");
+  }
+  if (tracking.nominal_frame_rate() < 1 ||
+      tracking.nominal_frame_rate() > 255) {
+    return absl::InvalidArgumentError(
+        "tracking.nominal_frame_rate must be in [1, 255].");
+  }
+  if (std::floor(static_cast<double>(tracking.nominal_frame_rate()) / 30.0 *
+                 tracking.track_buffer()) > 255.0) {
+    return absl::InvalidArgumentError(
+        "effective lost-track window must be <= 255 frames.");
+  }
+  return absl::OkStatus();
+}
 
 constexpr char kOrientedDetectionsOutStreamName[] = "oriented_detections_out";
 constexpr char kOrientedDetectionsTag[] = "ORIENTED_DETECTIONS";
@@ -164,6 +198,7 @@ ConvertOrientedObjectDetectorOptionsToProto(
   tracking->set_track_buffer(options->tracking.track_buffer);
   tracking->set_match_threshold(options->tracking.match_threshold);
   tracking->set_enable_gmc(options->tracking.enable_gmc);
+  tracking->set_nominal_frame_rate(options->tracking.nominal_frame_rate);
   return options_proto;
 }
 
@@ -220,6 +255,7 @@ OrientedObjectDetector::Create(
   }
   if (obb_tracker ==
       OrientedObjectDetectorOptionsProto::TrackingOptions::BOTSORT) {
+    ABSL_RETURN_IF_ERROR(ValidateBotsortOptions(options_proto->tracking()));
     if (options->running_mode == core::RunningMode::IMAGE) {
       return CreateStatusWithPayload(
           absl::StatusCode::kInvalidArgument,

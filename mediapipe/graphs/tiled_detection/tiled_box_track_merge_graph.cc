@@ -16,6 +16,7 @@
 #include "absl/status/statusor.h"
 #include "mediapipe/calculators/core/clip_vector_size_calculator.pb.h"
 #include "mediapipe/calculators/tensor/tiled_frame_suppression_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/builder.h"
 #include "mediapipe/framework/calculator.pb.h"
 #include "mediapipe/framework/formats/detection.pb.h"
@@ -60,6 +61,8 @@ class TiledBoxTrackMergeGraph : public Subgraph {
     graph.In("DETECTIONS") >> merge.In("DETECTIONS");
     graph.In("BATCH_INFO") >> merge.In("BATCH_INFO");
     auto merged_fresh = merge.Out("DETECTIONS").Cast<std::vector<Detection>>();
+    auto observed_rois =
+        merge.Out("OBSERVED_ROIS").Cast<std::vector<TilePixelRoi>>();
 
     auto& track = graph.AddNode("mediapipe.tiled_detection.TiledTrackingGraph");
     if (options.has_tracking()) {
@@ -67,6 +70,11 @@ class TiledBoxTrackMergeGraph : public Subgraph {
     }
     graph.In("IMAGE") >> track.In("IMAGE");
     merged_fresh >> track.In("DETECTIONS");
+    if (options.tracking().tracker_type() ==
+        TiledTrackingGraphOptions::BOTSORT) {
+      graph.In("REFRESH") >> track.In("REFRESH");
+      observed_rois >> track.In("OBSERVED_ROIS");
+    }
 
     auto& nms = graph.AddNode("TiledFrameSuppressionCalculator");
     auto& no = nms.GetOptions<TiledFrameSuppressionCalculatorOptions>();

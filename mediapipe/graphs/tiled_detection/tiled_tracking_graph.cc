@@ -15,6 +15,7 @@
 #include "absl/status/statusor.h"
 #include "mediapipe/calculators/tensor/botsort_tracking_calculator.pb.h"
 #include "mediapipe/calculators/tensor/detection_label_id_codec_calculator.pb.h"
+#include "mediapipe/calculators/tensor/tiling_types.h"
 #include "mediapipe/framework/api2/builder.h"
 #include "mediapipe/framework/calculator.pb.h"
 #include "mediapipe/framework/formats/detection.pb.h"
@@ -63,8 +64,14 @@ class TiledTrackingGraph : public Subgraph {
       bo.set_track_buffer(opts.track_buffer());
       bo.set_match_threshold(opts.match_threshold());
       bo.set_enable_gmc(opts.enable_gmc());
+      bo.set_nominal_frame_rate(opts.nominal_frame_rate());
+      auto refresh = graph.In("REFRESH").Cast<bool>();
+      auto observed_rois =
+          graph.In("OBSERVED_ROIS").Cast<std::vector<TilePixelRoi>>();
       image >> bot.In("IMAGE");
       fresh >> bot.In("DETECTIONS");
+      refresh >> bot.In("REFRESH");
+      observed_rois >> bot.In("OBSERVED_ROIS");
 
       // BoTSORT already emits exactly one packet per source frame, so the tick
       // gate is not needed to enforce the 1:1 cadence here. It is retained for

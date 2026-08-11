@@ -3,6 +3,7 @@
 #include <map>
 #include <numeric>
 #include <string>
+#include <vector>
 
 // .clang-format off
 #include "DataType.h"
@@ -24,15 +25,28 @@ public:
     virtual ~GMC_Algorithm() = default;
     virtual HomographyMatrix
     apply(const cv::Mat &frame_raw,
-          const std::vector<Detection> &detections) = 0;
+          const std::vector<Detection> &detections,
+          const std::vector<cv::Rect_<float>> &foreground_boxes) = 0;
 };
+
+namespace botsort_internal {
+
+// Builds the single-channel mask used by sparse GMC. Coordinates in boxes are
+// in source-frame pixels; the returned mask is in downscaled-frame pixels.
+cv::Mat BuildForegroundMask(
+        const cv::Size &downscaled_size, float downscale,
+        const std::vector<cv::Rect_<float>> &foreground_boxes);
+
+}  // namespace botsort_internal
 
 class ORB_GMC : public GMC_Algorithm
 {
 public:
     explicit ORB_GMC(const ORB_Params &orb_config);
     HomographyMatrix apply(const cv::Mat &frame_raw,
-                           const std::vector<Detection> &detections) override;
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes)
+            override;
 
 
 private:
@@ -60,7 +74,9 @@ class ECC_GMC : public GMC_Algorithm
 public:
     explicit ECC_GMC(const ECC_Params &config);
     HomographyMatrix apply(const cv::Mat &frame_raw,
-                           const std::vector<Detection> &detections) override;
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes)
+            override;
 
 
 private:
@@ -84,7 +100,9 @@ class SparseOptFlow_GMC : public GMC_Algorithm
 public:
     explicit SparseOptFlow_GMC(const SparseOptFlow_Params &config);
     HomographyMatrix apply(const cv::Mat &frame_raw,
-                           const std::vector<Detection> &detections) override;
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes)
+            override;
 
 
 private:
@@ -112,7 +130,9 @@ class OptFlowModified_GMC : public GMC_Algorithm
 public:
     explicit OptFlowModified_GMC(const OptFlowModified_Params &config);
     HomographyMatrix apply(const cv::Mat &frame_raw,
-                           const std::vector<Detection> &detections) override;
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes)
+            override;
 
 
 private:
@@ -130,7 +150,9 @@ class OpenCV_VideoStab_GMC : public GMC_Algorithm
 public:
     explicit OpenCV_VideoStab_GMC(const OpenCV_VideoStab_GMC_Params &config);
     HomographyMatrix apply(const cv::Mat &frame_raw,
-                           const std::vector<Detection> &detections) override;
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes)
+            override;
 
 
 private:
@@ -171,7 +193,8 @@ public:
      * @return HomographyMatrix Predicted homography matrix
      */
     HomographyMatrix apply(const cv::Mat &frame_raw,
-                           const std::vector<Detection> &detections);
+                           const std::vector<Detection> &detections,
+                           const std::vector<cv::Rect_<float>> &foreground_boxes);
 
 
 public:

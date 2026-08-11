@@ -30,12 +30,45 @@
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/image_frame_opencv.h"
 #include "mediapipe/framework/formats/oriented_detection.pb.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "opencv2/core.hpp"
 
 namespace mediapipe {
 namespace api2 {
 
 namespace {
+
+absl::Status ValidateOptions(
+    const BotsortTrackingCalculatorOptions& opts) {
+  const auto valid = [](float value) {
+    return std::isfinite(value) && value >= 0.0F && value <= 1.0F;
+  };
+  if (!valid(opts.track_high_threshold()) ||
+      !valid(opts.track_low_threshold()) ||
+      !valid(opts.new_track_threshold()) || !valid(opts.match_threshold())) {
+    return absl::InvalidArgumentError(
+        "BoTSORT thresholds must be finite and in [0, 1].");
+  }
+  if (opts.track_low_threshold() > opts.track_high_threshold()) {
+    return absl::InvalidArgumentError(
+        "track_low_threshold must be <= track_high_threshold.");
+  }
+  if (opts.track_buffer() < 0 || opts.track_buffer() > 255) {
+    return absl::InvalidArgumentError("track_buffer must be in [0, 255].");
+  }
+  if (opts.nominal_frame_rate() < 1 || opts.nominal_frame_rate() > 255) {
+    return absl::InvalidArgumentError(
+        "nominal_frame_rate must be in [1, 255].");
+  }
+  if (static_cast<int>(std::floor(
+          static_cast<double>(opts.nominal_frame_rate()) / 30.0 *
+          opts.track_buffer())) > 255) {
+    return absl::InvalidArgumentError(
+        "effective lost-track window must be <= 255 frames.");
+  }
+  return absl::OkStatus();
+}
+
 // AABB (pixel tlwh) enclosing a rotated rect given in normalized space.
 cv::Rect_<float> OrientedToAabbTlwh(const OrientedDetection& d, float img_w,
                                     float img_h) {
@@ -77,12 +110,14 @@ class OrientedBotsortTrackingCalculator : public Node {
 
   absl::Status Open(CalculatorContext* cc) override {
     const auto& opts = cc->Options<BotsortTrackingCalculatorOptions>();
+    ABSL_RETURN_IF_ERROR(ValidateOptions(opts));
     TrackerParams params;
     params.track_high_thresh = opts.track_high_threshold();
     params.track_low_thresh = opts.track_low_threshold();
     params.new_track_thresh = opts.new_track_threshold();
     params.track_buffer = opts.track_buffer();
     params.match_thresh = opts.match_threshold();
+    params.frame_rate = opts.nominal_frame_rate();
     params.gmc_enabled = opts.enable_gmc();
     params.reid_enabled = false;
     Config<GMC_Params> gmc_config = std::monostate{};

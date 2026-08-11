@@ -1,5 +1,6 @@
 #include "track.h"
 
+#include <atomic>
 #include <utility>
 
 #include "profiler.h"
@@ -173,9 +174,8 @@ void Track::_update_features(const std::shared_ptr<FeatureVector> &feat)
 
 int Track::next_id()
 {
-    static int _count = 0;
-    _count++;
-    return _count;
+    static std::atomic<int> count{0};
+    return count.fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 void Track::mark_lost()

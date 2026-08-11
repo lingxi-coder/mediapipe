@@ -102,6 +102,44 @@ BoTSORT::BoTSORT(const Config<TrackerParams> &tracker_config,
 std::vector<std::shared_ptr<Track>>
 BoTSORT::track(const std::vector<Detection> &detections, const cv::Mat &frame)
 {
+    return track_observed(
+            detections, frame,
+            {cv::Rect(0, 0, frame.cols, frame.rows)});
+}
+
+
+std::vector<std::shared_ptr<Track>>
+BoTSORT::predict_only(const cv::Mat &frame)
+{
+    PROFILE_FUNCTION();
+    _frame_id++;
+
+    std::vector<std::shared_ptr<Track>> unconfirmed_tracks;
+    std::vector<std::shared_ptr<Track>> tracks_pool;
+    _predict_tracks(frame, {}, &tracks_pool, &unconfirmed_tracks);
+
+    // A SKIP must not change active/unconfirmed state. Updating the frame of
+    // active tracks makes a later observed miss start a fresh lost interval;
+    // retained lost tracks intentionally keep their last observed frame so
+    // their retention window ages globally.
+    for (const std::shared_ptr<Track> &track: _tracked_tracks)
+    {
+        if (track->state == TrackState::Tracked)
+            track->frame_id = _frame_id;
+    }
+
+    std::vector<std::shared_ptr<Track>> removed_tracks;
+    _expire_lost_tracks(&removed_tracks);
+    _lost_tracks = _remove_from_list(_lost_tracks, removed_tracks);
+    return _output_tracks();
+}
+
+
+std::vector<std::shared_ptr<Track>>
+BoTSORT::track_observed(const std::vector<Detection> &detections,
+                        const cv::Mat &frame,
+                        const std::vector<cv::Rect> &observed_rois)
+{
     PROFILE_FUNCTION();
     ////////////////// CREATE TRACK OBJECT FOR ALL THE DETECTIONS //////////////////
     // For all detections, extract features, create tracks and classify on the segregate of confidence
@@ -112,10 +150,10 @@ BoTSORT::track(const std::vector<Detection> &detections, const cv::Mat &frame)
     detections_low_conf.reserve(detections.size()),
             detections_high_conf.reserve(detections.size());
 
+    std::vector<Detection> sanitized_detections = detections;
     if (!detections.empty())
     {
-        for (Detection &detection:
-             const_cast<std::vector<Detection> &>(detections))
+        for (Detection &detection: sanitized_detections)
         {
             detection.bbox_tlwh.x = std::max(0.0f, detection.bbox_tlwh.x);
             detection.bbox_tlwh.y = std::max(0.0f, detection.bbox_tlwh.y);
@@ -153,37 +191,13 @@ BoTSORT::track(const std::vector<Detection> &detections, const cv::Mat &frame)
         }
     }
 
-    // Segregate tracks in unconfirmed and tracked tracks
-    std::vector<std::shared_ptr<Track>> unconfirmed_tracks, tracked_tracks;
-    for (const std::shared_ptr<Track> &track: _tracked_tracks)
-    {
-        if (!track->is_activated)
-        {
-            unconfirmed_tracks.push_back(track);
-        }
-        else
-        {
-            tracked_tracks.push_back(track);
-        }
-    }
-    ////////////////// CREATE TRACK OBJECT FOR ALL THE DETECTIONS //////////////////
-
-
+    // The shared prediction helper owns the tracked/unconfirmed partition so
+    // callers cannot accidentally predict an unconfirmed track twice.
+    std::vector<std::shared_ptr<Track>> unconfirmed_tracks;
     ////////////////// Apply KF predict and GMC before running association algorithm //////////////////
-    // Merge currently tracked tracks and lost tracks
     std::vector<std::shared_ptr<Track>> tracks_pool;
-    tracks_pool = _merge_track_lists(tracked_tracks, _lost_tracks);
-
-    // Predict the location of the tracks with KF (even for lost tracks)
-    Track::multi_predict(tracks_pool, *_kalman_filter);
-
-    // Estimate camera motion and apply camera motion compensation
-    if (_gmc_enabled)
-    {
-        HomographyMatrix H = _gmc_algo->apply(frame, detections);
-        Track::multi_gmc(tracks_pool, H);
-        Track::multi_gmc(unconfirmed_tracks, H);
-    }
+    _predict_tracks(frame, sanitized_detections, &tracks_pool,
+                    &unconfirmed_tracks);
     ////////////////// Apply KF predict and GMC before running association algorithm //////////////////
 
 
@@ -293,10 +307,19 @@ BoTSORT::track(const std::vector<Detection> &detections, const cv::Mat &frame)
     {
         const std::shared_ptr<Track> &track =
                 unmatched_tracks_after_1st_association[unmatched_track_index];
-        if (track->state != TrackState::Lost)
+        if (track->state != TrackState::Lost &&
+            _center_is_observed(track, observed_rois))
         {
             track->mark_lost();
             lost_tracks.push_back(track);
+        }
+        else if (track->state == TrackState::Tracked)
+        {
+            // This refresh supplied no negative evidence for a track outside
+            // every observed ROI. Keep its active clock aligned with the
+            // global frame clock so a later observed miss starts a new lost
+            // retention interval instead of inheriting stale time.
+            track->frame_id = _frame_id;
         }
     }
     ////////////////// Second association, with low score detection boxes //////////////////
@@ -363,8 +386,11 @@ BoTSORT::track(const std::vector<Detection> &detections, const cv::Mat &frame)
     {
         const std::shared_ptr<Track> &track =
                 unconfirmed_tracks[unmatched_track_index];
-        track->mark_removed();
-        removed_tracks.push_back(track);
+        if (_center_is_observed(track, observed_rois))
+        {
+            track->mark_removed();
+            removed_tracks.push_back(track);
+        }
     }
     ////////////////// Deal with unconfirmed tracks //////////////////
 
@@ -440,6 +466,106 @@ BoTSORT::track(const std::vector<Detection> &detections, const cv::Mat &frame)
     }
     ////////////////// Update output tracks //////////////////
 
+    return output_tracks;
+}
+
+
+bool BoTSORT::_center_is_observed(
+        const std::shared_ptr<Track> &track,
+        const std::vector<cv::Rect> &observed_rois)
+{
+    const std::vector<float> tlwh = track->get_tlwh();
+    if (tlwh.size() < 4)
+        return false;
+    const float center_x = tlwh[0] + tlwh[2] / 2.0F;
+    const float center_y = tlwh[1] + tlwh[3] / 2.0F;
+    for (const cv::Rect &roi: observed_rois)
+    {
+        if (center_x >= roi.x && center_y >= roi.y &&
+            center_x < roi.x + roi.width && center_y < roi.y + roi.height)
+            return true;
+    }
+    return false;
+}
+
+
+void BoTSORT::_predict_tracks(
+        const cv::Mat &frame, const std::vector<Detection> &detections,
+        std::vector<std::shared_ptr<Track>> *tracks_pool,
+        std::vector<std::shared_ptr<Track>> *unconfirmed_tracks)
+{
+    std::vector<std::shared_ptr<Track>> tracked_tracks;
+    for (const std::shared_ptr<Track> &track: _tracked_tracks)
+    {
+        if (!track->is_activated)
+            unconfirmed_tracks->push_back(track);
+        else
+            tracked_tracks.push_back(track);
+    }
+
+    *tracks_pool = _merge_track_lists(tracked_tracks, _lost_tracks);
+    Track::multi_predict(*tracks_pool, *_kalman_filter);
+    if (_gmc_enabled)
+    {
+        const std::vector<cv::Rect_<float>> foreground_boxes =
+                _foreground_boxes(detections, *tracks_pool,
+                                  *unconfirmed_tracks);
+        HomographyMatrix H =
+                _gmc_algo->apply(frame, detections, foreground_boxes);
+        Track::multi_gmc(*tracks_pool, H);
+        Track::multi_gmc(*unconfirmed_tracks, H);
+    }
+}
+
+
+std::vector<cv::Rect_<float>> BoTSORT::_foreground_boxes(
+        const std::vector<Detection> &detections,
+        const std::vector<std::shared_ptr<Track>> &tracks_pool,
+        const std::vector<std::shared_ptr<Track>> &unconfirmed_tracks) const
+{
+    std::vector<cv::Rect_<float>> boxes;
+    boxes.reserve(detections.size() + tracks_pool.size() +
+                  unconfirmed_tracks.size());
+    for (const Detection &detection: detections)
+        boxes.push_back(detection.bbox_tlwh);
+    for (const std::shared_ptr<Track> &track: tracks_pool)
+    {
+        const std::vector<float> tlwh = track->get_tlwh();
+        if (tlwh.size() >= 4)
+            boxes.emplace_back(tlwh[0], tlwh[1], tlwh[2], tlwh[3]);
+    }
+    for (const std::shared_ptr<Track> &track: unconfirmed_tracks)
+    {
+        const std::vector<float> tlwh = track->get_tlwh();
+        if (tlwh.size() >= 4)
+            boxes.emplace_back(tlwh[0], tlwh[1], tlwh[2], tlwh[3]);
+    }
+    return boxes;
+}
+
+
+void BoTSORT::_expire_lost_tracks(
+        std::vector<std::shared_ptr<Track>> *removed_tracks)
+{
+    for (const std::shared_ptr<Track> &track: _lost_tracks)
+    {
+        if (_frame_id - track->end_frame() > _max_time_lost)
+        {
+            track->mark_removed();
+            removed_tracks->push_back(track);
+        }
+    }
+}
+
+
+std::vector<std::shared_ptr<Track>> BoTSORT::_output_tracks() const
+{
+    std::vector<std::shared_ptr<Track>> output_tracks;
+    for (const std::shared_ptr<Track> &track: _tracked_tracks)
+    {
+        if (track->is_activated && track->state == TrackState::Tracked)
+            output_tracks.push_back(track);
+    }
     return output_tracks;
 }
 
