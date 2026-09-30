@@ -56,6 +56,9 @@ class TiledBatchGlWriter {
 
   // sub_rect: the tile's RotatedRect over the source texture (built from the
   //   effective pixel ROI; same convention as the CPU path / image_to_tensor).
+  //   Width and height must be positive. Axis-aligned pixel ROIs replicate
+  //   their own edge pixels during resize; rotated ROIs retain the reference
+  //   converter's texture-sampling behavior.
   // texture_size: source texture (H, W) in pixels.
   // tile_row: destination batch row in [0, N).
   // alpha/beta: value-range normalization (e.g. 1/255, 0 for [0,1]).

@@ -327,7 +327,8 @@ class OrientedObjectDetectorOptions:
     class_agnostic_nms: If True, NMS is applied across all classes jointly.
     layout: The output tensor layout of the OBB detect head. Default
       CHANNELS_FIRST.
-    num_classes: Number of classes. If 0, derived from model metadata.
+    num_classes: Number of classes. Must be greater than 0. Metadata derivation
+      is not yet implemented.
     tiling: Static tiling configuration. Defaults to disabled (1x1).
     tracking: Tracker configuration for the tiled VIDEO/LIVE_STREAM path.
       Defaults to no tracking (TrackerType.UNSPECIFIED).
@@ -419,14 +420,14 @@ class OrientedObjectDetector:
 
   Example usage:
     detector = OrientedObjectDetector.create_from_model_path(
-        '/path/to/model.tflite'
+        '/path/to/model.tflite', num_classes=15
     )
     result = detector.detect(image)
     detector.close()
 
   Or as a context manager:
     with OrientedObjectDetector.create_from_model_path(
-        '/path/to/model.tflite'
+        '/path/to/model.tflite', num_classes=15
     ) as d:
       result = d.detect(image)
   """
@@ -463,7 +464,7 @@ class OrientedObjectDetector:
 
   @classmethod
   def create_from_model_path(
-      cls, model_path: str
+      cls, model_path: str, *, num_classes: int
   ) -> 'OrientedObjectDetector':
     """Creates an `OrientedObjectDetector` object from a TFLite model path.
 
@@ -472,19 +473,27 @@ class OrientedObjectDetector:
 
     Args:
       model_path: Path to the model.
+      num_classes: Number of classes in the model's detection head. Must be a
+        positive integer; it is not inferred from model metadata.
 
     Returns:
-      `OrientedObjectDetector` object created from the model file and default
-      `OrientedObjectDetectorOptions`.
+      `OrientedObjectDetector` object created from the model file and class count,
+      using the remaining default `OrientedObjectDetectorOptions`.
 
     Raises:
-      ValueError: If failed to create `OrientedObjectDetector` object from the
-        provided file such as invalid file path.
+      TypeError: If `num_classes` is not an integer.
+      ValueError: If `num_classes` is not positive, or if failed to create
+        `OrientedObjectDetector` from the provided file, such as invalid file path.
       RuntimeError: If other types of error occurred.
     """
+    if isinstance(num_classes, bool) or not isinstance(num_classes, int):
+      raise TypeError('num_classes must be a positive integer.')
+    if num_classes <= 0:
+      raise ValueError('num_classes must be greater than 0.')
     options = OrientedObjectDetectorOptions(
         base_options=_BaseOptions(model_asset_path=model_path),
         running_mode=_RunningMode.IMAGE,
+        num_classes=num_classes,
     )
     return cls.create_from_options(options)
 

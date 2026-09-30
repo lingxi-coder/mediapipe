@@ -26,6 +26,9 @@ export declare interface Detection {
   /** The bounding box of the detected objects. */
   boundingBox?: BoundingBox;
 
+  /** Optional persistent track ID emitted by tracking. */
+  trackId?: string;
+
   /**
    * List of keypoints associated with the detection. Keypoints represent
    * interesting points related to the detection. For example, the keypoints

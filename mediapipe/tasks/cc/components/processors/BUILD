@@ -525,6 +525,7 @@ cc_test(
         ":tiled_tracking_graph",
         "//mediapipe/calculators/core:packet_presence_calculator",
         "//mediapipe/calculators/video:botsort_tracking_calculator",
+        "//mediapipe/calculators/video:botsort_tracking_calculator_cc_proto",
         "//mediapipe/calculators/video:oriented_botsort_tracking_calculator",
         "//mediapipe/util:tiling_matrix_utils",
         "//mediapipe/framework/formats:tiling_types",

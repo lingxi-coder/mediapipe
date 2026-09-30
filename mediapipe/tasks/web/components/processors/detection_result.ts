@@ -59,5 +59,9 @@ export function convertFromDetectionProto(source: DetectionProto): Detection {
     }
   }
 
+  if (source.hasTrackId()) {
+    detection.trackId = source.getTrackId();
+  }
+
   return detection;
 }

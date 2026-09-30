@@ -25,8 +25,8 @@
 namespace mediapipe {
 namespace api2 {
 
-// Frame-level suppression: concatenate fresh tiled detections + tracker-updated
-// detections and run ONE global NMS. Safe bypass: when bypass_single_tile and
+// Frame-level suppression: globally suppress fresh tiled detections and
+// tracker-updated detections. Safe bypass: when bypass_single_tile and
 // there is exactly one valid tile row (NUM_TILES <= 1) and no tracker
 // detections, pass the fresh detections through unchanged (already tile-local
 // NMSed; nothing cross-source to dedup).
@@ -60,19 +60,46 @@ class TiledFrameSuppressionCalculator : public Node {
       kOut(cc).Send(std::move(fresh));  // bypass: nothing cross-source to dedup
       return absl::OkStatus();
     }
-    std::vector<Detection> combined = std::move(fresh);
+    const bool gap_fill_only =
+        tracker_present && options_.tracker_is_gap_fill_only();
+    // In gap-fill mode, associate IDs only with fresh boxes that survive NMS.
+    // Keep the original candidates for deciding whether a tracker box fills a
+    // gap: overlap with a suppressed fresh candidate still disqualifies it.
+    std::vector<Detection> combined =
+        gap_fill_only
+            ? GreedyDetectionNms(fresh, options_.iou_threshold(),
+                                 options_.class_agnostic())
+            : std::move(fresh);
     if (tracker_present) {
       const auto& tr = *kInTracker(cc);
-      if (options_.tracker_is_gap_fill_only()) {
+      if (gap_fill_only) {
         // Keep only tracker boxes that don't overlap any fresh box (gap-fill).
         // When a tracker box DOES overlap a fresh box, fresh-wins geometry is
         // unchanged, but we propagate the tracker's persistent track_id onto
-        // the best-IoU fresh box (Approach A). No-op when the tracker carries
-        // no track_id (e.g. the optical-flow BoxTracker path). The inner loop
-        // is bounded by the original fresh count so appended tracker boxes are
-        // never treated as "fresh".
+        // the best-IoU surviving fresh box. No-op when the tracker carries no
+        // track_id (e.g. the optical-flow BoxTracker path). The association loop
+        // is bounded by the surviving fresh count so appended tracker boxes
+        // are never treated as "fresh".
         const size_t fresh_count = combined.size();
         for (const Detection& t : tr) {
+          const auto same_class = [&](const Detection& f) {
+            return options_.class_agnostic() || t.label_id_size() == 0 ||
+                   f.label_id_size() == 0 || t.label_id(0) == f.label_id(0);
+          };
+          bool overlaps_fresh = false;
+          for (const Detection& f : fresh) {
+            if (same_class(f) &&
+                DetectionRelativeIoU(t, f) >= options_.iou_threshold()) {
+              overlaps_fresh = true;
+              break;
+            }
+          }
+          if (!overlaps_fresh) {
+            combined.push_back(t);  // gap-fill: keeps its own track_id
+            continue;
+          }
+          if (!t.has_track_id()) continue;
+
           int best_idx = -1;
           // Seed with the IoU threshold and accept on `iou >= best_iou`: the
           // boundary is intentionally inclusive, so a fresh box at exactly the
@@ -81,19 +108,14 @@ class TiledFrameSuppressionCalculator : public Node {
           float best_iou = options_.iou_threshold();
           for (size_t i = 0; i < fresh_count; ++i) {
             const Detection& f = combined[i];
-            if (!options_.class_agnostic() && t.label_id_size() > 0 &&
-                f.label_id_size() > 0 && t.label_id(0) != f.label_id(0)) {
-              continue;
-            }
+            if (!same_class(f)) continue;
             const float iou = DetectionRelativeIoU(t, f);
             if (iou >= best_iou) {
               best_iou = iou;
               best_idx = static_cast<int>(i);
             }
           }
-          if (best_idx < 0) {
-            combined.push_back(t);  // gap-fill: keeps its own track_id
-          } else if (t.has_track_id() && !combined[best_idx].has_track_id()) {
+          if (best_idx >= 0 && !combined[best_idx].has_track_id()) {
             combined[best_idx].set_track_id(t.track_id());
           }
         }

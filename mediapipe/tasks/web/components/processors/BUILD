@@ -78,6 +78,36 @@ ts_library(
     ],
 )
 
+jasmine_node_test(
+    name = "detection_result_test",
+    srcs = [":detection_result_test_lib"],
+)
+
+ts_library(
+    name = "oriented_detection_result",
+    srcs = ["oriented_detection_result.ts"],
+    deps = [
+        "//mediapipe/framework/formats:oriented_detection_jspb_proto",
+        "//mediapipe/tasks/web/components/containers:oriented_detection_result",
+    ],
+)
+
+ts_library(
+    name = "oriented_detection_result_test_lib",
+    testonly = True,
+    srcs = ["oriented_detection_result_test.ts"],
+    deps = [
+        ":oriented_detection_result",
+        "//mediapipe/framework/formats:oriented_detection_jspb_proto",
+        "//mediapipe/tasks/web/components/containers:oriented_detection_result",
+    ],
+)
+
+jasmine_node_test(
+    name = "oriented_detection_result_test",
+    srcs = [":oriented_detection_result_test_lib"],
+)
+
 ts_library(
     name = "embedder_result",
     srcs = ["embedder_result.ts"],

@@ -18,7 +18,20 @@
 #include <cstdint>
 #include <vector>
 
+#include "mediapipe/gpu/multi_pool.h"
+
 namespace mediapipe {
+
+// Retain buffers for at most one batch shape, so changing dynamic batch
+// sizes cannot multiply the configured retention budget. In-use buffers are
+// never reclaimed; this limits cached buffers, not downstream concurrency.
+inline MultiPoolOptions TilingGpuPoolOptions(int max_buffers) {
+  MultiPoolOptions options;
+  options.keep_count = max_buffers;
+  options.max_pool_count = 1;
+  options.min_requests_before_pool = 1;
+  return options;
+}
 
 // Context-scope identity for GPU resource caches. A resource created under one
 // key must never be reused under a different key. gl_context_identity is the

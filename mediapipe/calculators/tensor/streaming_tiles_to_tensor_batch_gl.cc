@@ -18,6 +18,7 @@
 
 #if MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -43,9 +44,8 @@
 namespace mediapipe {
 namespace {
 
-// Identical to the reference converter's shader EXCEPT for the `row_base`
-// uniform: the linear write index is offset by row_base so this dispatch fills
-// row `tile_row` of an [N,H,W,3] batch SSBO instead of the start of the buffer.
+// The row_base uniform selects one row of the batch. The sampling inset keeps
+// bilinear interpolation inside an axis-aligned crop, matching CPU crop/resize.
 constexpr char kShaderCode[] = R"(
 layout(std430) buffer;
 
@@ -59,6 +59,7 @@ uniform ivec2 out_size;
 uniform float alpha;
 uniform float beta;
 uniform int row_base;        // tile_row * out_height * out_width
+uniform vec2 roi_sampling_inset;
 uniform mat4 transform_matrix;
 uniform mediump sampler2D input_data;
 
@@ -74,7 +75,9 @@ void main() {
     // transform from output range to [0, 1]
     float normal_x = (float(gid.x) + 0.5f) / float(out_width);
     float normal_y = (float(gid.y) + 0.5f) / float(out_height);
-    vec4 tc = vec4(normal_x, normal_y, 0.0, 1.0);
+    vec2 roi_coord = clamp(vec2(normal_x, normal_y), roi_sampling_inset,
+                           vec2(1.0) - roi_sampling_inset);
+    vec4 tc = vec4(roi_coord, 0.0, 1.0);
 
     // Apply transformation from roi coordinates to original image coordinates.
     tc = transform_matrix * tc;
@@ -162,6 +165,8 @@ absl::Status TiledBatchGlWriter::WriteTileRow(
     tflite::gpu::gl::CommandQueue* command_queue,
     tflite::gpu::gl::GlBuffer* dest) {
   RET_CHECK_GE(tile_row, 0);
+  RET_CHECK_GT(sub_rect.width, 0.0f);
+  RET_CHECK_GT(sub_rect.height, 0.0f);
   std::array<float, 16> transform_mat;
   GetRotatedSubRectToRectTransformMatrix(sub_rect, texture_size.w,
                                          texture_size.h,
@@ -199,6 +204,15 @@ absl::Status TiledBatchGlWriter::WriteTileRow(
       {"out_size", tflite::gpu::int2(out_w_, out_h_)}));
   ABSL_RETURN_IF_ERROR(program_.SetParameter({"alpha", alpha}));
   ABSL_RETURN_IF_ERROR(program_.SetParameter({"beta", beta}));
+  // Clamp before the transform/Y flip so the bounds follow the source ROI.
+  // Rotated rects retain the reference converter's sampling convention.
+  const tflite::gpu::float2 sampling_inset =
+      sub_rect.rotation == 0.0f
+          ? tflite::gpu::float2(std::min(0.5f, 0.5f / sub_rect.width),
+                                std::min(0.5f, 0.5f / sub_rect.height))
+          : tflite::gpu::float2(0.0f, 0.0f);
+  ABSL_RETURN_IF_ERROR(
+      program_.SetParameter({"roi_sampling_inset", sampling_inset}));
   // The one tiling-specific uniform: offset the linear write index to this
   // tile's batch row. row_base = tile_row * out_height * out_width.
   ABSL_RETURN_IF_ERROR(program_.SetParameter(
@@ -206,7 +220,7 @@ absl::Status TiledBatchGlWriter::WriteTileRow(
 
   tflite::gpu::uint3 num_workgroups = tflite::gpu::DivideRoundUp(
       tflite::gpu::uint3{static_cast<uint32_t>(out_w_),
-                         static_cast<uint32_t>(out_h_), 1},
+                         static_cast<uint32_t>(out_h_), uint32_t{1}},
       workgroup_size_);
   ABSL_RETURN_IF_ERROR(command_queue->Dispatch(program_, num_workgroups));
 

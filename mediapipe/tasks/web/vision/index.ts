@@ -15,6 +15,10 @@
  */
 
 import {FilesetResolver as FilesetResolverImpl} from '../../../tasks/web/core/fileset_resolver';
+import {
+  assertCustomVisionWasmGraph as assertCustomVisionWasmGraphImpl,
+  createCustomVisionWasmFileset as createCustomVisionWasmFilesetImpl,
+} from '../../../tasks/web/vision/core/custom_vision_wasm_fileset';
 import {DrawingUtils as DrawingUtilsImpl} from '../../../tasks/web/vision/core/drawing_utils';
 import {MPImage as MPImageImpl} from '../../../tasks/web/vision/core/image';
 import {MPMask as MPMaskImpl} from '../../../tasks/web/vision/core/mask';
@@ -29,7 +33,15 @@ import {ImageSegmenter as ImageSegementerImpl} from '../../../tasks/web/vision/i
 import {InteractiveSegmenter as InteractiveSegmenterImpl} from '../../../tasks/web/vision/interactive_segmenter/interactive_segmenter';
 import {InteractiveSegmenterLegacy as InteractiveSegmenterLegacyImpl} from '../../../tasks/web/vision/interactive_segmenter_legacy/interactive_segmenter_legacy';
 import {ObjectDetector as ObjectDetectorImpl} from '../../../tasks/web/vision/object_detector/object_detector';
+import {
+  ORIENTED_OBJECT_DETECTOR_GRAPH as ORIENTED_OBJECT_DETECTOR_GRAPH_IMPL,
+  OrientedObjectDetector as OrientedObjectDetectorImpl,
+} from '../../../tasks/web/vision/oriented_object_detector/oriented_object_detector';
 import {PoseLandmarker as PoseLandmarkerImpl} from '../../../tasks/web/vision/pose_landmarker/pose_landmarker';
+import {
+  YOLO_OBJECT_DETECTOR_GRAPH as YOLO_OBJECT_DETECTOR_GRAPH_IMPL,
+  YoloObjectDetector as YoloObjectDetectorImpl,
+} from '../../../tasks/web/vision/yolo_object_detector/yolo_object_detector';
 
 // tslint:disable:enforce-comments-on-exported-symbols
 
@@ -37,6 +49,8 @@ import {PoseLandmarker as PoseLandmarkerImpl} from '../../../tasks/web/vision/po
 // explicitly retains the bindings and avoids dead-code elimination bugs.
 export const DrawingUtils = DrawingUtilsImpl;
 export const FilesetResolver = FilesetResolverImpl;
+export const createCustomVisionWasmFileset = createCustomVisionWasmFilesetImpl;
+export const assertCustomVisionWasmGraph = assertCustomVisionWasmGraphImpl;
 export const MPImage = MPImageImpl;
 export const MPMask = MPMaskImpl;
 export const FaceDetector = FaceDetectorImpl;
@@ -50,4 +64,8 @@ export const ImageSegmenter = ImageSegementerImpl;
 export const InteractiveSegmenterLegacy = InteractiveSegmenterLegacyImpl;
 export const InteractiveSegmenter = InteractiveSegmenterImpl;
 export const ObjectDetector = ObjectDetectorImpl;
+export const OrientedObjectDetector = OrientedObjectDetectorImpl;
+export const ORIENTED_OBJECT_DETECTOR_GRAPH = ORIENTED_OBJECT_DETECTOR_GRAPH_IMPL;
 export const PoseLandmarker = PoseLandmarkerImpl;
+export const YoloObjectDetector = YoloObjectDetectorImpl;
+export const YOLO_OBJECT_DETECTOR_GRAPH = YOLO_OBJECT_DETECTOR_GRAPH_IMPL;

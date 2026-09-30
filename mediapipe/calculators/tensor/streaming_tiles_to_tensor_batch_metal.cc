@@ -18,6 +18,7 @@
 
 #import <Metal/Metal.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -33,8 +34,8 @@ namespace mediapipe {
 namespace {
 
 // Shared preamble for both compute shaders: uniforms struct + sampler selection
-// via CLAMP_TO_ZERO define. CHANNEL_STRIDE switches between 3 (logical BHWC)
-// and 4 (physical PHWC4).
+// via CLAMP_TO_ZERO define. Both layouts clamp interpolation to the source
+// pixel centers of axis-aligned tiles, matching CPU crop/resize.
 constexpr char kShaderPreamble[] = R"(
   #include <metal_stdlib>
   using namespace metal;
@@ -45,6 +46,8 @@ constexpr char kShaderPreamble[] = R"(
     int row_base;   // tile_row * out_h * out_w
     float alpha;
     float beta;
+    float roi_inset_x;
+    float roi_inset_y;
   };
 )";
 
@@ -61,7 +64,9 @@ constexpr char kComputeShader[] = R"(
     }
     float nx = (float(gid.x) + 0.5) / float(u.out_w);
     float ny = (float(gid.y) + 0.5) / float(u.out_h);
-    float4 tc = float4(nx, ny, 0.0, 1.0) * transform_matrix;
+    float2 inset = float2(u.roi_inset_x, u.roi_inset_y);
+    float2 roi_coord = clamp(float2(nx, ny), inset, float2(1.0) - inset);
+    float4 tc = float4(roi_coord, 0.0, 1.0) * transform_matrix;
     #ifdef CLAMP_TO_ZERO
     constexpr sampler linear_sampler(address::clamp_to_zero, min_filter::linear,
                                      mag_filter::linear);
@@ -91,7 +96,9 @@ constexpr char kComputeShaderPhwc4[] = R"(
     }
     float nx = (float(gid.x) + 0.5) / float(u.out_w);
     float ny = (float(gid.y) + 0.5) / float(u.out_h);
-    float4 tc = float4(nx, ny, 0.0, 1.0) * transform_matrix;
+    float2 inset = float2(u.roi_inset_x, u.roi_inset_y);
+    float2 roi_coord = clamp(float2(nx, ny), inset, float2(1.0) - inset);
+    float4 tc = float4(roi_coord, 0.0, 1.0) * transform_matrix;
     #ifdef CLAMP_TO_ZERO
     constexpr sampler linear_sampler(address::clamp_to_zero, min_filter::linear,
                                      mag_filter::linear);
@@ -114,6 +121,8 @@ struct Uniforms {
   int row_base;
   float alpha;
   float beta;
+  float roi_inset_x;
+  float roi_inset_y;
 };
 
 }  // namespace
@@ -165,13 +174,24 @@ absl::Status TiledBatchMetalWriter::WriteTileRow(
   RET_CHECK(dest != nil);
   RET_CHECK(input_texture != nil);
   RET_CHECK_GE(tile_row, 0);
+  RET_CHECK_GT(sub_rect.width, 0.0f);
+  RET_CHECK_GT(sub_rect.height, 0.0f);
 
   std::array<float, 16> transform_mat;
   GetRotatedSubRectToRectTransformMatrix(sub_rect, input_texture.width,
                                          input_texture.height,
                                          /*flip_horizontally=*/false,
                                          &transform_mat);
-  Uniforms u{out_w_, out_h_, tile_row * out_h_ * out_w_, alpha, beta};
+  // Preserve the reference sampling convention for rotated rects. The
+  // calculator supplies axis-aligned integer pixel ROIs.
+  const float inset_x = sub_rect.rotation == 0.0f
+                            ? std::min(0.5f, 0.5f / sub_rect.width)
+                            : 0.0f;
+  const float inset_y = sub_rect.rotation == 0.0f
+                            ? std::min(0.5f, 0.5f / sub_rect.height)
+                            : 0.0f;
+  Uniforms u{out_w_, out_h_, tile_row * out_h_ * out_w_,
+             alpha, beta, inset_x, inset_y};
 
   id<MTLComputeCommandEncoder> encoder =
       [command_buffer computeCommandEncoder];

@@ -15,6 +15,7 @@
  */
 
 export * from '../../../tasks/web/core/fileset_resolver';
+export * from '../../../tasks/web/vision/core/custom_vision_wasm_fileset';
 export * from '../../../tasks/web/vision/core/drawing_utils';
 export {MPImage} from '../../../tasks/web/vision/core/image';
 export {MPMask} from '../../../tasks/web/vision/core/mask';
@@ -29,4 +30,6 @@ export * from '../../../tasks/web/vision/image_segmenter/image_segmenter';
 export * from '../../../tasks/web/vision/interactive_segmenter/interactive_segmenter';
 export * from '../../../tasks/web/vision/interactive_segmenter_legacy/interactive_segmenter_legacy';
 export * from '../../../tasks/web/vision/object_detector/object_detector';
+export * from '../../../tasks/web/vision/oriented_object_detector/oriented_object_detector';
 export * from '../../../tasks/web/vision/pose_landmarker/pose_landmarker';
+export * from '../../../tasks/web/vision/yolo_object_detector/yolo_object_detector';

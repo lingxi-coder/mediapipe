@@ -57,6 +57,9 @@ class TiledBatchMetalWriter {
 
   // sub_rect: the tile's RotatedRect over the source texture (same convention as
   //   the CPU path / image_to_tensor).
+  //   Width and height must be positive. Axis-aligned pixel ROIs replicate
+  //   their own edge pixels during resize; rotated ROIs retain the reference
+  //   converter's texture-sampling behavior.
   // tile_row: destination batch row in [0, N).
   // alpha/beta: value-range normalization (alpha=1, beta=0 for [0,1]; Metal
   //   samples uint8 textures as [0,1]).

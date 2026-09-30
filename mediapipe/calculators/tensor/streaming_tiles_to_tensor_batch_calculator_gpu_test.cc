@@ -150,7 +150,7 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
                          const std::string& options_body, int out_w, int out_h,
                          int channels, int batch_capacity, int in_w, int in_h,
                          const std::vector<TileGeometry>& tiles,
-                         RunResult* out) {
+                         RunResult* out, GLuint* program_before_close = nullptr) {
   InferenceMetadata meta;
   meta.set_input_height(out_h);
   meta.set_input_width(out_w);
@@ -182,7 +182,7 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
 
   CalculatorGraph graph;
   ABSL_RETURN_IF_ERROR(graph.Initialize(config));
-  ABSL_RETURN_IF_ERROR(graph.SetGpuResources(std::move(gpu_resources)));
+  ABSL_RETURN_IF_ERROR(graph.SetGpuResources(gpu_resources));
   ABSL_RETURN_IF_ERROR(graph.ObserveOutputStream("tensors", [out](const Packet& p) {
     out->tensors.push_back(p);
     return absl::OkStatus();
@@ -200,8 +200,48 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
   ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
       "tile_plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
   ABSL_RETURN_IF_ERROR(graph.WaitUntilIdle());
+  if (program_before_close != nullptr) {
+    ABSL_RETURN_IF_ERROR(gpu_resources->gl_context()->Run([&]() -> absl::Status {
+      GLint program = 0;
+      glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+      *program_before_close = static_cast<GLuint>(program);
+      EXPECT_NE(program, 0);
+      EXPECT_EQ(glIsProgram(*program_before_close), GL_TRUE);
+      return absl::OkStatus();
+    }));
+  }
   ABSL_RETURN_IF_ERROR(graph.CloseAllInputStreams());
-  return graph.WaitUntilDone();
+  ABSL_RETURN_IF_ERROR(graph.WaitUntilDone());
+  if (program_before_close != nullptr) {
+    // Check Close() while the graph is still allocated, not just its destructor.
+    ABSL_RETURN_IF_ERROR(gpu_resources->gl_context()->Run([&]() -> absl::Status {
+      glUseProgram(0);
+      EXPECT_EQ(glIsProgram(*program_before_close), GL_FALSE);
+      return absl::OkStatus();
+    }));
+  }
+  return absl::OkStatus();
+}
+
+TEST_F(StreamingTilesToTensorBatchCalculatorGpuTest,
+       ReleasesProgramWhenGraphsShareGpuResources) {
+  for (int run = 0; run < 3; ++run) {
+    RunResult result;
+    GLuint program = 0;
+    MP_ASSERT_OK(RunZeroCopy(
+        gpu_resources_,
+        "enable_gpu_zero_copy: true max_gpu_tensor_buffers: 2",
+        /*out_w=*/8, /*out_h=*/8, /*channels=*/3, /*batch_capacity=*/1,
+        /*in_w=*/16, /*in_h=*/16,
+        {NormTile(0, 0.0f, 0.0f, 1.0f, 1.0f)}, &result, &program));
+    ASSERT_NE(program, 0u);
+    MP_ASSERT_OK(helper_.RunInGlContext([&]() -> absl::Status {
+      // Deletion of a current GL program is deferred until it is unbound.
+      glUseProgram(0);
+      EXPECT_EQ(glIsProgram(program), GL_FALSE) << "graph run " << run;
+      return absl::OkStatus();
+    }));
+  }
 }
 
 // Task 7: fixed batch pads the tail rows with zeros on the GPU.

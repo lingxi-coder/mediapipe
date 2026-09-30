@@ -39,6 +39,7 @@
 #include "mediapipe/framework/port/opencv_imgproc_inc.h"
 #include "mediapipe/framework/port/ret_check.h"
 #include "mediapipe/framework/timestamp.h"
+#include "mediapipe/gpu/tiling_gpu_resource.h"
 
 // GPU zero-copy path (Plan 4 OpenGL / Phase 5 Metal). All GPU code is compiled
 // out under MEDIAPIPE_DISABLE_GPU=1; the GLES branch additionally requires GLES
@@ -93,6 +94,16 @@ namespace api2 {
 // readback.
 class StreamingTilesToTensorBatchCalculator : public Node {
  public:
+  ~StreamingTilesToTensorBatchCalculator() override {
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+    // Open() may fail after creating GL objects, before Close() can run.
+    const absl::Status status = ReleaseGlResources();
+    if (!status.ok()) {
+      ABSL_LOG(ERROR) << "Failed releasing tiled GL resources: " << status;
+    }
+#endif
+  }
+
   // IMAGE is the CPU input. It is optional so a GPU-only graph can wire
   // IMAGE_GPU instead; exactly one image input must be present per frame.
   static constexpr Input<ImageFrame>::Optional kInImage{"IMAGE"};
@@ -163,8 +174,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     // GPU zero-copy option validation: reject invalid capacities up front so
     // a bad config fails at Open() rather than mid-stream.
     RET_CHECK_GE(options_.max_gpu_tensor_buffers(), 0);
-    // Zero-copy with an unbounded GPU buffer pool defeats the in-flight
-    // ownership model: require a finite capacity up front.
+    // Bound retained AHWB buffers. Buffers still referenced downstream may
+    // exceed this cache budget and must not be reclaimed early.
     if (options_.enable_gpu_zero_copy()) {
       RET_CHECK_GT(options_.max_gpu_tensor_buffers(), 0)
           << "enable_gpu_zero_copy requires a finite GPU buffer capacity "
@@ -203,7 +214,7 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       // signal that never fires would wedge the pool after `capacity` frames).
       if (options_.max_gpu_tensor_buffers() > 0) {
         gpu_memory_manager_ = std::make_shared<MemoryManager>(
-            static_cast<size_t>(options_.max_gpu_tensor_buffers()));
+            TilingGpuPoolOptions(options_.max_gpu_tensor_buffers()));
       }
       gpu_zero_copy_active_ = true;
     }
@@ -222,14 +233,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                                         meta_.input_channels(),
                                         BorderMode::kReplicate,
                                         options_.metal_direct_delegate_input()));
-      // Mirror the GLES branch so the configured capacity is actually passed
-      // to the batch tensors. The framework pool is AHWB-only, so on Metal
-      // this is per-batch allocation today — but the option is no longer
-      // silently ignored, and pooling engages if the framework grows it.
-      if (options_.max_gpu_tensor_buffers() > 0) {
-        gpu_memory_manager_ = std::make_shared<MemoryManager>(
-            static_cast<size_t>(options_.max_gpu_tensor_buffers()));
-      }
+      // Metal has no tensor buffer pool; use per-batch allocation without
+      // creating an unused CPU pool from max_gpu_tensor_buffers.
       metal_zero_copy_active_ = true;
     }
 #endif  // MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
@@ -272,7 +277,27 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     return ProcessCpu(cc);
   }
 
+  absl::Status Close(CalculatorContext* cc) override {
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+    return ReleaseGlResources();
+#else
+    return absl::OkStatus();
+#endif
+  }
+
  private:
+#if MEDIAPIPE_STREAMING_TILES_GPU_ZERO_COPY
+  absl::Status ReleaseGlResources() {
+    if (!gl_writer_ && !command_queue_) return absl::OkStatus();
+    return gl_helper_.RunInGlContext([this]() -> absl::Status {
+      gl_writer_.reset();
+      command_queue_.reset();
+      gpu_zero_copy_active_ = false;
+      return absl::OkStatus();
+    });
+  }
+#endif
+
   absl::Status ProcessCpu(CalculatorContext* cc) {
     RET_CHECK(kInImage(cc).IsConnected() && !kInImage(cc).IsEmpty())
         << "no IMAGE (CPU) input present; either wire IMAGE or enable the GPU "

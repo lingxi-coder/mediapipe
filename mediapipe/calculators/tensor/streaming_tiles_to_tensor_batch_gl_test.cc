@@ -43,17 +43,7 @@
 namespace mediapipe {
 namespace {
 
-// Uploads a uniform-color RGBA8 texture of size w*h. A uniform color makes
-// bilinear resampling exact regardless of the sub-rect, so each output row is
-// predictable to the bit.
-GLuint MakeUniformRgbaTexture(int w, int h, uint8_t r, uint8_t g, uint8_t b) {
-  std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4);
-  for (size_t i = 0; i < pixels.size(); i += 4) {
-    pixels[i] = r;
-    pixels[i + 1] = g;
-    pixels[i + 2] = b;
-    pixels[i + 3] = 255;
-  }
+GLuint MakeRgbaTexture(int w, int h, const std::vector<uint8_t>& pixels) {
   GLuint texture = 0;
   glGenTextures(1, &texture);
   glBindTexture(GL_TEXTURE_2D, texture);
@@ -63,6 +53,18 @@ GLuint MakeUniformRgbaTexture(int w, int h, uint8_t r, uint8_t g, uint8_t b) {
                pixels.data());
   glBindTexture(GL_TEXTURE_2D, 0);
   return texture;
+}
+
+// Uniform color makes bilinear resampling exact regardless of the sub-rect.
+GLuint MakeUniformRgbaTexture(int w, int h, uint8_t r, uint8_t g, uint8_t b) {
+  std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4);
+  for (size_t i = 0; i < pixels.size(); i += 4) {
+    pixels[i] = r;
+    pixels[i + 1] = g;
+    pixels[i + 2] = b;
+    pixels[i + 3] = 255;
+  }
+  return MakeRgbaTexture(w, h, pixels);
 }
 
 // A RotatedRect covering an axis-aligned region [x, x+rw) x [y, y+rh) of the
@@ -159,6 +161,88 @@ TEST(StreamingTilesToTensorBatchGlTest, FullFrameMatrixMatchesConverter) {
   EXPECT_NEAR(mat[3], 0.0f, 1e-5);   // x translate
   EXPECT_NEAR(mat[7], 0.0f, 1e-5);   // y translate
 }
+
+class StreamingTilesGlCropTest : public testing::TestWithParam<bool> {};
+
+TEST_P(StreamingTilesGlCropTest, UpsamplingReplicatesCropEdges) {
+  auto context_or = GlContext::Create(nullptr, false);
+  MP_ASSERT_OK(context_or);
+  auto context = context_or.value();
+  constexpr int kSrcW = 6, kSrcH = 5, kOutW = 4, kOutH = 4, kChannels = 3;
+  constexpr int kBatch = 3;
+  const bool starts_at_bottom = GetParam();
+  std::vector<uint8_t> pixels(kSrcW * kSrcH * 4);
+  for (int y = 0; y < kSrcH; ++y) {
+    for (int x = 0; x < kSrcW; ++x) {
+      const int texture_y = starts_at_bottom ? kSrcH - 1 - y : y;
+      const int offset = (texture_y * kSrcW + x) * 4;
+      // The 2x2 ROI corners are black, red, green and white. Magenta pixels
+      // outside it must not bleed into the upsampled tile at any edge.
+      const bool inside = x >= 2 && x < 4 && y >= 1 && y < 3;
+      pixels[offset] = !inside || x == 3 ? 255 : 0;
+      pixels[offset + 1] = inside && y == 2 ? 255 : 0;
+      pixels[offset + 2] = !inside || (x == 3 && y == 2) ? 255 : 0;
+      pixels[offset + 3] = 255;
+    }
+  }
+  std::vector<float> cpu;
+  context->Run([&]() {
+    tflite::gpu::GpuInfo gpu_info;
+    MP_ASSERT_OK(tflite::gpu::gl::RequestGpuInfo(&gpu_info));
+    ASSERT_TRUE(gpu_info.IsApiOpenGl31OrAbove());
+    auto queue = tflite::gpu::gl::NewCommandQueue(gpu_info);
+    tflite::gpu::gl::GlTexture input(
+        GL_TEXTURE_2D, MakeRgbaTexture(kSrcW, kSrcH, pixels), GL_RGBA,
+        pixels.size(), /*layer=*/0, /*owned=*/true);
+    auto writer_or = TiledBatchGlWriter::Create(
+        *context, kOutW, kOutH, kChannels, BorderMode::kReplicate,
+        starts_at_bottom);
+    MP_ASSERT_OK(writer_or);
+    auto writer = std::move(writer_or).value();
+    Tensor tensor(Tensor::ElementType::kFloat32,
+                  Tensor::Shape{kBatch, kOutH, kOutW, kChannels});
+    {
+      auto write = tensor.GetOpenGlBufferWriteView();
+      tflite::gpu::gl::GlBuffer dest(GL_SHADER_STORAGE_BUFFER, write.name(),
+                                     tensor.bytes(), /*offset=*/0,
+                                     /*has_ownership=*/false);
+      const tflite::gpu::HW size(kSrcH, kSrcW);
+      MP_ASSERT_OK(writer->WriteTileRow(input, size, PixelRoiRect(2, 1, 2, 2),
+                                        /*tile_row=*/0, /*alpha=*/1.0f,
+                                        /*beta=*/0.0f, queue.get(), &dest));
+      MP_ASSERT_OK(writer->WriteTileRow(input, size, PixelRoiRect(3, 2, 1, 1),
+                                        /*tile_row=*/1, /*alpha=*/1.0f,
+                                        /*beta=*/0.0f, queue.get(), &dest));
+      MP_ASSERT_OK(writer->WriteTileRow(
+          input, size, PixelRoiRect(0, 0, kSrcW, kSrcH), /*tile_row=*/2,
+          /*alpha=*/0.0f, /*beta=*/0.0f, queue.get(), &dest));
+      MP_ASSERT_OK(queue->WaitForCompletion());
+    }
+    auto read = tensor.GetCpuReadView();
+    const float* values = read.buffer<float>();
+    cpu.assign(values, values + tensor.shape().num_elements());
+  });
+  ASSERT_EQ(cpu.size(), kBatch * kOutW * kOutH * kChannels);
+  constexpr std::array<float, 4> kWeights = {0.0f, 0.25f, 0.75f, 1.0f};
+  for (int y = 0; y < kOutH; ++y) {
+    for (int x = 0; x < kOutW; ++x) {
+      const int offset = (y * kOutW + x) * kChannels;
+      const std::array<float, 3> expected = {
+          kWeights[x], kWeights[y], kWeights[x] * kWeights[y]};
+      for (int c = 0; c < kChannels; ++c) {
+        // CPU resize rounds to uint8 before normalization; allow one LSB.
+        EXPECT_NEAR(cpu[offset + c], expected[c], 1.0f / 255.0f)
+            << "x=" << x << " y=" << y << " channel=" << c;
+        EXPECT_NEAR(cpu[kOutW * kOutH * kChannels + offset + c], 1.0f,
+                    1.0f / 255.0f);
+        EXPECT_EQ(cpu[2 * kOutW * kOutH * kChannels + offset + c], 0.0f);
+      }
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(TextureOrigins, StreamingTilesGlCropTest,
+                         testing::Values(false, true));
 
 }  // namespace
 }  // namespace mediapipe

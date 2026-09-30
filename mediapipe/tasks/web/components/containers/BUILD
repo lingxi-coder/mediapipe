@@ -31,6 +31,12 @@ ts_declaration(
 )
 
 ts_declaration(
+    name = "oriented_detection_result",
+    srcs = ["oriented_detection_result.d.ts"],
+    deps = [":category"],
+)
+
+ts_declaration(
     name = "keypoint",
     srcs = ["keypoint.d.ts"],
 )

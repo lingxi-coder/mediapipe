@@ -66,6 +66,7 @@ class TiledObbTrackMergeGraph : public Subgraph {
     to.set_track_buffer(tr.track_buffer());
     to.set_match_threshold(tr.match_threshold());
     to.set_enable_gmc(tr.enable_gmc());
+    to.set_nominal_frame_rate(tr.nominal_frame_rate());
     graph.In("IMAGE") >> track.In("IMAGE");
     nms.Out("ORIENTED_DETECTIONS") >> track.In("ORIENTED_DETECTIONS");
 

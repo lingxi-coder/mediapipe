@@ -22,6 +22,28 @@ ts_declaration(
 )
 
 ts_library(
+    name = "custom_vision_wasm_fileset",
+    srcs = ["custom_vision_wasm_fileset.ts"],
+    deps = [
+        "//mediapipe/tasks/web/core",
+    ],
+)
+
+ts_library(
+    name = "custom_vision_wasm_fileset_test_lib",
+    testonly = True,
+    srcs = ["custom_vision_wasm_fileset_test.ts"],
+    deps = [
+        ":custom_vision_wasm_fileset",
+    ],
+)
+
+jasmine_node_test(
+    name = "custom_vision_wasm_fileset_test",
+    srcs = [":custom_vision_wasm_fileset_test_lib"],
+)
+
+ts_library(
     name = "types",
     srcs = ["types.ts"],
     deps = [

@@ -350,7 +350,8 @@ class YoloObjectDetectorOptions:
     iou_threshold: IoU threshold for non-maximum suppression. Default 0.45.
     layout: The output tensor layout of the YOLO detect head. Default
       CHANNELS_FIRST.
-    num_classes: Number of classes. If 0, derived from model metadata.
+    num_classes: Number of classes. Must be greater than 0. Metadata derivation
+      is not yet implemented.
     tiling: Static tiling configuration. Defaults to disabled (1x1).
     tracking: Tracker selection for the tiled VIDEO/LIVE_STREAM path. Honored
       only when tiling is enabled and running mode is not IMAGE; otherwise
@@ -449,12 +450,16 @@ class YoloObjectDetector:
   The API expects a YOLO TFLite model with the appropriate metadata.
 
   Example usage:
-    detector = YoloObjectDetector.create_from_model_path('/path/to/model.tflite')
+    detector = YoloObjectDetector.create_from_model_path(
+        '/path/to/model.tflite', num_classes=80
+    )
     result = detector.detect(image)
     detector.close()
 
   Or as a context manager:
-    with YoloObjectDetector.create_from_model_path('/path/to/model.tflite') as d:
+    with YoloObjectDetector.create_from_model_path(
+        '/path/to/model.tflite', num_classes=80
+    ) as d:
       result = d.detect(image)
   """
 
@@ -489,7 +494,9 @@ class YoloObjectDetector:
     self._label_map = label_map
 
   @classmethod
-  def create_from_model_path(cls, model_path: str) -> 'YoloObjectDetector':
+  def create_from_model_path(
+      cls, model_path: str, *, num_classes: int
+  ) -> 'YoloObjectDetector':
     """Creates a `YoloObjectDetector` object from a TFLite model path.
 
     Note that the created `YoloObjectDetector` instance is in image mode, for
@@ -497,19 +504,27 @@ class YoloObjectDetector:
 
     Args:
       model_path: Path to the model.
+      num_classes: Number of classes in the model's detection head. Must be a
+        positive integer; it is not inferred from model metadata.
 
     Returns:
-      `YoloObjectDetector` object created from the model file and default
-      `YoloObjectDetectorOptions`.
+      `YoloObjectDetector` object created from the model file and class count,
+      using the remaining default `YoloObjectDetectorOptions`.
 
     Raises:
-      ValueError: If failed to create `YoloObjectDetector` object from the
-        provided file such as invalid file path.
+      TypeError: If `num_classes` is not an integer.
+      ValueError: If `num_classes` is not positive, or if failed to create
+        `YoloObjectDetector` from the provided file, such as invalid file path.
       RuntimeError: If other types of error occurred.
     """
+    if isinstance(num_classes, bool) or not isinstance(num_classes, int):
+      raise TypeError('num_classes must be a positive integer.')
+    if num_classes <= 0:
+      raise ValueError('num_classes must be greater than 0.')
     options = YoloObjectDetectorOptions(
         base_options=_BaseOptions(model_asset_path=model_path),
         running_mode=_RunningMode.IMAGE,
+        num_classes=num_classes,
     )
     return cls.create_from_options(options)
 

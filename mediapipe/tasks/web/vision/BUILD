@@ -5,7 +5,7 @@ load(
     "//mediapipe/framework/tool:mediapipe_files.bzl",
     "mediapipe_files",
 )
-load("//mediapipe/tasks/web:build_defs.bzl", "pkg_npm", "rollup_bundle")
+load("//mediapipe/tasks/web:build_defs.bzl", "jasmine_node_test", "pkg_npm", "rollup_bundle")
 
 package(default_visibility = ["//mediapipe/tasks:internal"])
 
@@ -20,6 +20,7 @@ mediapipe_files(srcs = [
 
 VISION_LIBS = [
     "//mediapipe/tasks/web/core:fileset_resolver",
+    "//mediapipe/tasks/web/vision/core:custom_vision_wasm_fileset",
     "//mediapipe/tasks/web/vision/core:drawing_utils",
     "//mediapipe/tasks/web/vision/core:image",
     "//mediapipe/tasks/web/vision/core:mask",
@@ -34,7 +35,9 @@ VISION_LIBS = [
     "//mediapipe/tasks/web/vision/interactive_segmenter_legacy",
     "//mediapipe/tasks/web/vision/interactive_segmenter",
     "//mediapipe/tasks/web/vision/object_detector",
+    "//mediapipe/tasks/web/vision/oriented_object_detector",
     "//mediapipe/tasks/web/vision/pose_landmarker",
+    "//mediapipe/tasks/web/vision/yolo_object_detector",
 ]
 
 ts_library(
@@ -49,6 +52,21 @@ ts_library(
     srcs = ["types.ts"],
     visibility = ["//visibility:public"],
     deps = VISION_LIBS,
+)
+
+ts_library(
+    name = "index_test_lib",
+    testonly = True,
+    srcs = ["index_test.ts"],
+    deps = [
+        ":vision_lib",
+        ":vision_types",
+    ],
+)
+
+jasmine_node_test(
+    name = "index_test",
+    srcs = [":index_test_lib"],
 )
 
 rollup_bundle(

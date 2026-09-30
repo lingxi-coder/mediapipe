@@ -15,6 +15,7 @@
 
 import os
 import unittest
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -56,6 +57,62 @@ _MODEL_PRESENT = _model_available()
 
 
 class YoloObjectDetectorTest(parameterized.TestCase):
+
+  def test_create_from_model_path_forwards_class_count(self):
+    with mock.patch.object(
+        _YoloObjectDetector, 'create_from_options'
+    ) as create_from_options:
+      detector = _YoloObjectDetector.create_from_model_path(
+          '/dummy/model.tflite', num_classes=80
+      )
+
+    self.assertIs(detector, create_from_options.return_value)
+    create_from_options.assert_called_once()
+    options = create_from_options.call_args.args[0]
+    self.assertIsInstance(options, _YoloObjectDetectorOptions)
+    self.assertEqual(
+        options.base_options.model_asset_path, '/dummy/model.tflite'
+    )
+    self.assertEqual(options.num_classes, 80)
+    self.assertEqual(options.running_mode, _RUNNING_MODE.IMAGE)
+
+  def test_create_from_model_path_requires_class_count(self):
+    with mock.patch.object(
+        _YoloObjectDetector, 'create_from_options'
+    ) as create_from_options:
+      with self.assertRaisesRegex(TypeError, 'num_classes'):
+        _YoloObjectDetector.create_from_model_path('/dummy/model.tflite')
+    create_from_options.assert_not_called()
+
+  @parameterized.parameters(0, -1)
+  def test_create_from_model_path_rejects_nonpositive_class_count(
+      self, num_classes
+  ):
+    with mock.patch.object(
+        _YoloObjectDetector, 'create_from_options'
+    ) as create_from_options:
+      with self.assertRaisesRegex(
+          ValueError, 'num_classes must be greater than 0'
+      ):
+        _YoloObjectDetector.create_from_model_path(
+            '/dummy/model.tflite', num_classes=num_classes
+        )
+    create_from_options.assert_not_called()
+
+  @parameterized.parameters(True, 1.5, '80', None)
+  def test_create_from_model_path_rejects_noninteger_class_count(
+      self, num_classes
+  ):
+    with mock.patch.object(
+        _YoloObjectDetector, 'create_from_options'
+    ) as create_from_options:
+      with self.assertRaisesRegex(
+          TypeError, 'num_classes must be a positive integer'
+      ):
+        _YoloObjectDetector.create_from_model_path(
+            '/dummy/model.tflite', num_classes=num_classes
+        )
+    create_from_options.assert_not_called()
 
   def test_ctypes_uses_versioned_create_entry_point(self):
     self.assertEqual(

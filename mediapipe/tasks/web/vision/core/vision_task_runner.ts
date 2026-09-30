@@ -62,7 +62,6 @@ function createCanvas(): HTMLCanvasElement | OffscreenCanvas | undefined {
 /** Base class for all MediaPipe Vision Tasks. */
 export abstract class VisionTaskRunner extends TaskRunner {
   private readonly shaderContext = new MPImageShaderContext();
-  private isStreamMode = false;
 
   protected static async createVisionInstance<T extends VisionTaskRunner>(
     type: WasmMediaPipeConstructor<T>,
@@ -107,16 +106,16 @@ export abstract class VisionTaskRunner extends TaskRunner {
     options: VisionTaskOptions,
     loadTfliteModel = true,
   ): Promise<void> {
-    if ('runningMode' in options) {
-      this.isStreamMode =
-        !!options.runningMode && options.runningMode !== 'IMAGE';
-      this.baseOptions.setUseStreamMode(this.isStreamMode);
-    }
-
     if (options.canvas !== undefined) {
       if (this.graphRunner.wasmModule.canvas !== options.canvas) {
         throw new Error('You must create a new task to reset the canvas.');
       }
+    }
+
+    if ('runningMode' in options) {
+      this.baseOptions.setUseStreamMode(
+        !!options.runningMode && options.runningMode !== 'IMAGE',
+      );
     }
 
     return super.applyOptions(options, loadTfliteModel);
@@ -127,7 +126,7 @@ export abstract class VisionTaskRunner extends TaskRunner {
     image: ImageSource,
     imageProcessingOptions: ImageProcessingOptions | undefined,
   ): void {
-    if (this.isStreamMode) {
+    if (this.baseOptions.getUseStreamMode()) {
       throw new Error(
         'Task is not initialized with image mode. ' +
           "'runningMode' must be set to 'IMAGE'.",
@@ -142,7 +141,7 @@ export abstract class VisionTaskRunner extends TaskRunner {
     imageProcessingOptions: ImageProcessingOptions | undefined,
     timestamp: number,
   ): void {
-    if (!this.isStreamMode) {
+    if (!this.baseOptions.getUseStreamMode()) {
       throw new Error(
         'Task is not initialized with video mode. ' +
           "'runningMode' must be set to 'VIDEO'.",

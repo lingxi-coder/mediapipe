@@ -14,10 +14,105 @@
 
 #include "mediapipe/gpu/tiling_gpu_resource.h"
 
+#include <memory>
+#include <vector>
+
+#include "absl/status/statusor.h"
 #include "mediapipe/framework/port/gtest.h"
+#include "mediapipe/framework/port/status_matchers.h"
+#include "mediapipe/gpu/multi_pool.h"
+#include "mediapipe/gpu/reusable_pool.h"
 
 namespace mediapipe {
 namespace {
+
+// Exercise the same MultiPool/ReusablePool retention as AHWB without requiring
+// Android allocation. The live count detects cached buffers across shape pools.
+struct TestBuffer {
+  TestBuffer() { ++live; }
+  ~TestBuffer() { --live; }
+  void Reuse() { ++reuse_count; }
+  int reuse_count = 0;
+  inline static int live = 0;
+};
+
+class TestBufferPool : public ReusablePool<TestBuffer> {
+ public:
+  static std::shared_ptr<TestBufferPool> Create(
+      int spec, const MultiPoolOptions& options) {
+    return std::shared_ptr<TestBufferPool>(new TestBufferPool(options));
+  }
+  static absl::StatusOr<std::unique_ptr<TestBuffer>> CreateBufferWithoutPool(
+      int spec) {
+    return std::make_unique<TestBuffer>();
+  }
+
+ private:
+  explicit TestBufferPool(const MultiPoolOptions& options)
+      : ReusablePool<TestBuffer>(
+            []() -> absl::StatusOr<std::unique_ptr<TestBuffer>> {
+              return std::make_unique<TestBuffer>();
+            }, options) {}
+};
+
+using TestMultiPool =
+    MultiPool<TestBufferPool, int, std::shared_ptr<TestBuffer>>;
+
+TEST(TilingGpuPoolTest, RetainsConfiguredBudgetAndReusesReleasedBuffers) {
+  for (int capacity : {1, 4}) {
+    SCOPED_TRACE(capacity);
+    EXPECT_EQ(TestBuffer::live, 0);
+    {
+      TestMultiPool pool(TilingGpuPoolOptions(capacity));
+      std::vector<std::shared_ptr<TestBuffer>> in_use;
+      // In-use buffers must remain valid even beyond the retention budget.
+      for (int i = 0; i < capacity + 2; ++i) {
+        MP_ASSERT_OK_AND_ASSIGN(auto buffer, pool.Get(1));
+        in_use.push_back(std::move(buffer));
+      }
+      EXPECT_EQ(TestBuffer::live, capacity + 2);
+      in_use.clear();
+      EXPECT_EQ(TestBuffer::live, capacity);
+      for (int i = 0; i < capacity; ++i) {
+        MP_ASSERT_OK_AND_ASSIGN(auto buffer, pool.Get(1));
+        EXPECT_EQ(buffer->reuse_count, 1);
+        in_use.push_back(std::move(buffer));
+      }
+      EXPECT_EQ(TestBuffer::live, capacity);
+    }
+    EXPECT_EQ(TestBuffer::live, 0);
+  }
+}
+
+TEST(TilingGpuPoolTest, ShapeChangesEvictIdleBuffersButPreserveInUseBuffers) {
+  EXPECT_EQ(TestBuffer::live, 0);
+  {
+    TestMultiPool pool(TilingGpuPoolOptions(4));
+    MP_ASSERT_OK_AND_ASSIGN(auto pending, pool.Get(1));
+    // Run through a frequency-scrub cycle, allowing the cold shape's entry to
+    // expire even if the eviction tie initially favors it over the new shape.
+    for (int i = 0; i < 64; ++i) {
+      MP_ASSERT_OK_AND_ASSIGN(auto next_shape, pool.Get(2));
+    }
+    EXPECT_EQ(TestBuffer::live, 2);
+    pending->Reuse();  // The evicted shape's outstanding buffer remains valid.
+    EXPECT_EQ(pending->reuse_count, 1);
+    pending.reset();
+    EXPECT_EQ(TestBuffer::live, 1);  // Old shape cannot re-enter an evicted pool.
+    // Changing dynamic batch shapes cannot accumulate a capacity-sized cache
+    // for each shape, even when there are more in-use buffers than the budget.
+    for (int shape = 3; shape < 20; ++shape) {
+      std::vector<std::shared_ptr<TestBuffer>> buffers;
+      for (int i = 0; i < 6; ++i) {
+        MP_ASSERT_OK_AND_ASSIGN(auto buffer, pool.Get(shape));
+        buffers.push_back(std::move(buffer));
+      }
+      buffers.clear();
+      EXPECT_LE(TestBuffer::live, 4) << "shape " << shape;
+    }
+  }
+  EXPECT_EQ(TestBuffer::live, 0);
+}
 
 TEST(GpuResourceScopeKeyTest, EqualityByAllFields) {
   int a = 0, b = 0;

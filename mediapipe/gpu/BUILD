@@ -1704,13 +1704,18 @@ mediapipe_cc_test(
 cc_library(
     name = "tiling_gpu_resource",
     hdrs = ["tiling_gpu_resource.h"],
+    deps = [":multi_pool"],
 )
 
 cc_test(
     name = "tiling_gpu_resource_test",
     srcs = ["tiling_gpu_resource_test.cc"],
     deps = [
+        ":multi_pool",
+        ":reusable_pool",
         ":tiling_gpu_resource",
         "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:status_matchers",
+        "@com_google_absl//absl/status:statusor",
     ],
 )

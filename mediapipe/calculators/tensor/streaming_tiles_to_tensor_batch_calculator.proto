@@ -47,10 +47,11 @@ message StreamingTilesToTensorBatchCalculatorOptions {
   // ---- GPU zero-copy path (Plan 4). All default off; the CPU path above is
   // byte-identical when enable_gpu_zero_copy is false. ----
 
-  // Cache 5: max GPU/AHWB-backed batch tensor buffers to pool. Required (> 0)
-  // when enable_gpu_zero_copy is set. Pooling is effective on AHWB-capable
-  // platforms (Android); on GL-without-AHWB and on Metal the framework has no
-  // buffer pool, so allocation is per batch and this only bounds the config.
+  // Cache 5: max unused AHWB batch tensor buffers retained across batch shapes.
+  // Only one shape's pool is cached at a time. This does not limit buffers still
+  // in use downstream. Required (> 0) with GPU zero-copy.
+  // Pooling is effective on AHWB-capable platforms (Android); GL without AHWB
+  // and Metal allocate per batch because the framework has no buffer pool.
   optional int32 max_gpu_tensor_buffers = 5 [default = 0];
 
   // When true AND a GPU input (IMAGE_GPU) is connected, run tiled

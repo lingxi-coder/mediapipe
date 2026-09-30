@@ -31,6 +31,7 @@ describe('convertFromDetectionProto()', () => {
     detection.addLabelId(1);
     detection.addLabel('foo');
     detection.addDisplayName('bar');
+    detection.setTrackId('track-1');
 
     const locationData = new LocationData();
     const boundingBox = new LocationData.BoundingBox();
@@ -45,7 +46,7 @@ describe('convertFromDetectionProto()', () => {
     keypoint.setY(6);
     keypoint.setScore(0.7);
     keypoint.setKeypointLabel('bar');
-    locationData.addRelativeKeypoints(new LocationData.RelativeKeypoint());
+    locationData.addRelativeKeypoints(keypoint);
 
     detection.setLocationData(locationData);
 
@@ -59,6 +60,7 @@ describe('convertFromDetectionProto()', () => {
         displayName: 'bar',
       }],
       boundingBox: {originX: 1, originY: 2, width: 3, height: 4, angle: 0},
+      trackId: 'track-1',
       keypoints: [{
         x: 5,
         y: 6,
@@ -86,7 +88,7 @@ describe('convertFromDetectionProto()', () => {
         displayName: '',
       }],
       boundingBox: {originX: 0, originY: 0, width: 0, height: 0, angle: 0},
-      keypoints: []
+      keypoints: [],
     });
   });
 });

@@ -22,6 +22,7 @@
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "mediapipe/calculators/video/botsort_tracking_calculator.pb.h"
 #include "mediapipe/util/tiling_matrix_utils.h"
 #include "mediapipe/framework/formats/tiling_types.h"
 #include "mediapipe/framework/calculator_framework.h"
@@ -583,6 +584,43 @@ TEST(TiledBoxTrackMergeGraphTest, BotsortWaitsForAllBatchesAndUsesObservedRois) 
   ASSERT_EQ(merged.size(), 1u);
   EXPECT_EQ(merged[0].Timestamp(), Timestamp(kSourceTimestamp));
   EXPECT_EQ(merged[0].Get<std::vector<Detection>>().size(), 5u);
+}
+
+TEST(TiledObbTrackMergeGraphTest, ForwardsNominalFrameRateToTracker) {
+  auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+    input_stream: "dets"
+    input_stream: "info"
+    input_stream: "image"
+    output_stream: "merged"
+    node {
+      calculator: "mediapipe.tiled_detection.TiledObbTrackMergeGraph"
+      input_stream: "ORIENTED_DETECTIONS:dets"
+      input_stream: "BATCH_INFO:info"
+      input_stream: "IMAGE:image"
+      output_stream: "ORIENTED_DETECTIONS:merged"
+      options {
+        [mediapipe.TiledObbMergeGraphOptions.ext] {
+          tracking {
+            tracker_type: BOTSORT
+            nominal_frame_rate: 60
+          }
+        }
+      }
+    }
+  )pb");
+
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.Initialize(config));
+  int tracker_nodes = 0;
+  for (const auto& node : graph.Config().node()) {
+    if (node.calculator() != "OrientedBotsortTrackingCalculator") continue;
+    ++tracker_nodes;
+    EXPECT_EQ(node.options()
+                  .GetExtension(BotsortTrackingCalculatorOptions::ext)
+                  .nominal_frame_rate(),
+              60);
+  }
+  EXPECT_EQ(tracker_nodes, 1);
 }
 
 // TiledObbTrackMergeGraph: per-batch ORIENTED_DETECTIONS + BATCH_INFO + IMAGE ->

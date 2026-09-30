@@ -472,5 +472,64 @@ TEST(TiledFrameSuppressionCalculatorTest, DoesNotOverwriteExistingFreshTrackId) 
   EXPECT_EQ(out[0].track_id(), "1");
 }
 
+TEST(TiledFrameSuppressionCalculatorTest, TransfersTrackIdToNmsSurvivor) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.45
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  Detection winner = Det(0.9f, 0, 0.0f, 0.0f, 0.5f, 0.5f);
+  Detection duplicate = Det(0.8f, 0, 0.01f, 0.0f, 0.5f, 0.5f);
+  Detection tracked = duplicate;
+  tracked.set_track_id("17");
+  PushDets(&runner, "DETECTIONS", {winner, duplicate});
+  PushDets(&runner, "TRACKER_DETECTIONS", {tracked});
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  ASSERT_EQ(out.size(), 1u);
+  // The tracker matches the duplicate more closely, but the higher-scoring
+  // fresh box must retain the ID as well as its original score and geometry.
+  winner.set_track_id("17");
+  EXPECT_EQ(out[0].SerializeAsString(), winner.SerializeAsString());
+}
+
+TEST(TiledFrameSuppressionCalculatorTest,
+     SuppressedFreshCandidateStillPreventsTrackerGapFill) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "TiledFrameSuppressionCalculator"
+    input_stream: "DETECTIONS:fresh"
+    input_stream: "TRACKER_DETECTIONS:tracker"
+    output_stream: "DETECTIONS:out"
+    options {
+      [mediapipe.TiledFrameSuppressionCalculatorOptions.ext] {
+        iou_threshold: 0.45
+        tracker_is_gap_fill_only: true
+      }
+    }
+  )pb"));
+  Detection winner = Det(0.9f, 0, 0.0f, 0.0f, 0.5f, 0.5f);
+  Detection duplicate = Det(0.8f, 0, 0.15f, 0.0f, 0.5f, 0.5f);
+  Detection tracked = Det(0.95f, 0, 0.25f, 0.0f, 0.5f, 0.5f);
+  tracked.set_track_id("17");
+  PushDets(&runner, "DETECTIONS", {winner, duplicate});
+  PushDets(&runner, "TRACKER_DETECTIONS", {tracked});
+
+  MP_ASSERT_OK(runner.Run());
+  const auto& out = GetOutput(runner);
+  // IoU(tracked, duplicate) is 2/3, but IoU(tracked, winner) is only 1/3.
+  // The suppressed candidate still excludes tracker geometry from gap-fill;
+  // the surviving fresh box does not qualify for an ID association.
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].SerializeAsString(), winner.SerializeAsString());
+}
+
 }  // namespace
 }  // namespace mediapipe
