@@ -136,7 +136,8 @@ std::vector<OrientedDetection> GreedyOrientedDetectionNms(
     for (int j = i + 1; j < n; ++j) {
       if (suppressed[j]) continue;
       if (!class_agnostic && top_label(dets[i]) != top_label(dets[j])) continue;
-      if (OrientedDetectionIoU(dets[i], dets[j]) >= iou_threshold) {
+      const float iou = OrientedDetectionIoU(dets[i], dets[j]);
+      if (iou > 0.0f && iou >= iou_threshold) {
         suppressed[j] = true;
       }
     }

@@ -28,7 +28,9 @@ import mediapipe.tasks.python.vision.image_segmenter
 import mediapipe.tasks.python.vision.interactive_segmenter
 import mediapipe.tasks.python.vision.interactive_segmenter_legacy
 import mediapipe.tasks.python.vision.object_detector
+import mediapipe.tasks.python.vision.oriented_object_detector
 import mediapipe.tasks.python.vision.pose_landmarker
+import mediapipe.tasks.python.vision.yolo_object_detector
 
 drawing_styles = drawing_styles
 drawing_utils = drawing_utils
@@ -69,11 +71,27 @@ InteractiveSegmenterLegacyRegionOfInterest = interactive_segmenter_legacy.Region
 ObjectDetector = object_detector.ObjectDetector
 ObjectDetectorOptions = object_detector.ObjectDetectorOptions
 ObjectDetectorResult = object_detector.ObjectDetectorResult
+OrientedObjectDetector = oriented_object_detector.OrientedObjectDetector
+OrientedObjectDetectorOptions = oriented_object_detector.OrientedObjectDetectorOptions
+OrientedObjectDetectorResult = oriented_object_detector.OrientedObjectDetectorResult
+OrientedObjectDetectorLayout = oriented_object_detector.Layout
+OrientedObjectDetectorTileRect = oriented_object_detector.TileRect
+OrientedObjectDetectorTilingOptions = oriented_object_detector.TilingOptions
+OrientedObjectDetectorTrackerType = oriented_object_detector.TrackerType
+OrientedObjectDetectorTrackingOptions = oriented_object_detector.TrackingOptions
 PoseLandmark = pose_landmarker.PoseLandmark
 PoseLandmarker = pose_landmarker.PoseLandmarker
 PoseLandmarkerOptions = pose_landmarker.PoseLandmarkerOptions
 PoseLandmarkerResult = pose_landmarker.PoseLandmarkerResult
 PoseLandmarksConnections = pose_landmarker.PoseLandmarksConnections
+YoloObjectDetector = yolo_object_detector.YoloObjectDetector
+YoloObjectDetectorOptions = yolo_object_detector.YoloObjectDetectorOptions
+YoloObjectDetectorResult = yolo_object_detector.YoloObjectDetectorResult
+YoloObjectDetectorLayout = yolo_object_detector.Layout
+YoloObjectDetectorTileRect = yolo_object_detector.TileRect
+YoloObjectDetectorTilingOptions = yolo_object_detector.TilingOptions
+YoloObjectDetectorTrackerType = yolo_object_detector.TrackerType
+YoloObjectDetectorTrackingOptions = yolo_object_detector.TrackingOptions
 
 RunningMode = core.vision_task_running_mode.VisionTaskRunningMode
 
@@ -90,5 +108,7 @@ del image_segmenter
 del interactive_segmenter
 del interactive_segmenter_legacy
 del object_detector
+del oriented_object_detector
 del pose_landmarker
+del yolo_object_detector
 del mediapipe

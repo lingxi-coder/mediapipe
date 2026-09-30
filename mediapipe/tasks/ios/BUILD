@@ -109,8 +109,10 @@ CALCULATORS_AND_GRAPHS = [
     "//mediapipe/tasks/cc/vision/interactive_segmenter:interactive_segmenter_graph",
     "//mediapipe/tasks/cc/vision/interactive_segmenter_legacy:interactive_segmenter_legacy_graph",
     "//mediapipe/tasks/cc/vision/object_detector:object_detector_graph",
+    "//mediapipe/tasks/cc/vision/oriented_object_detector:oriented_object_detector_graph",
     "//mediapipe/tasks/cc/vision/pose_landmarker:pose_landmarker_graph",
     "//mediapipe/tasks/cc/vision/holistic_landmarker:holistic_landmarker_graph",
+    "//mediapipe/tasks/cc/vision/yolo_object_detector:yolo_object_detector_graph",
 ]
 
 objc_library(
@@ -153,9 +155,11 @@ MEDIAPIPE_TASKS_COMMON_DEPS = TENSORFLOW_LITE_C_DEPS + [
     "//mediapipe/tasks/ios/vision/interactive_segmenter_legacy:MPPInteractiveSegmenterLegacy",
     "//mediapipe/tasks/ios/vision/interactive_segmenter:MPPInteractiveSegmenter",
     "//mediapipe/tasks/ios/vision/object_detector:MPPObjectDetector",
+    "//mediapipe/tasks/ios/vision/oriented_object_detector:MPPOrientedObjectDetector",
     "//mediapipe/tasks/ios/vision/pose_landmarker:MPPPoseLandmarker",
     "//mediapipe/tasks/ios/text/text_proofreader:MPPTextProofreader",
     "//mediapipe/tasks/ios/text/text_summarizer:MPPTextSummarizer",
+    "//mediapipe/tasks/ios/vision/yolo_object_detector:MPPYoloObjectDetector",
 ]
 
 objc_library(
@@ -172,6 +176,7 @@ strip_api_include_path_prefix(
         "//mediapipe/tasks/ios/components/containers:sources/MPPClassificationResult.h",
         "//mediapipe/tasks/ios/components/containers:sources/MPPConnection.h",
         "//mediapipe/tasks/ios/components/containers:sources/MPPDetection.h",
+        "//mediapipe/tasks/ios/components/containers:sources/MPPOrientedDetection.h",
         "//mediapipe/tasks/ios/components/containers:sources/MPPEmbedding.h",
         "//mediapipe/tasks/ios/components/containers:sources/MPPEmbeddingResult.h",
         "//mediapipe/tasks/ios/components/containers:sources/MPPLandmark.h",
@@ -240,9 +245,14 @@ strip_api_include_path_prefix(
         "//mediapipe/tasks/ios/vision/object_detector:sources/MPPObjectDetector.h",
         "//mediapipe/tasks/ios/vision/object_detector:sources/MPPObjectDetectorOptions.h",
         "//mediapipe/tasks/ios/vision/object_detector:sources/MPPObjectDetectorResult.h",
+        "//mediapipe/tasks/ios/vision/oriented_object_detector:sources/MPPOrientedObjectDetector.h",
+        "//mediapipe/tasks/ios/vision/oriented_object_detector:sources/MPPOrientedObjectDetectorOptions.h",
+        "//mediapipe/tasks/ios/vision/oriented_object_detector:sources/MPPOrientedObjectDetectorResult.h",
         "//mediapipe/tasks/ios/vision/pose_landmarker:sources/MPPPoseLandmarker.h",
         "//mediapipe/tasks/ios/vision/pose_landmarker:sources/MPPPoseLandmarkerOptions.h",
         "//mediapipe/tasks/ios/vision/pose_landmarker:sources/MPPPoseLandmarkerResult.h",
+        "//mediapipe/tasks/ios/vision/yolo_object_detector:sources/MPPYoloObjectDetector.h",
+        "//mediapipe/tasks/ios/vision/yolo_object_detector:sources/MPPYoloObjectDetectorOptions.h",
     ],
 )
 
@@ -319,6 +329,7 @@ mediapipe_static_xcframework(
         ":MPPClassificationResult.h",
         ":MPPClassifierOptions.h",
         ":MPPDetection.h",
+        ":MPPOrientedDetection.h",
         ":MPPEmbedding.h",
         ":MPPEmbeddingResult.h",
         ":MPPLandmark.h",
@@ -364,9 +375,14 @@ mediapipe_static_xcframework(
         ":MPPObjectDetector.h",
         ":MPPObjectDetectorOptions.h",
         ":MPPObjectDetectorResult.h",
+        ":MPPOrientedObjectDetector.h",
+        ":MPPOrientedObjectDetectorOptions.h",
+        ":MPPOrientedObjectDetectorResult.h",
         ":MPPPoseLandmarker.h",
         ":MPPPoseLandmarkerOptions.h",
         ":MPPPoseLandmarkerResult.h",
+        ":MPPYoloObjectDetector.h",
+        ":MPPYoloObjectDetectorOptions.h",
     ],
 )
 

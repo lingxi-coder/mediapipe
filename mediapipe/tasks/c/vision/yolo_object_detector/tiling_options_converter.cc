@@ -37,8 +37,8 @@ void CppConvertToTilingOptions(
   // the caller supplies explicit tiles without a grid, matching the C++ struct's
   // (1,1) defaults that the graph assumes. Grid-only callers are unaffected.
   if (in.explicit_tiles_count > 0) {
-    if (out->tile_rows <= 0) out->tile_rows = 1;
-    if (out->tile_cols <= 0) out->tile_cols = 1;
+    if (out->tile_rows == 0) out->tile_rows = 1;
+    if (out->tile_cols == 0) out->tile_cols = 1;
   }
 
   out->explicit_tiles.clear();

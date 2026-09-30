@@ -189,6 +189,29 @@ TEST(GreedyOrientedDetectionNmsTest, BasicDedupSameClass) {
   EXPECT_NEAR(kept[0].score(0), 0.9f, 1e-6f);
 }
 
+TEST(GreedyOrientedDetectionNmsTest, ZeroThresholdKeepsDisjointBoxes) {
+  std::vector<OrientedDetection> dets = {
+      Obb(0.9f, 0, 0.25f, 0.25f, 0.25f, 0.25f, 0.0f),
+      Obb(0.8f, 0, 0.75f, 0.75f, 0.25f, 0.25f, 0.0f),
+      Obb(0.7f, 0, 0.25f, 0.25f, 0.25f, 0.25f, 0.0f),
+  };
+  auto kept = GreedyOrientedDetectionNms(dets, 0.0f, false);
+  ASSERT_EQ(kept.size(), 2u);
+  EXPECT_FLOAT_EQ(kept[0].score(0), 0.9f);
+  EXPECT_FLOAT_EQ(kept[1].score(0), 0.8f);
+}
+
+TEST(GreedyOrientedDetectionNmsTest, PositiveThresholdRemainsInclusive) {
+  std::vector<OrientedDetection> dets = {
+      Obb(0.9f, 0, 0.375f, 0.5f, 0.75f, 0.5f, 0.0f),
+      Obb(0.8f, 0, 0.625f, 0.5f, 0.75f, 0.5f, 0.0f),
+  };
+  ASSERT_FLOAT_EQ(OrientedDetectionIoU(dets[0], dets[1]), 0.5f);
+  auto kept = GreedyOrientedDetectionNms(dets, 0.5f, false);
+  ASSERT_EQ(kept.size(), 1u);
+  EXPECT_FLOAT_EQ(kept[0].score(0), 0.9f);
+}
+
 TEST(GreedyOrientedDetectionNmsTest, RotationSeparatesCrossedBoxes) {
   // Two thin boxes crossing at ~90 degrees: rotated IoU is
   // (0.1*0.1)/(2*0.6*0.1 - 0.01) ~= 0.09, far below the threshold.

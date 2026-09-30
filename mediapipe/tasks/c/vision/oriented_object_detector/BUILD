@@ -74,6 +74,7 @@ cc_test(
         "//mediapipe/tasks/c/core:common",
         "//mediapipe/tasks/c/core:mp_status",
         "//mediapipe/tasks/c/vision/core:image",
+        "//mediapipe/tasks/c/vision/core:image_frame_util",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],

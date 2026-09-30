@@ -25,8 +25,8 @@ message RotatedNonMaxSuppressionCalculatorOptions {
     optional RotatedNonMaxSuppressionCalculatorOptions ext = 471230003;
   }
 
-  // A detection suppresses a lower-scoring one if their rotated IoU is at or
-  // above this threshold.
+  // A detection suppresses a lower-scoring overlapping one if their rotated
+  // IoU is at or above this threshold. Disjoint boxes are always kept.
   optional float iou_threshold = 1 [default = 0.45];
 
   // Maximum detections to return (after suppression). -1 = no limit.

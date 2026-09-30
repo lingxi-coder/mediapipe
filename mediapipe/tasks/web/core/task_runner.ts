@@ -88,9 +88,18 @@ export async function createTaskRunner<T extends TaskRunner>(
     canvas,
     fileLocator,
   );
-  instance.enableLogging(options);
-  await instance.setOptions(options);
-  return instance;
+  try {
+    instance.enableLogging(options);
+    await instance.setOptions(options);
+    return instance;
+  } catch (error) {
+    try {
+      instance.close();
+    } catch {
+      // Preserve the initialization error if releasing resources also fails.
+    }
+    throw error;
+  }
 }
 
 /** Base class for all MediaPipe Tasks. */
@@ -100,6 +109,10 @@ export abstract class TaskRunner {
   private processingErrors: Error[] = [];
   private latestOutputTimestamp = 0;
   private keepaliveNode?: CalculatorGraphConfig.Node;
+  private isClosed = false;
+  private pendingOptionsUpdate?: Promise<void>;
+  private optionsUpdateInProgress = false;
+  private readonly modelLoadControllers = new Set<AbortController>();
 
   /**
    * Creates a new instance of a Mediapipe Task. Determines if SIMD is
@@ -125,6 +138,118 @@ export abstract class TaskRunner {
   /** Configures the task with custom options. */
   abstract setOptions(options: TaskRunnerOptions): Promise<void>;
 
+  /**
+   * Serializes complete option updates, including validation and rollback.
+   * The first update starts synchronously; later updates wait for it to settle.
+   */
+  protected runWithOptionsUpdate(update: () => Promise<void>): Promise<void> {
+    this.assertNotClosed();
+    const runUpdate = () => {
+      this.assertNotClosed();
+      this.optionsUpdateInProgress = true;
+      try {
+        const result = update();
+        if (this.modelLoadControllers.size === 0) {
+          // Updates that install synchronously remain immediately usable.
+          this.optionsUpdateInProgress = false;
+          return result;
+        }
+        return result.finally(() => {
+          this.optionsUpdateInProgress = false;
+        });
+      } catch (error) {
+        this.optionsUpdateInProgress = false;
+        throw error;
+      }
+    };
+    const queued = this.pendingOptionsUpdate !== undefined;
+    const pending = this.pendingOptionsUpdate
+      ? this.pendingOptionsUpdate.then(runUpdate, runUpdate)
+      : runUpdate();
+    if (!queued && !this.optionsUpdateInProgress) {
+      // A completed synchronous update must not delay the next synchronous one.
+      return pending;
+    }
+    this.pendingOptionsUpdate = pending;
+    const clearPending = () => {
+      if (this.pendingOptionsUpdate === pending) {
+        this.pendingOptionsUpdate = undefined;
+      }
+    };
+    void pending.then(clearPending, clearPending);
+    return pending;
+  }
+
+  /** Rejects work after the task has released its graph resources. */
+  protected assertNotClosed(): void {
+    if (this.isClosed) {
+      throw new Error('Task is closed.');
+    }
+  }
+
+  /** Prevents frames from reaching a graph while new options are loading. */
+  protected assertReadyForProcessing(): void {
+    this.assertNotClosed();
+    if (this.optionsUpdateInProgress) {
+      throw new Error(
+        'Task options are being updated. Await setOptions() before processing.',
+      );
+    }
+  }
+
+  /**
+   * Installs model data and its graph. Installation can replace native resources,
+   * so failures close the task instead of exposing a partially updated graph.
+   */
+  private installGraph(updateModel?: () => void): void {
+    this.assertNotClosed();
+    try {
+      updateModel?.();
+      this.refreshGraph();
+      this.onGraphRefreshed();
+    } catch (error) {
+      try {
+        this.close();
+      } catch {
+        // Preserve the installation error if releasing resources also fails.
+      }
+      throw error;
+    }
+  }
+
+  /** Loads a model while allowing close() to cancel it immediately. */
+  private loadModelData(
+    load: (signal: AbortSignal) => Promise<Uint8Array>,
+  ): Promise<Uint8Array> {
+    this.assertNotClosed();
+    const controller = new AbortController();
+    this.modelLoadControllers.add(controller);
+    const closed = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => {
+        reject(new Error('Task is closed.'));
+      }, {once: true});
+    });
+    let loading: Promise<Uint8Array>;
+    try {
+      loading = load(controller.signal);
+    } catch (error) {
+      this.modelLoadControllers.delete(controller);
+      throw error;
+    }
+    return Promise.race([loading, closed]).then(
+      (buffer) => {
+        this.assertNotClosed();
+        return buffer;
+      },
+      (error) => {
+        this.assertNotClosed();
+        throw error;
+      },
+    ).finally(() => {
+      this.modelLoadControllers.delete(controller);
+    });
+  }
+
   /** Returns the public name of the task (e.g. FaceLandmarker). */
   protected abstract getTaskName(): string;
 
@@ -149,6 +274,7 @@ export abstract class TaskRunner {
     options: TaskRunnerOptions,
     loadTfliteModel = true,
   ): Promise<void> {
+    this.assertNotClosed();
     if (loadTfliteModel) {
       const baseOptions: BaseOptions = options.baseOptions || {};
 
@@ -177,17 +303,20 @@ export abstract class TaskRunner {
       if (baseOptions.modelAssetPath) {
         // We don't use `await` here since we want to apply most settings
         // synchronously.
-        return fetch(baseOptions.modelAssetPath.toString())
-          .then((response) => {
-            if (!response.ok) {
-              throw new Error(
-                `Failed to fetch model: ${baseOptions.modelAssetPath} (${response.status})`,
-              );
-            } else {
+        const modelAssetPath = baseOptions.modelAssetPath;
+        return this.loadModelData((signal) =>
+          fetch(modelAssetPath.toString(), {signal})
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to fetch model: ${modelAssetPath} (${response.status})`,
+                );
+              }
               return response.arrayBuffer();
-            }
-          })
-          .then((buffer) => {
+            })
+            .then((buffer) => new Uint8Array(buffer)),
+        ).then((buffer) => {
+          this.installGraph(() => {
             try {
               // Try to delete file as we cannot overwrite an existing file
               // using our current API.
@@ -198,31 +327,34 @@ export abstract class TaskRunner {
             this.graphRunner.wasmModule.FS_createDataFile(
               '/',
               'model.dat',
-              new Uint8Array(buffer),
+              buffer,
               /* canRead= */ true,
               /* canWrite= */ false,
               /* canOwn= */ false,
             );
             this.setExternalFile('/model.dat');
-            this.refreshGraph();
-            this.onGraphRefreshed();
           });
+        });
       } else if (baseOptions.modelAssetBuffer instanceof Uint8Array) {
         this.setExternalFile(baseOptions.modelAssetBuffer);
       } else if (baseOptions.modelAssetBuffer) {
-        return streamToUint8Array(baseOptions.modelAssetBuffer).then(
-          (buffer) => {
-            this.setExternalFile(buffer);
-            this.refreshGraph();
-            this.onGraphRefreshed();
-          },
-        );
+        const reader = baseOptions.modelAssetBuffer;
+        return this.loadModelData((signal) => {
+          const cancelReader = () => {
+            void reader.cancel().catch(() => {});
+          };
+          signal.addEventListener('abort', cancelReader, {once: true});
+          return streamToUint8Array(reader).finally(() => {
+            signal.removeEventListener('abort', cancelReader);
+          });
+        }).then((buffer) => {
+          this.installGraph(() => this.setExternalFile(buffer));
+        });
       }
     }
 
     // If there is no model to download, we can apply the setting synchronously.
-    this.refreshGraph();
-    this.onGraphRefreshed();
+    this.installGraph();
     return Promise.resolve();
   }
 
@@ -258,6 +390,7 @@ export abstract class TaskRunner {
    *     binary format, and false if it is in human-readable text format.
    */
   protected setGraph(graphData: Uint8Array, isBinary: boolean): void {
+    this.assertNotClosed();
     this.graphRunner.attachErrorListener((code, message) => {
       this.processingErrors.push(new Error(message));
     });
@@ -277,6 +410,7 @@ export abstract class TaskRunner {
    * @param timestamp The timestamp of the input packets.
    */
   protected startProcessing(timestamp?: number): void {
+    this.assertReadyForProcessing();
     if (this.logger && timestamp !== undefined) {
       if (this.baseOptions.getAcceleration()?.hasGpu()) {
         this.logger.recordGpuInputArrival(timestamp);
@@ -292,6 +426,7 @@ export abstract class TaskRunner {
    * done.
    */
   protected finishProcessing(timestamp?: number): void {
+    this.assertNotClosed();
     this.graphRunner.finishProcessing();
     this.handleErrors();
     if (this.logger && timestamp !== undefined) {
@@ -414,6 +549,13 @@ export abstract class TaskRunner {
    * @export
    */
   close(): void {
+    if (this.isClosed) {
+      return;
+    }
+    this.isClosed = true;
+    for (const controller of this.modelLoadControllers) {
+      controller.abort();
+    }
     this.keepaliveNode = undefined;
     this.logger?.logSessionEnd();
     this.logger?.close();

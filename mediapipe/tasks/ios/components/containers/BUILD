@@ -69,6 +69,17 @@ objc_library(
 )
 
 objc_library(
+    name = "MPPOrientedDetection",
+    srcs = ["sources/MPPOrientedDetection.m"],
+    hdrs = ["sources/MPPOrientedDetection.h"],
+    deps = [
+        ":MPPCategory",
+        "//third_party/apple_frameworks:Foundation",
+        "//third_party/apple_frameworks:UIKit",
+    ],
+)
+
+objc_library(
     name = "MPPLandmark",
     srcs = ["sources/MPPLandmark.m"],
     hdrs = ["sources/MPPLandmark.h"],

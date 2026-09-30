@@ -58,6 +58,70 @@ android_library(
 )
 
 android_library(
+    name = "yoloobjectdetector",
+    manifest = "yoloobjectdetector/AndroidManifest.xml",
+    exports = [
+        ":core",
+        ":yoloobjectdetector_java",
+    ],
+    deps = ["@maven//:com_google_guava_guava"],
+)
+
+android_library(
+    name = "yoloobjectdetector_java",
+    srcs = [
+        "yoloobjectdetector/YoloObjectDetector.java",
+        "yoloobjectdetector/YoloObjectDetectorResult.java",
+    ],
+    manifest = "yoloobjectdetector/AndroidManifest.xml",
+    deps = [
+        ":core_java",
+        "//mediapipe/framework:calculator_options_java_proto_lite",
+        "//mediapipe/framework/formats:detection_java_proto_lite",
+        "//mediapipe/java/com/google/mediapipe/framework:android_framework",
+        "//mediapipe/java/com/google/mediapipe/framework/image",
+        "//mediapipe/tasks/cc/core/proto:base_options_java_proto_lite",
+        "//mediapipe/tasks/cc/vision/yolo_object_detector/proto:yolo_object_detector_options_java_proto_lite",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:detection",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:core_java",
+        "//third_party:autovalue",
+        "@maven//:com_google_guava_guava",
+    ],
+)
+
+android_library(
+    name = "orientedobjectdetector",
+    manifest = "orientedobjectdetector/AndroidManifest.xml",
+    exports = [
+        ":core",
+        ":orientedobjectdetector_java",
+    ],
+    deps = ["@maven//:com_google_guava_guava"],
+)
+
+android_library(
+    name = "orientedobjectdetector_java",
+    srcs = [
+        "orientedobjectdetector/OrientedObjectDetector.java",
+        "orientedobjectdetector/OrientedObjectDetectorResult.java",
+    ],
+    manifest = "orientedobjectdetector/AndroidManifest.xml",
+    deps = [
+        ":core_java",
+        "//mediapipe/framework:calculator_options_java_proto_lite",
+        "//mediapipe/framework/formats:oriented_detection_java_proto_lite",
+        "//mediapipe/java/com/google/mediapipe/framework:android_framework",
+        "//mediapipe/java/com/google/mediapipe/framework/image",
+        "//mediapipe/tasks/cc/core/proto:base_options_java_proto_lite",
+        "//mediapipe/tasks/cc/vision/oriented_object_detector/proto:oriented_object_detector_options_java_proto_lite",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:oriented_detection",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/core:core_java",
+        "//third_party:autovalue",
+        "@maven//:com_google_guava_guava",
+    ],
+)
+
+android_library(
     name = "objectdetector_java",
     srcs = [
         "objectdetector/ObjectDetectionResult.java",
@@ -416,6 +480,7 @@ android_library(
         "//mediapipe/framework/formats:detection_java_proto_lite",
         "//mediapipe/framework/formats:landmark_java_proto_lite",
         "//mediapipe/framework/formats:matrix_data_java_proto_lite",
+        "//mediapipe/framework/formats:oriented_detection_java_proto_lite",
         "//mediapipe/framework/formats:rect_java_proto_lite",
         "//mediapipe/java/com/google/mediapipe/framework:android_framework_no_mff",
         "//mediapipe/java/com/google/mediapipe/framework/image",
@@ -443,9 +508,11 @@ android_library(
         "//mediapipe/tasks/cc/vision/interactive_segmenter/proto:stroke_java_proto_lite",
         "//mediapipe/tasks/cc/vision/interactive_segmenter_legacy/proto:region_of_interest_java_proto_lite",
         "//mediapipe/tasks/cc/vision/object_detector/proto:object_detector_options_java_proto_lite",
+        "//mediapipe/tasks/cc/vision/oriented_object_detector/proto:oriented_object_detector_options_java_proto_lite",
         "//mediapipe/tasks/cc/vision/pose_detector/proto:pose_detector_graph_options_java_proto_lite",
         "//mediapipe/tasks/cc/vision/pose_landmarker/proto:pose_landmarker_graph_options_java_proto_lite",
         "//mediapipe/tasks/cc/vision/pose_landmarker/proto:pose_landmarks_detector_graph_options_java_proto_lite",
+        "//mediapipe/tasks/cc/vision/yolo_object_detector/proto:yolo_object_detector_options_java_proto_lite",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:category",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:classificationresult",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:connection",
@@ -453,6 +520,7 @@ android_library(
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:embedding",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:embeddingresult",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:landmark",
+        "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:oriented_detection",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:normalized_landmark",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/containers:normalizedkeypoint",
         "//mediapipe/tasks/java/com/google/mediapipe/tasks/components/processors:classifieroptions",

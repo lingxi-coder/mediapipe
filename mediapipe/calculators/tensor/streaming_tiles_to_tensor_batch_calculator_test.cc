@@ -13,14 +13,17 @@
 // limitations under the License.
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
 
+#include "flatbuffers/flatbuffers.h"
 #include "mediapipe/framework/formats/tiling_cache_stats.h"
 #include "mediapipe/util/tiling_matrix_utils.h"
 #include "mediapipe/framework/formats/tiling_types.h"
 #include "mediapipe/framework/calculator_runner.h"
+#include "mediapipe/framework/calculator_framework.h"
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
@@ -28,6 +31,9 @@
 #include "mediapipe/framework/port/gtest.h"
 #include "mediapipe/framework/port/parse_text_proto.h"
 #include "mediapipe/framework/port/status_matchers.h"
+#include "mediapipe/util/tflite/tflite_model_loader.h"
+#include "tflite/model_builder.h"
+#include "tflite/schema/schema_generated.h"
 
 namespace mediapipe {
 namespace {
@@ -143,6 +149,102 @@ TEST(StreamingTilesTest, DynamicBatchNoPadding) {
   EXPECT_EQ(info.valid_count, 2);
 }
 
+TEST(StreamingTilesTest, DynamicBatchesResizeCpuInterpreter) {
+  flatbuffers::FlatBufferBuilder builder;
+  const auto tensor = tflite::CreateTensor(
+      builder, builder.CreateVector(std::vector<int32_t>{2, 4, 5, 3}),
+      tflite::TensorType_FLOAT32, 0, builder.CreateString("image"), 0, false, 0,
+      builder.CreateVector(std::vector<int32_t>{-1, 4, 5, 3}));
+  const auto subgraph = tflite::CreateSubGraph(
+      builder,
+      builder.CreateVector(std::vector<flatbuffers::Offset<tflite::Tensor>>{tensor}),
+      builder.CreateVector(std::vector<int32_t>{0}),
+      builder.CreateVector(std::vector<int32_t>{0}),
+      builder.CreateVector(std::vector<flatbuffers::Offset<tflite::Operator>>{}));
+  const auto model = tflite::CreateModel(
+      builder, 3,
+      builder.CreateVector(std::vector<flatbuffers::Offset<tflite::OperatorCode>>{}),
+      builder.CreateVector(
+          std::vector<flatbuffers::Offset<tflite::SubGraph>>{subgraph}),
+      0, builder.CreateVector(std::vector<flatbuffers::Offset<tflite::Buffer>>{
+             tflite::CreateBuffer(builder)}));
+  tflite::FinishModelBuffer(builder, model);
+
+  for (const int capacity : {1, 2}) {
+    SCOPED_TRACE(capacity);
+    auto flatbuffer_model = tflite::FlatBufferModel::BuildFromBuffer(
+        reinterpret_cast<const char*>(builder.GetBufferPointer()),
+        builder.GetSize());
+    ASSERT_NE(flatbuffer_model, nullptr);
+    TfLiteModelPtr model_ptr(flatbuffer_model.release(),
+                            [](tflite::FlatBufferModel* value) { delete value; });
+    auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+      input_stream: "image"
+      input_stream: "tile_plan"
+      input_side_packet: "model"
+      input_side_packet: "meta"
+      output_stream: "preprocessed"
+      output_stream: "out"
+      node {
+        calculator: "StreamingTilesToTensorBatchCalculator"
+        input_stream: "IMAGE:image"
+        input_stream: "TILE_PLAN:tile_plan"
+        input_side_packet: "METADATA:meta"
+        output_stream: "TENSORS:preprocessed"
+        output_stream: "BATCH_INFO:info"
+      }
+      node {
+        calculator: "InferenceCalculatorCpu"
+        input_stream: "TENSORS:preprocessed"
+        input_side_packet: "MODEL:model"
+        output_stream: "TENSORS:out"
+      }
+    )pb");
+    CalculatorGraph graph;
+    MP_ASSERT_OK(graph.Initialize(config));
+    std::vector<Packet> preprocessed;
+    std::vector<Packet> outputs;
+    MP_ASSERT_OK(graph.ObserveOutputStream("preprocessed", [&](const Packet& p) {
+      preprocessed.push_back(p);
+      return absl::OkStatus();
+    }));
+    MP_ASSERT_OK(graph.ObserveOutputStream("out", [&](const Packet& p) {
+      outputs.push_back(p);
+      return absl::OkStatus();
+    }));
+    MP_ASSERT_OK(graph.StartRun({
+        {"model", MakePacket<TfLiteModelPtr>(std::move(model_ptr))},
+        {"meta", MakePacket<InferenceMetadata>(Meta(capacity, 4, 5, 3, true))},
+    }));
+    for (int frame_index = 0; frame_index < 2; ++frame_index) {
+      TilePlan plan = TwoTiles();
+      if (frame_index == 0) plan.tiles.resize(1);
+      MP_ASSERT_OK(graph.AddPacketToInputStream(
+          "image", Adopt(WhiteFrame(16, 16).release()).At(Timestamp(frame_index))));
+      MP_ASSERT_OK(graph.AddPacketToInputStream(
+          "tile_plan", MakePacket<TilePlan>(std::move(plan))
+                           .At(Timestamp(frame_index))));
+    }
+    MP_ASSERT_OK(graph.CloseAllInputStreams());
+    MP_ASSERT_OK(graph.WaitUntilDone());
+    const std::vector<int> expected_batches =
+        capacity == 1 ? std::vector<int>{1, 1, 1} : std::vector<int>{1, 2};
+    ASSERT_EQ(preprocessed.size(), expected_batches.size());
+    ASSERT_EQ(outputs.size(), expected_batches.size());
+    for (int i = 0; i < expected_batches.size(); ++i) {
+      const Tensor& input = preprocessed[i].Get<std::vector<Tensor>>()[0];
+      EXPECT_TRUE(input.shape().is_dynamic);
+      const Tensor& output = outputs[i].Get<std::vector<Tensor>>()[0];
+      EXPECT_EQ(output.shape().dims,
+                (std::vector<int>{expected_batches[i], 4, 5, 3}));
+      auto read = output.GetCpuReadView();
+      for (int p = 0; p < output.shape().num_elements(); ++p) {
+        EXPECT_FLOAT_EQ(read.buffer<float>()[p], 1.0f);
+      }
+    }
+  }
+}
+
 TEST(StreamingTilesTest, RgbaInputDropsAlphaForRgbModel) {
   CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
     calculator: "StreamingTilesToTensorBatchCalculator"
@@ -234,6 +336,134 @@ TEST(StreamingTilesTest, GeometryPopulatedAndMatricesRoundTrip) {
               &out_x, &out_y);
   EXPECT_NEAR(out_x, tg.x_center, 2e-2f);
   EXPECT_NEAR(out_y, tg.y_center, 2e-2f);
+}
+
+TEST(StreamingTilesTest, ClipsBoundaryTilesWithoutShiftingRequestedCrop) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(3, 4, 4, 3, /*dynamic=*/false));
+  auto frame = std::make_unique<ImageFrame>(ImageFormat::SRGB, 100, 100);
+  for (int y = 0; y < 100; ++y) {
+    uint8_t* row = frame->MutablePixelData() + y * frame->WidthStep();
+    for (int x = 0; x < 100; ++x) {
+      row[x * 3] = x;
+      row[x * 3 + 1] = y;
+      row[x * 3 + 2] = 255;
+    }
+  }
+  TilePlan plan;
+  for (int i = 0; i < 3; ++i) {
+    TileGeometry tile;
+    tile.tile_index = i;
+    tile.x_center = i == 0 ? 0.0f : i == 1 ? 1.0f : 0.4f;
+    tile.y_center = i == 0 ? 0.0f : i == 1 ? 1.0f : 0.5f;
+    tile.width = tile.height = i == 2 ? 0.2f : 0.4f;
+    plan.tiles.push_back(tile);
+  }
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(frame.release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(plan).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& infos = runner.Outputs().Tag("BATCH_INFO").packets;
+  ASSERT_EQ(infos.size(), 1);
+  const auto& info = infos[0].Get<TensorBatchInfo>();
+  ASSERT_NE(info.geometry, nullptr);
+  ASSERT_EQ(info.geometry->effective_pixel_rois.size(), 3);
+  const std::vector<TilePixelRoi> expected_rois = {
+      {0, 0, 20, 20}, {80, 80, 20, 20}, {30, 40, 20, 20}};
+  const auto& packets = runner.Outputs().Tag("TENSORS").packets;
+  ASSERT_EQ(packets.size(), 1);
+  auto read = packets[0].Get<std::vector<Tensor>>()[0].GetCpuReadView();
+  const float* pixels = read.buffer<float>();
+  for (int tile = 0; tile < expected_rois.size(); ++tile) {
+    SCOPED_TRACE(tile);
+    const auto& roi = info.geometry->effective_pixel_rois[tile];
+    const auto& expected = expected_rois[tile];
+    EXPECT_EQ(roi.x, expected.x);
+    EXPECT_EQ(roi.y, expected.y);
+    EXPECT_EQ(roi.width, expected.width);
+    EXPECT_EQ(roi.height, expected.height);
+    float frame_x, frame_y;
+    ApplyMatrix(info.geometry->tile_to_image_matrices[tile], 1.0f, 1.0f,
+                &frame_x, &frame_y);
+    EXPECT_NEAR(frame_x, (expected.x + expected.width) / 100.0f, 1e-6f);
+    EXPECT_NEAR(frame_y, (expected.y + expected.height) / 100.0f, 1e-6f);
+    for (int y = 0; y < 4; ++y) {
+      for (int x = 0; x < 4; ++x) {
+        const int offset = (tile * 16 + y * 4 + x) * 3;
+        EXPECT_NEAR(pixels[offset], (expected.x + 2 + x * 5) / 255.0f, 1e-6f);
+        EXPECT_NEAR(pixels[offset + 1], (expected.y + 2 + y * 5) / 255.0f, 1e-6f);
+        EXPECT_FLOAT_EQ(pixels[offset + 2], 1.0f);
+      }
+    }
+  }
+}
+
+TEST(StreamingTilesTest, RejectsNonByteOrNonRgbCpuFormats) {
+  for (const auto format : {ImageFormat::SRGB48, ImageFormat::LAB8}) {
+    SCOPED_TRACE(format);
+    CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+      calculator: "StreamingTilesToTensorBatchCalculator"
+      input_stream: "IMAGE:image"
+      input_stream: "TILE_PLAN:plan"
+      input_side_packet: "METADATA:meta"
+      output_stream: "TENSORS:tensors"
+      output_stream: "BATCH_INFO:info"
+    )pb"));
+    runner.MutableSidePackets()->Tag("METADATA") =
+        MakePacket<InferenceMetadata>(Meta(2, 4, 4, 3, /*dynamic=*/false));
+    auto frame = std::make_unique<ImageFrame>(format, 16, 16);
+    std::memset(frame->MutablePixelData(), 255, frame->Height() * frame->WidthStep());
+    runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+        Adopt(frame.release()).At(Timestamp(0)));
+    runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+        MakePacket<TilePlan>(TwoTiles()).At(Timestamp(0)));
+    const absl::Status status = runner.Run();
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.message(), HasSubstr("SRGB, SRGBA, SBGRA and GRAY8"));
+    EXPECT_TRUE(runner.Outputs().Tag("TENSORS").packets.empty());
+  }
+}
+
+TEST(StreamingTilesTest, PreservesInteriorPixelRounding) {
+  CalculatorRunner runner(ParseTextProtoOrDie<CalculatorGraphConfig::Node>(R"pb(
+    calculator: "StreamingTilesToTensorBatchCalculator"
+    input_stream: "IMAGE:image"
+    input_stream: "TILE_PLAN:plan"
+    input_side_packet: "METADATA:meta"
+    output_stream: "TENSORS:tensors"
+    output_stream: "BATCH_INFO:info"
+  )pb"));
+  runner.MutableSidePackets()->Tag("METADATA") =
+      MakePacket<InferenceMetadata>(Meta(1, 4, 4, 3, /*dynamic=*/false));
+  TileGeometry tile;
+  tile.x_center = tile.y_center = 0.5f;
+  tile.width = tile.height = 0.35f;
+  TilePlan plan;
+  plan.tiles.push_back(tile);
+  runner.MutableInputs()->Tag("IMAGE").packets.push_back(
+      Adopt(WhiteFrame(10, 10).release()).At(Timestamp(0)));
+  runner.MutableInputs()->Tag("TILE_PLAN").packets.push_back(
+      MakePacket<TilePlan>(plan).At(Timestamp(0)));
+  MP_ASSERT_OK(runner.Run());
+  const auto& infos = runner.Outputs().Tag("BATCH_INFO").packets;
+  ASSERT_EQ(infos.size(), 1);
+  const auto& info = infos[0].Get<TensorBatchInfo>();
+  ASSERT_NE(info.geometry, nullptr);
+  ASSERT_EQ(info.geometry->effective_pixel_rois.size(), 1);
+  const auto& roi = info.geometry->effective_pixel_rois[0];
+  EXPECT_EQ(roi.x, 3);
+  EXPECT_EQ(roi.y, 3);
+  EXPECT_EQ(roi.width, 4);  // float(0.35f * 10) is exactly 3.5f.
+  EXPECT_EQ(roi.height, 4);
 }
 
 // Verifies that enabling max_cached_tile_matrices produces identical geometry

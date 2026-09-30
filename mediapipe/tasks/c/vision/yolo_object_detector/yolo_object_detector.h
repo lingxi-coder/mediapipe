@@ -206,7 +206,8 @@ MP_EXPORT MpStatus MpYoloObjectDetectorDetectAsync(
 MP_EXPORT void MpYoloObjectDetectorCloseResult(
     MpYoloObjectDetectorResult* result);
 
-// Frees the detector.
+// Frees the detector even if shutdown returns an error. The pointer is invalid
+// after this call regardless of the returned status and must not be reused.
 MP_EXPORT MpStatus MpYoloObjectDetectorClose(MpYoloObjectDetectorPtr detector,
                                              char** error_msg);
 

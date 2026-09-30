@@ -68,6 +68,7 @@
 #include "mediapipe/framework/formats/tensor_mtl_buffer_view.h"
 #include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/gpu/MPPMetalHelper.h"
+#include "mediapipe/gpu/gpu_service.h"
 #endif  // MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_31
 #endif  // !MEDIAPIPE_DISABLE_GPU
 
@@ -223,6 +224,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     if (options_.enable_gpu_zero_copy() && kInImageGpu(cc).IsConnected()) {
       RET_CHECK_EQ(meta_.input_channels(), 3)
           << "Metal zero-copy path supports RGB (input_channels == 3) only";
+      RET_CHECK(cc->Service(mediapipe::kGpuService).IsAvailable())
+          << "GPU service not available for Metal tiled preprocessing";
       metal_helper_ = [[MPPMetalHelper alloc] initWithCalculatorContext:cc];
       RET_CHECK(metal_helper_ != nil) << "failed creating MPPMetalHelper";
       ABSL_ASSIGN_OR_RETURN(
@@ -303,11 +306,24 @@ class StreamingTilesToTensorBatchCalculator : public Node {
         << "no IMAGE (CPU) input present; either wire IMAGE or enable the GPU "
            "zero-copy path with an IMAGE_GPU input";
     const ImageFrame& frame = *kInImage(cc);
+    RET_CHECK(frame.Format() == ImageFormat::SRGB ||
+              frame.Format() == ImageFormat::SRGBA ||
+              frame.Format() == ImageFormat::SBGRA ||
+              frame.Format() == ImageFormat::GRAY8)
+        << "CPU tiled preprocessing supports SRGB, SRGBA, SBGRA and GRAY8; got "
+        << static_cast<int>(frame.Format());
     const TilePlan& plan = *kInPlan(cc);
     const int H = meta_.input_height();
     const int W = meta_.input_width();
     const int C = meta_.input_channels();
     const int cap = meta_.batch_capacity();
+    bool physical_metal_input = false;
+#if MEDIAPIPE_STREAMING_TILES_METAL_ZERO_COPY
+    physical_metal_input = options_.enable_gpu_zero_copy() &&
+                           options_.metal_direct_delegate_input() &&
+                           kInImageGpu(cc).IsConnected();
+#endif
+    const int tensor_channels = physical_metal_input ? 4 : C;
     const int frame_channels = frame.NumberOfChannels();
     int alpha_to_rgb_conversion = -1;
     if (C == 3 && frame.Format() == ImageFormat::SRGBA) {
@@ -336,12 +352,18 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     for (int start = 0; start < T; start += cap) {
       const int rows = std::min(cap, T - start);
       const int N = dynamic_batch_ ? rows : cap;
+      if (physical_metal_input) {
+        RET_CHECK_EQ(N, 1)
+            << "metal_direct_delegate_input requires batch N==1 "
+               "(set batch_capacity=1); got N=" << N;
+      }
       Tensor tensor(Tensor::ElementType::kFloat32,
-                    Tensor::Shape{N, H, W, C},
+                    Tensor::Shape({N, H, W, tensor_channels},
+                                  dynamic_batch_ && !physical_metal_input),
                     memory_manager_.get());
       auto write = tensor.GetCpuWriteView();
       float* buf = write.buffer<float>();
-      std::memset(buf, 0, sizeof(float) * N * H * W * C);
+      std::memset(buf, 0, sizeof(float) * N * H * W * tensor_channels);
 
       std::shared_ptr<const TileBatchGeometry> geom =
           BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
@@ -369,8 +391,17 @@ class StreamingTilesToTensorBatchCalculator : public Node {
           model_input = &rgb_workspace_;
         }
         model_input->convertTo(f32_workspace_, CV_32FC(C), 1.0 / 255.0);
-        std::memcpy(buf + static_cast<size_t>(r) * H * W * C,
-                    f32_workspace_.ptr<float>(0), sizeof(float) * H * W * C);
+        float* row = buf + static_cast<size_t>(r) * H * W * tensor_channels;
+        const float* pixels = f32_workspace_.ptr<float>(0);
+        if (physical_metal_input) {
+          // The downstream delegate keeps its physical PHWC4 input contract
+          // on a CPU fallback frame. The fourth channel remains zero-filled.
+          for (int p = 0; p < H * W; ++p) {
+            std::copy_n(pixels + p * C, C, row + p * tensor_channels);
+          }
+        } else {
+          std::memcpy(row, pixels, sizeof(float) * H * W * C);
+        }
       }
 
       std::vector<Tensor> tensors;
@@ -395,6 +426,13 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   // ProcessCpu's batch/timestamp/INFO semantics exactly.
   absl::Status ProcessGpu(CalculatorContext* cc) {
     const mediapipe::GpuBuffer& gpu = *kInImageGpu(cc);
+    RET_CHECK(gpu.format() == GpuBufferFormat::kBGRA32 ||
+              gpu.format() == GpuBufferFormat::kRGBA32 ||
+              gpu.format() == GpuBufferFormat::kRGB24 ||
+              gpu.format() == GpuBufferFormat::kRGBAHalf64 ||
+              gpu.format() == GpuBufferFormat::kRGBAFloat128)
+        << "GPU tiled preprocessing requires an RGB or RGBA input format; got "
+        << static_cast<uint32_t>(gpu.format());
     const TilePlan& plan = *kInPlan(cc);
     const int H = meta_.input_height();
     const int W = meta_.input_width();
@@ -414,7 +452,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
       const int N = dynamic_batch_ ? rows : cap;
       // gpu_memory_manager_ pools AHWB-backed storage where available (Cache 5).
       Tensor tensor(Tensor::ElementType::kFloat32,
-                    Tensor::Shape{N, H, W, C}, gpu_memory_manager_.get());
+                    Tensor::Shape({N, H, W, C}, dynamic_batch_),
+                    gpu_memory_manager_.get());
 
       std::shared_ptr<const TileBatchGeometry> geom =
           BuildOrGetGeometry(plan, start, rows, fw, fh, W, H, C);
@@ -492,6 +531,14 @@ class StreamingTilesToTensorBatchCalculator : public Node {
   // approach here works for all N at the cost of one cheap on-GPU conversion.)
   absl::Status ProcessMetal(CalculatorContext* cc) {
     const mediapipe::GpuBuffer& gpu = *kInImageGpu(cc);
+    // ImageFrame-backed RGBA32 buffers are converted to BGRA CVPixelBuffers
+    // by the storage registry. Validate the source format as well as the
+    // directly supported CVPixelBuffer formats, without admitting YUV planes.
+    RET_CHECK(gpu.format() == GpuBufferFormat::kBGRA32 ||
+              gpu.format() == GpuBufferFormat::kRGBA32 ||
+              gpu.format() == GpuBufferFormat::kRGBAHalf64)
+        << "Metal tiled preprocessing requires an RGB or RGBA input format; got "
+        << static_cast<uint32_t>(gpu.format());
     const TilePlan& plan = *kInPlan(cc);
     const int H = meta_.input_height();
     const int W = meta_.input_width();
@@ -565,7 +612,8 @@ class StreamingTilesToTensorBatchCalculator : public Node {
                 .At(batch_ts_));
       } else {
         // Logical [N,H,W,C] Metal path (default): each tile written to its row.
-        Tensor tensor(Tensor::ElementType::kFloat32, Tensor::Shape{N, H, W, C},
+        Tensor tensor(Tensor::ElementType::kFloat32,
+                      Tensor::Shape({N, H, W, C}, dynamic_batch_),
                       gpu_memory_manager_.get());
 
         @autoreleasepool {
@@ -726,16 +774,38 @@ class StreamingTilesToTensorBatchCalculator : public Node {
     geom->effective_pixel_rois.reserve(rows);
     geom->tile_to_image_matrices.reserve(rows);
     geom->image_to_tile_matrices.reserve(rows);
+    const auto round_pixel = [](float normalized, int extent) {
+      // Preserve the existing float multiplication/rounding for ordinary
+      // tiles (e.g. 0.35f * 10 rounds to 4). Use double only when the float
+      // product overflows, then clip before converting the result to int.
+      const float scaled = normalized * extent;
+      return std::isfinite(scaled)
+                 ? static_cast<double>(std::round(scaled))
+                 : std::round(static_cast<double>(normalized) * extent);
+    };
     for (int r = 0; r < rows; ++r) {
       const TileGeometry& g = plan.tiles[start + r];
-      int rx = static_cast<int>(std::lround(g.x0() * fw));
-      int ry = static_cast<int>(std::lround(g.y0() * fh));
-      int rw = static_cast<int>(std::lround(g.width * fw));
-      int rh = static_cast<int>(std::lround(g.height * fh));
-      rx = std::clamp(rx, 0, fw - 1);
-      ry = std::clamp(ry, 0, fh - 1);
-      rw = std::clamp(rw, 1, fw - rx);
-      rh = std::clamp(rh, 1, fh - ry);
+      // Clip both endpoints of the rounded pixel crop. Clamping its origin
+      // without shrinking the width/height shifts left/top boundary tiles
+      // into the frame and samples pixels outside the requested region.
+      // Keep intermediates wide until clipped, including for large but finite
+      // normalized rectangles that overlap the frame.
+      const double requested_x = round_pixel(g.x0(), fw);
+      const double requested_y = round_pixel(g.y0(), fh);
+      const double requested_w = round_pixel(g.width, fw);
+      const double requested_h = round_pixel(g.height, fh);
+      const int rx = static_cast<int>(
+          std::clamp(requested_x, 0.0, static_cast<double>(fw - 1)));
+      const int ry = static_cast<int>(
+          std::clamp(requested_y, 0.0, static_cast<double>(fh - 1)));
+      const int right = static_cast<int>(std::clamp(
+          requested_x + requested_w, static_cast<double>(rx + 1),
+          static_cast<double>(fw)));
+      const int bottom = static_cast<int>(std::clamp(
+          requested_y + requested_h, static_cast<double>(ry + 1),
+          static_cast<double>(fh)));
+      const int rw = right - rx;
+      const int rh = bottom - ry;
       TilePixelRoi proi{rx, ry, rw, rh};
       const std::array<float, 16> t2i = TileToImageMatrix(proi, fw, fh);
       geom->tile_indices.push_back(g.tile_index);

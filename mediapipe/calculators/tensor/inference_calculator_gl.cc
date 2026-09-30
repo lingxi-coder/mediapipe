@@ -261,6 +261,16 @@ absl::Status InferenceCalculatorGlImpl::GpuInferenceRunner::LoadDelegate(
 absl::Status InferenceCalculatorGlImpl::GpuInferenceRunner::Process(
     CalculatorContext* cc, const TensorSpan& input_tensors,
     std::vector<Tensor>& output_tensors) {
+  RET_CHECK_EQ(input_tensors.size(), gpu_buffers_in_.size())
+      << "OpenGL GPU inference input tensor count does not match the model.";
+  for (int i = 0; i < input_tensors.size(); ++i) {
+    RET_CHECK(input_tensors[i].element_type() == Tensor::ElementType::kFloat32)
+        << "OpenGL GPU inference requires float32 input tensors (input #" << i
+        << ").";
+    RET_CHECK(input_tensors[i].shape().dims == gpu_buffers_in_[i].shape().dims)
+        << "OpenGL GPU inference input shape does not match the fixed model "
+           "input #" << i << "; resizing GPU input tensors is not supported.";
+  }
   // Explicitly copy input.
   for (int i = 0; i < input_tensors.size(); ++i) {
     auto read_view = input_tensors[i].GetOpenGlBufferReadView();

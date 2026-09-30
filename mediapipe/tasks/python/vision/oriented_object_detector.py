@@ -373,6 +373,17 @@ def _build_oriented_tiling_options_c(
   converter copies the tiles into a std::vector synchronously during Create, so
   outliving the Create call is sufficient.)
   """
+  max_grid_size = 2**31 - 1
+  for name, value in (
+      ('tile_rows', tiling.tile_rows), ('tile_cols', tiling.tile_cols)
+  ):
+    if isinstance(value, bool) or not isinstance(value, int):
+      raise TypeError(f'tiling.{name} must be an integer.')
+    if value < 0 or value > max_grid_size:
+      raise ValueError(f'tiling.{name} must be in [0, {max_grid_size}].')
+  if tiling.tile_rows * tiling.tile_cols > max_grid_size:
+    raise ValueError(f'tiling grid tile count must be <= {max_grid_size}.')
+
   explicit_tiles = tiling.explicit_tiles or []
   tiles_array = (MpOrientedTileRectC * len(explicit_tiles))(
       *[
@@ -720,12 +731,17 @@ class OrientedObjectDetector:
     )
 
   def close(self):
-    """Shuts down the MediaPipe oriented object detector task instance."""
+    """Frees the task and dispatchers, including when native shutdown fails."""
     if self._handle:
-      self._lib.MpOrientedObjectDetectorClose(self._handle)
-      self._handle = None
-      self._dispatcher.close()
-      self._lib.close()
+      try:
+        self._lib.MpOrientedObjectDetectorClose(self._handle)
+      finally:
+        # The C API consumes the handle even when it reports a graph error.
+        self._handle = None
+        try:
+          self._dispatcher.close()
+        finally:
+          self._lib.close()
 
   def __enter__(self):
     """Returns `self` upon entering the runtime context."""

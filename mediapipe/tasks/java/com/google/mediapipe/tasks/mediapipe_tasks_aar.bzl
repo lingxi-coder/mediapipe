@@ -58,9 +58,11 @@ _VISION_TASKS_JAVA_PROTO_LITE_TARGETS = [
     "//mediapipe/tasks/cc/vision/image_segmenter/proto:image_segmenter_graph_options_java_proto_lite",
     "//mediapipe/tasks/cc/vision/image_segmenter/proto:segmenter_options_java_proto_lite",
     "//mediapipe/tasks/cc/vision/object_detector/proto:object_detector_options_java_proto_lite",
+    "//mediapipe/tasks/cc/vision/oriented_object_detector/proto:oriented_object_detector_options_java_proto_lite",
     "//mediapipe/tasks/cc/vision/pose_detector/proto:pose_detector_graph_options_java_proto_lite",
     "//mediapipe/tasks/cc/vision/pose_landmarker/proto:pose_landmarker_graph_options_java_proto_lite",
     "//mediapipe/tasks/cc/vision/pose_landmarker/proto:pose_landmarks_detector_graph_options_java_proto_lite",
+    "//mediapipe/tasks/cc/vision/yolo_object_detector/proto:yolo_object_detector_options_java_proto_lite",
 ]
 
 _VISION_TASKS_IMAGE_GENERATOR_JAVA_PROTO_LITE_SRC_TARGETS = [
@@ -269,6 +271,7 @@ def mediapipe_tasks_core_aar(name, srcs, manifest, deps = []):
                    "//mediapipe/framework/formats:detection_java_proto_lite",
                    "//mediapipe/framework/formats:landmark_java_proto_lite",
                    "//mediapipe/framework/formats:location_data_java_proto_lite",
+                   "//mediapipe/framework/formats:oriented_detection_java_proto_lite",
                    "//mediapipe/framework/formats:rect_java_proto_lite",
                    "//mediapipe/java/com/google/mediapipe/framework:android_framework",
                    "//mediapipe/java/com/google/mediapipe/framework/image",
@@ -494,6 +497,11 @@ def mediapipe_java_proto_srcs(name = ""):
     proto_src_list.append(mediapipe_java_proto_src_extractor(
         target = "//mediapipe/framework/formats:matrix_data_java_proto_lite",
         src_out = "com/google/mediapipe/formats/proto/MatrixDataProto.java",
+    ))
+
+    proto_src_list.append(mediapipe_java_proto_src_extractor(
+        target = "//mediapipe/framework/formats:oriented_detection_java_proto_lite",
+        src_out = "com/google/mediapipe/formats/proto/OrientedDetectionProto.java",
     ))
 
     proto_src_list.append(mediapipe_java_proto_src_extractor(

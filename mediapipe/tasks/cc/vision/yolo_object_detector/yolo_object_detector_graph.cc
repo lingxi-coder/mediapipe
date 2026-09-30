@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -106,6 +108,14 @@ absl::Status SanityCheckOptions(
         "tiling.tile_rows and tiling.tile_cols must be >= 0.",
         MediaPipeTasksStatus::kInvalidArgumentError);
   }
+  if (static_cast<int64_t>(options.tiling().tile_rows()) *
+          options.tiling().tile_cols() >
+      std::numeric_limits<int32_t>::max()) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiling.tile_rows * tiling.tile_cols must be <= 2147483647.",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
   if (options.tiling().explicit_tiles_size() > 0 &&
       (options.tiling().tile_rows() > 1 || options.tiling().tile_cols() > 1)) {
     return CreateStatusWithPayload(
@@ -171,6 +181,8 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
  public:
   absl::StatusOr<CalculatorGraphConfig> GetConfig(
       SubgraphContext* sc) override {
+    ABSL_RETURN_IF_ERROR(
+        SanityCheckOptions(sc->Options<YoloObjectDetectorOptionsProto>()));
     ABSL_ASSIGN_OR_RETURN(
         const auto* model_resources,
         CreateModelResources<YoloObjectDetectorOptionsProto>(sc));
@@ -206,7 +218,6 @@ class YoloObjectDetectorGraph : public tasks::core::ModelTaskGraph {
       const tasks::core::ModelResources& model_resources,
       Source<Image> image_in,
       Graph& graph) {
-    ABSL_RETURN_IF_ERROR(SanityCheckOptions(task_options));
     auto& model = *model_resources.GetTfLiteModel();
     if (model.subgraphs()->size() != 1) {
       return CreateStatusWithPayload(

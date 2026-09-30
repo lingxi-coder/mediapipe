@@ -49,6 +49,17 @@ android_library(
 )
 
 android_library(
+    name = "oriented_detection",
+    srcs = ["OrientedDetection.java"],
+    deps = [
+        ":category",
+        "//mediapipe/framework/formats:oriented_detection_java_proto_lite",
+        "//third_party:autovalue",
+        "@maven//:com_google_guava_guava",
+    ],
+)
+
+android_library(
     name = "classifications",
     srcs = ["Classifications.java"],
     deps = [

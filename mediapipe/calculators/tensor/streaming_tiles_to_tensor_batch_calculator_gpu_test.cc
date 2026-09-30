@@ -150,7 +150,8 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
                          const std::string& options_body, int out_w, int out_h,
                          int channels, int batch_capacity, int in_w, int in_h,
                          const std::vector<TileGeometry>& tiles,
-                         RunResult* out, GLuint* program_before_close = nullptr) {
+                         RunResult* out, GLuint* program_before_close = nullptr,
+                         GpuBufferFormat input_format = GpuBufferFormat::kBGRA32) {
   InferenceMetadata meta;
   meta.set_input_height(out_h);
   meta.set_input_width(out_w);
@@ -192,7 +193,9 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
     return absl::OkStatus();
   }));
   ABSL_RETURN_IF_ERROR(graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
-  GpuBuffer input = CreateTestRgba8GpuBuffer(in_w, in_h);
+  GpuBuffer input = input_format == GpuBufferFormat::kBGRA32
+                        ? CreateTestRgba8GpuBuffer(in_w, in_h)
+                        : GpuBuffer(in_w, in_h, input_format);
   TilePlan plan;
   plan.tiles = tiles;
   ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
@@ -298,6 +301,22 @@ TEST_F(StreamingTilesToTensorBatchCalculatorGpuTest, NoCpuReadbackInZeroCopy) {
   // tensor is GPU-resident and not CPU-ready.
   EXPECT_TRUE(t.ready_on_gpu());
   EXPECT_FALSE(t.ready_on_cpu());
+}
+
+TEST_F(StreamingTilesToTensorBatchCalculatorGpuTest,
+       RejectsNonRgbGpuFormatsBeforeTextureMapping) {
+  for (const auto format : {GpuBufferFormat::kBiPlanar420YpCbCr8FullRange,
+                            GpuBufferFormat::kGrayFloat32}) {
+    RunResult result;
+    const absl::Status status = RunZeroCopy(
+        gpu_resources_, "enable_gpu_zero_copy: true max_gpu_tensor_buffers: 2",
+        /*out_w=*/8, /*out_h=*/8, /*channels=*/3, /*batch_capacity=*/1,
+        /*in_w=*/32, /*in_h=*/32, {NormTile(0, 0, 0, 1, 1)}, &result,
+        /*program_before_close=*/nullptr, format);
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.message(), testing::HasSubstr("RGB or RGBA input format"));
+    EXPECT_TRUE(result.tensors.empty());
+  }
 }
 
 }  // namespace

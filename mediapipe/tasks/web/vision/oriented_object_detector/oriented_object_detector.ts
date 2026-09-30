@@ -231,8 +231,17 @@ function validateOrientedOptions(
       'tiling.tile_overlap_fraction is ignored with tiling.explicit_tiles; do not set both',
     );
   }
-  if (tileRows < 0 || tileCols < 0) {
-    throw new Error('tiling.tile_rows and tiling.tile_cols must be >= 0.');
+  if (
+    !Number.isInteger(tileRows) || !Number.isInteger(tileCols) ||
+    tileRows < 0 || tileCols < 0 ||
+    tileRows > 2147483647 || tileCols > 2147483647
+  ) {
+    throw new Error(
+      'tiling.tile_rows and tiling.tile_cols must be non-negative int32 values.',
+    );
+  }
+  if (tileRows * tileCols > 2147483647) {
+    throw new Error('tiling grid tile count must be <= 2147483647.');
   }
   if (
     tiling.getExplicitTilesList().length > 0 &&
@@ -518,7 +527,19 @@ export class OrientedObjectDetector extends VisionTaskRunner {
     this.options.setBaseOptions(proto);
   }
 
+  /**
+   * Applies updates in call order. Await asynchronous updates before inference.
+   * Download and validation failures preserve the existing task. If installing
+   * model data or rebuilding the graph fails, the task closes and must be
+   * recreated.
+   */
   override setOptions(
+    options: OrientedObjectDetectorOptionsUpdate,
+  ): Promise<void> {
+    return this.runWithOptionsUpdate(() => this.updateOptions(options));
+  }
+
+  private updateOptions(
     options: OrientedObjectDetectorOptionsUpdate,
   ): Promise<void> {
     const candidate = OrientedObjectDetectorOptionsProto.deserializeBinary(
@@ -554,6 +575,7 @@ export class OrientedObjectDetector extends VisionTaskRunner {
     image: ImageSource,
     imageProcessingOptions?: ImageProcessingOptions,
   ): OrientedObjectDetectorResult {
+    this.assertReadyForProcessing();
     this.result = {detections: []};
     this.imageSize = getImageSourceSize(image);
     if (this.isTilingEnabled()) {
@@ -570,6 +592,7 @@ export class OrientedObjectDetector extends VisionTaskRunner {
     timestamp: number,
     imageProcessingOptions?: ImageProcessingOptions,
   ): OrientedObjectDetectorResult {
+    this.assertReadyForProcessing();
     this.result = {detections: []};
     this.imageSize = getImageSourceSize(videoFrame);
     if (this.isTilingEnabled()) {

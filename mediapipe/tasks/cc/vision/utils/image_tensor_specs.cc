@@ -48,6 +48,8 @@ using ::tflite::ImageProperties;
 using ::tflite::TensorMetadata;
 using ::tflite::TensorType;
 
+}  // namespace
+
 absl::StatusOr<const ImageProperties*> GetImagePropertiesIfAny(
     const TensorMetadata& tensor_metadata) {
   if (tensor_metadata.content() == nullptr ||
@@ -81,6 +83,14 @@ GetNormalizationOptionsIfAny(const TensorMetadata& tensor_metadata) {
   }
   const tflite::NormalizationOptions* tf_normalization_options =
       normalization_process_unit->options_as_NormalizationOptions();
+  if (tf_normalization_options == nullptr ||
+      tf_normalization_options->mean() == nullptr ||
+      tf_normalization_options->std() == nullptr) {
+    return CreateStatusWithPayload(
+        StatusCode::kInvalidArgument,
+        "NormalizationOptions: mean and std must both be present.",
+        MediaPipeTasksStatus::kMetadataInvalidProcessUnitsError);
+  }
   const auto& mean_values = *tf_normalization_options->mean();
   const auto& std_values = *tf_normalization_options->std();
   if (mean_values.size() != std_values.size()) {
@@ -113,15 +123,21 @@ GetNormalizationOptionsIfAny(const TensorMetadata& tensor_metadata) {
   return normalization_options;
 }
 
-}  // namespace
-
 absl::StatusOr<const TensorMetadata*> GetImageTensorMetadataIfAny(
     const ModelMetadataExtractor& metadata_extractor, int tensor_index) {
   if (metadata_extractor.GetModelMetadata() == nullptr ||
       metadata_extractor.GetModelMetadata()->subgraph_metadata() == nullptr) {
     // Some models have no metadata at all (or very partial), so exit early.
     return nullptr;
-  } else if (metadata_extractor.GetInputTensorCount() <= tensor_index) {
+  }
+  if (metadata_extractor.GetModelMetadata()->subgraph_metadata()->size() != 1) {
+    return CreateStatusWithPayload(
+        StatusCode::kInvalidArgument,
+        "Image models require exactly one subgraph metadata entry.",
+        MediaPipeTasksStatus::kMetadataInvalidNumSubgraphsError);
+  }
+  if (tensor_index < 0 ||
+      metadata_extractor.GetInputTensorCount() <= tensor_index) {
     return CreateStatusWithPayload(
         StatusCode::kInvalidArgument, "Tensor index is out of range.",
         MediaPipeTasksStatus::kInvalidNumInputTensorsError);

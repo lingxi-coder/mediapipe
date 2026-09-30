@@ -74,6 +74,9 @@ NS_SWIFT_NAME(Detection)
  */
 @property(nonatomic, readonly, nullable) NSArray<MPPNormalizedKeypoint *> *keypoints;
 
+/** The optional persistent track identifier associated with the detection. */
+@property(nonatomic, readonly, nullable) NSString *trackID;
+
 /**
  * Initializes a new `Detection` object with the given array of categories, bounding box and
  * optional array of keypoints;
@@ -91,8 +94,25 @@ NS_SWIFT_NAME(Detection)
  */
 - (instancetype)initWithCategories:(NSArray<MPPCategory *> *)categories
                        boundingBox:(CGRect)boundingBox
+                         keypoints:(nullable NSArray<MPPNormalizedKeypoint *> *)keypoints;
+
+/**
+ * Initializes a new `Detection` object with the given array of categories, bounding box, optional
+ * keypoints, and optional track identifier.
+ *
+ * @param categories A list of `Category` objects that contain category name, display name,
+ * score, and the label index.
+ * @param boundingBox  A `CGRect` that represents the bounding box.
+ * @param keypoints An optional array of `NormalizedKeypoint` objects associated with the
+ * detection.
+ * @param trackID An optional persistent track identifier associated with the detection.
+ *
+ * @return An instance of `Detection` initialized with the given values.
+ */
+- (instancetype)initWithCategories:(NSArray<MPPCategory *> *)categories
+                       boundingBox:(CGRect)boundingBox
                          keypoints:(nullable NSArray<MPPNormalizedKeypoint *> *)keypoints
-    NS_DESIGNATED_INITIALIZER;
+                           trackID:(nullable NSString *)trackID NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
 

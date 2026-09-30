@@ -88,6 +88,7 @@ class InferenceCalculatorGlAdvancedImpl
     std::shared_ptr<GlContext> initialization_gl_context_;
     std::unique_ptr<tflite::gpu::TFLiteGPURunner> tflite_gpu_runner_;
 
+    std::vector<std::vector<int>> input_shapes_;
     std::vector<Tensor::Shape> output_shapes_;
 
     InferenceOnDiskCacheHelper on_disk_cache_helper_;
@@ -144,6 +145,16 @@ absl::Status InferenceCalculatorGlAdvancedImpl::GpuInferenceRunner::Init(
 absl::StatusOr<std::vector<Tensor>>
 InferenceCalculatorGlAdvancedImpl::GpuInferenceRunner::Run(
     CalculatorContext* cc, const TensorSpan& input_tensors) {
+  RET_CHECK_EQ(input_tensors.size(), input_shapes_.size())
+      << "Advanced GPU inference input tensor count does not match the model.";
+  for (int i = 0; i < input_tensors.size(); ++i) {
+    RET_CHECK(input_tensors[i].element_type() == Tensor::ElementType::kFloat32)
+        << "Advanced GPU inference requires float32 input tensors (input #" << i
+        << ").";
+    RET_CHECK(input_tensors[i].shape().dims == input_shapes_[i])
+        << "Advanced GPU inference input shape does not match the fixed model "
+           "input #" << i << "; resizing GPU input tensors is not supported.";
+  }
   std::vector<Tensor> output_tensors;
   for (int i = 0; i < input_tensors.size(); ++i) {
     ABSL_RETURN_IF_ERROR(tflite_gpu_runner_->BindSSBOToInputTensor(
@@ -232,6 +243,8 @@ InferenceCalculatorGlAdvancedImpl::GpuInferenceRunner::InitTFLiteGPURunner(
                           InferenceIoMapper::GetInputOutputTensorNamesFromModel(
                               model, op_resolver));
   }
+
+  input_shapes_ = tflite_gpu_runner_->GetTFLiteInputShapes();
 
   // Create and bind OpenGL buffers for outputs.
   // The buffers are created once and their ids are passed to calculator outputs

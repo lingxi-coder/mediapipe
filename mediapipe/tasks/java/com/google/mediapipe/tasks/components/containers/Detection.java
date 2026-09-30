@@ -40,13 +40,12 @@ public abstract class Detection {
    * @param boundingBox a {@link RectF} object to represent the bounding box.
    */
   public static Detection create(List<Category> categories, RectF boundingBox) {
+    return create(categories, boundingBox, Optional.empty(), Optional.empty());
+  }
 
-    // As an open source project, we've been trying avoiding depending on common java libraries,
-    // such as Guava, because it may introduce conflicts with clients who also happen to use those
-    // libraries. Therefore, instead of using ImmutableList here, we convert the List into
-    // unmodifiableList
-    return new AutoValue_Detection(
-        Collections.unmodifiableList(categories), boundingBox, Optional.empty());
+  public static Detection create(
+      List<Category> categories, RectF boundingBox, Optional<List<NormalizedKeypoint>> keypoints) {
+    return create(categories, boundingBox, keypoints, Optional.empty());
   }
 
   /**
@@ -55,12 +54,20 @@ public abstract class Detection {
    * @param categories a list of {@link Category} objects that contain category name, display name,
    *     score, and the label index.
    * @param boundingBox a {@link RectF} object to represent the bounding box.
-   * @param keypoints an optional list of {@link NormalizedKeypoints} associated with the detection.
+   * @param keypoints an optional list of {@link NormalizedKeypoint} associated with the detection.
+   * @param trackId an optional persistent tracking ID associated with the detection.
    */
   public static Detection create(
-      List<Category> categories, RectF boundingBox, Optional<List<NormalizedKeypoint>> keypoints) {
+      List<Category> categories,
+      RectF boundingBox,
+      Optional<List<NormalizedKeypoint>> keypoints,
+      Optional<String> trackId) {
+    // As an open source project, we've been trying avoiding depending on common java libraries,
+    // such as Guava, because it may introduce conflicts with clients who also happen to use those
+    // libraries. Therefore, instead of using ImmutableList here, we convert the List into
+    // unmodifiableList
     return new AutoValue_Detection(
-        Collections.unmodifiableList(categories), boundingBox, keypoints);
+        Collections.unmodifiableList(categories), boundingBox, keypoints, trackId);
   }
 
   /**
@@ -113,7 +120,9 @@ public abstract class Detection {
                         : Optional.empty()));
       }
     }
-    return create(categories, boundingBox, keypoints);
+    Optional<String> trackId =
+        detectionProto.hasTrackId() ? Optional.of(detectionProto.getTrackId()) : Optional.empty();
+    return create(categories, boundingBox, keypoints, trackId);
   }
 
   /** A list of {@link Category} objects. */
@@ -129,4 +138,7 @@ public abstract class Detection {
    * KNIFT, they can represent the feature points for template matching.
    */
   public abstract Optional<List<NormalizedKeypoint>> keypoints();
+
+  /** An optional persistent tracking ID associated with the detection. */
+  public abstract Optional<String> trackId();
 }

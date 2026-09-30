@@ -21,10 +21,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "flatbuffers/flatbuffers.h"
+#include "mediapipe/framework/port/status_macros.h"
 #include "mediapipe/tasks/cc/common.h"
 #include "mediapipe/tasks/cc/core/model_resources.h"
 #include "mediapipe/tasks/cc/vision/core/image_processing_options.h"
 #include "mediapipe/tasks/cc/vision/utils/image_tensor_specs.h"
+#include "mediapipe/tasks/metadata/metadata_schema_generated.h"
 #include "tflite/schema/schema_generated.h"
 
 namespace mediapipe {
@@ -41,8 +43,28 @@ NormalizedBatchDim NormalizeTiledBatchDim(int raw_batch) {
 absl::StatusOr<TiledModelInputDims> ValidateTiledModelInputAndGetDims(
     const tasks::core::ModelResources& model_resources) {
   const auto& model = *model_resources.GetTfLiteModel();
+  if (model.subgraphs() == nullptr || model.subgraphs()->size() != 1) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiled mode expects exactly one model subgraph",
+        MediaPipeTasksStatus::kInvalidArgumentError);
+  }
   const tflite::SubGraph* sg = model.subgraphs()->Get(0);
-  const auto* input_tensor = sg->tensors()->Get(sg->inputs()->Get(0));
+  if (sg->inputs() == nullptr || sg->inputs()->size() != 1) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiled mode expects exactly one image input tensor",
+        MediaPipeTasksStatus::kInvalidNumInputTensorsError);
+  }
+  const int input_index = sg->inputs()->Get(0);
+  if (sg->tensors() == nullptr || input_index < 0 ||
+      static_cast<size_t>(input_index) >= sg->tensors()->size()) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiled mode image input tensor index is out of range",
+        MediaPipeTasksStatus::kInvalidNumInputTensorsError);
+  }
+  const auto* input_tensor = sg->tensors()->Get(input_index);
   const auto* dims = input_tensor->shape();
   if (dims == nullptr || dims->size() != 4) {
     return CreateStatusWithPayload(
@@ -56,11 +78,53 @@ absl::StatusOr<TiledModelInputDims> ValidateTiledModelInputAndGetDims(
         "tiled mode currently supports float32 image input only",
         MediaPipeTasksStatus::kInvalidArgumentError);
   }
-  auto specs_or = BuildInputImageTensorSpecs(model_resources);
-  if (specs_or.ok() && specs_or->normalization_options.has_value()) {
-    const auto& norm = *specs_or->normalization_options;
+  if (dims->Get(1) <= 0 || dims->Get(2) <= 0 ||
+      (dims->Get(3) != 1 && dims->Get(3) != 3 && dims->Get(3) != 4)) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiled mode expects positive image height and width and 1, 3, or 4 "
+        "channels",
+        MediaPipeTasksStatus::kInvalidInputTensorDimensionsError);
+  }
+
+  // The general image preprocessing spec builder requires batch size one and
+  // normalization metadata. Tiled preprocessing has a different contract:
+  // fixed/dynamic batches are supported, and missing normalization means /255.
+  // Parse the metadata directly so neither difference can hide invalid
+  // metadata.
+  ABSL_ASSIGN_OR_RETURN(
+      const auto* tensor_metadata,
+      GetImageTensorMetadataIfAny(*model_resources.GetMetadataExtractor(), 0));
+  std::optional<NormalizationOptions> normalization_options;
+  if (tensor_metadata != nullptr) {
+    ABSL_ASSIGN_OR_RETURN(const auto* image_properties,
+                          GetImagePropertiesIfAny(*tensor_metadata));
+    const auto expected_color_space = dims->Get(3) == 1
+                                          ? tflite::ColorSpaceType_GRAYSCALE
+                                          : tflite::ColorSpaceType_RGB;
+    if (image_properties != nullptr &&
+        image_properties->color_space() != expected_color_space) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tiled mode image color metadata must match the input channels: "
+          "GRAYSCALE for 1 channel, RGB for 3 or 4 channels",
+          MediaPipeTasksStatus::kInvalidArgumentError);
+    }
+    ABSL_ASSIGN_OR_RETURN(normalization_options,
+                          GetNormalizationOptionsIfAny(*tensor_metadata));
+  }
+  if (normalization_options.has_value()) {
+    const auto& norm = *normalization_options;
+    if (dims->Get(3) == 1 && norm.num_values != 1) {
+      return CreateStatusWithPayload(
+          absl::StatusCode::kInvalidArgument,
+          "tiled grayscale input requires scalar normalization parameters",
+          MediaPipeTasksStatus::kMetadataInvalidProcessUnitsError);
+    }
     for (int i = 0; i < norm.num_values; ++i) {
-      if (std::abs(norm.mean_values[i]) > 1e-3f ||
+      if (!std::isfinite(norm.mean_values[i]) ||
+          !std::isfinite(norm.std_values[i]) ||
+          std::abs(norm.mean_values[i]) > 1e-3f ||
           std::abs(norm.std_values[i] - 255.0f) > 1e-3f) {
         return CreateStatusWithPayload(
             absl::StatusCode::kInvalidArgument,
@@ -71,7 +135,22 @@ absl::StatusOr<TiledModelInputDims> ValidateTiledModelInputAndGetDims(
       }
     }
   }
-  const NormalizedBatchDim nb = NormalizeTiledBatchDim(dims->Get(0));
+  const auto* shape_signature = input_tensor->shape_signature();
+  if (shape_signature != nullptr && shape_signature->size() != 0 &&
+      shape_signature->size() != 4) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "tiled mode expects a [N,H,W,C] image input shape signature",
+        MediaPipeTasksStatus::kInvalidInputTensorDimensionsError);
+  }
+  // TFLite commonly stores a positive allocated batch in shape() while -1 in
+  // shape_signature() marks that axis as resizable.
+  const int batch_dim = shape_signature != nullptr &&
+                                shape_signature->size() == 4 &&
+                                shape_signature->Get(0) <= 0
+                            ? shape_signature->Get(0)
+                            : dims->Get(0);
+  const NormalizedBatchDim nb = NormalizeTiledBatchDim(batch_dim);
   return TiledModelInputDims{/*batch=*/nb.batch_capacity,
                              /*height=*/dims->Get(1), /*width=*/dims->Get(2),
                              /*channels=*/dims->Get(3),

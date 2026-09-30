@@ -64,7 +64,8 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
                          const std::string& options_body, int out_w, int out_h,
                          int channels, int batch_capacity, int in_w, int in_h,
                          const std::vector<TileGeometry>& tiles,
-                         RunResult* out) {
+                         RunResult* out,
+                         GpuBufferFormat input_format = GpuBufferFormat::kRGBA32) {
   InferenceMetadata meta;
   meta.set_input_height(out_h);
   meta.set_input_width(out_w);
@@ -106,7 +107,16 @@ absl::Status RunZeroCopy(std::shared_ptr<GpuResources> gpu_resources,
   }));
   ABSL_RETURN_IF_ERROR(
       graph.StartRun({{"meta", MakePacket<InferenceMetadata>(meta)}}));
-  GpuBuffer input = CreateTestRgba8GpuBuffer(in_w, in_h);
+  GpuBuffer input;
+  if (input_format == GpuBufferFormat::kRGBA32) {
+    input = CreateTestRgba8GpuBuffer(in_w, in_h);
+  } else if (input_format == GpuBufferFormat::kBGRA32) {
+    // Materialize a native CVPixelBuffer while preserving the RGB values.
+    GpuBuffer rgba = CreateTestRgba8GpuBuffer(in_w, in_h);
+    input = GpuBuffer(GetCVPixelBufferRef(rgba));
+  } else {
+    input = GpuBuffer(in_w, in_h, input_format);
+  }
   TilePlan plan;
   plan.tiles = tiles;
   ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
@@ -125,6 +135,37 @@ class StreamingTilesMetalTest : public testing::Test {
   GpuSharedData gpu_shared_;
   std::shared_ptr<GpuResources> gpu_resources_ = gpu_shared_.gpu_resources;
 };
+
+TEST(StreamingTilesMetalOpenTest, MissingGpuServiceReturnsError) {
+  auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+    input_stream: "image_gpu"
+    input_stream: "tile_plan"
+    node {
+      calculator: "StreamingTilesToTensorBatchCalculator"
+      input_stream: "IMAGE_GPU:image_gpu"
+      input_stream: "TILE_PLAN:tile_plan"
+      output_stream: "TENSORS:tensors"
+      output_stream: "BATCH_INFO:info"
+      options {
+        [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+          enable_gpu_zero_copy: true
+          max_gpu_tensor_buffers: 2
+          metadata_batch_capacity: 1
+          metadata_input_height: 8
+          metadata_input_width: 8
+          metadata_input_channels: 3
+        }
+      }
+    }
+  )pb");
+  CalculatorGraph graph;
+  MP_ASSERT_OK(graph.DisallowServiceDefaultInitialization());
+  MP_ASSERT_OK(graph.Initialize(config));
+  absl::Status status = graph.StartRun({});
+  if (status.ok()) status = graph.WaitUntilIdle();
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), testing::HasSubstr("GPU service not available"));
+}
 
 TEST_F(StreamingTilesMetalTest, ZeroCopyEmitsLogicalBatchNoReadback) {
   RunResult r;
@@ -289,6 +330,147 @@ TEST_F(StreamingTilesMetalTest, CpuServedFrameCountsGpuToCpuFallback) {
   // ...and the fallback was counted.
   ASSERT_GE(stats.size(), 1u);
   EXPECT_EQ(stats.back().Get<TilingCacheStats>().gpu_to_cpu_fallbacks, 1);
+}
+
+TEST_F(StreamingTilesMetalTest, RejectsNonRgbGpuFormatsBeforeTextureMapping) {
+  for (const auto format : {GpuBufferFormat::kBiPlanar420YpCbCr8FullRange,
+                            GpuBufferFormat::kGrayFloat32,
+                            GpuBufferFormat::kRGB24,
+                            GpuBufferFormat::kRGBAFloat128}) {
+    RunResult result;
+    const absl::Status status = RunZeroCopy(
+        gpu_resources_, "enable_gpu_zero_copy: true max_gpu_tensor_buffers: 2",
+        /*out_w=*/8, /*out_h=*/8, /*channels=*/3, /*batch_capacity=*/1,
+        /*in_w=*/32, /*in_h=*/32, {NormTile(0, 0, 0, 1, 1)}, &result, format);
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.message(), testing::HasSubstr("RGB or RGBA input format"));
+    EXPECT_TRUE(result.tensors.empty());
+  }
+}
+
+TEST_F(StreamingTilesMetalTest, AcceptsRgbaImageFrameAndBgraPixelBufferStorage) {
+  for (const auto format : {GpuBufferFormat::kRGBA32, GpuBufferFormat::kBGRA32}) {
+    SCOPED_TRACE(static_cast<uint32_t>(format));
+    RunResult result;
+    MP_ASSERT_OK(RunZeroCopy(
+        gpu_resources_, "enable_gpu_zero_copy: true max_gpu_tensor_buffers: 2",
+        /*out_w=*/8, /*out_h=*/8, /*channels=*/3, /*batch_capacity=*/1,
+        /*in_w=*/8, /*in_h=*/8, {NormTile(0, 0, 0, 1, 1)}, &result, format));
+    ASSERT_EQ(result.tensors.size(), 1);
+    const Tensor& tensor = result.tensors[0].Get<std::vector<Tensor>>()[0];
+    auto read = tensor.GetCpuReadView();
+    const ImageFrame expected = CreateTestRgba8ImageFrame(8, 8);
+    const float* values = read.buffer<float>();
+    for (int y = 0; y < 8; ++y) {
+      const uint8_t* row = expected.PixelData() + y * expected.WidthStep();
+      for (int x = 0; x < 8; ++x) {
+        for (int c = 0; c < 3; ++c) {
+          EXPECT_NEAR(values[(y * 8 + x) * 3 + c], row[x * 4 + c] / 255.0f,
+                      1.0f / 255.0f);
+        }
+      }
+    }
+  }
+}
+
+TEST_F(StreamingTilesMetalTest, CpuFallbackPreservesDirectDelegateInputLayout) {
+  std::vector<float> logical_result;
+  for (const bool direct : {false, true}) {
+    SCOPED_TRACE(direct);
+    auto config = ParseTextProtoOrDie<CalculatorGraphConfig>(R"pb(
+      input_stream: "image"
+      input_stream: "image_gpu"
+      input_stream: "tile_plan"
+      output_stream: "preprocessed"
+      output_stream: "out"
+      node {
+        calculator: "StreamingTilesToTensorBatchCalculator"
+        input_stream: "IMAGE:image"
+        input_stream: "IMAGE_GPU:image_gpu"
+        input_stream: "TILE_PLAN:tile_plan"
+        output_stream: "TENSORS:preprocessed"
+        output_stream: "BATCH_INFO:info"
+        options {
+          [mediapipe.StreamingTilesToTensorBatchCalculatorOptions.ext] {
+            enable_gpu_zero_copy: true
+            max_gpu_tensor_buffers: 2
+            metadata_batch_capacity: 1
+            metadata_input_height: 256
+            metadata_input_width: 256
+            metadata_input_channels: 3
+          }
+        }
+      }
+      node {
+        calculator: "InferenceCalculator"
+        input_stream: "TENSORS:preprocessed"
+        output_stream: "TENSORS:out"
+        options {
+          [mediapipe.InferenceCalculatorOptions.ext] {
+            model_path: "mediapipe/calculators/tensor/testdata/1x256x256x3_softmax.tflite"
+            delegate { gpu { allow_precision_loss: false } }
+          }
+        }
+      }
+    )pb");
+    config.mutable_node(0)->mutable_options()->MutableExtension(
+        StreamingTilesToTensorBatchCalculatorOptions::ext)
+        ->set_metal_direct_delegate_input(direct);
+    // Keep the inference option in text so this test uses the same graph
+    // registration path as a caller loading a graph configuration.
+    if (direct) {
+      config.mutable_node(1)->mutable_options()->MergeFrom(
+          ParseTextProtoOrDie<CalculatorOptions>(R"pb(
+            [mediapipe.InferenceCalculatorOptions.ext] {
+              delegate { gpu { metal_external_input_zero_copy: true } }
+            }
+          )pb"));
+    }
+    CalculatorGraph graph;
+    MP_ASSERT_OK(graph.Initialize(config));
+    MP_ASSERT_OK(graph.SetGpuResources(gpu_resources_));
+    std::vector<Packet> inputs;
+    std::vector<Packet> outputs;
+    MP_ASSERT_OK(graph.ObserveOutputStream("preprocessed", [&](const Packet& p) {
+      inputs.push_back(p);
+      return absl::OkStatus();
+    }));
+    MP_ASSERT_OK(graph.ObserveOutputStream("out", [&](const Packet& p) {
+      outputs.push_back(p);
+      return absl::OkStatus();
+    }));
+    MP_ASSERT_OK(graph.StartRun({}));
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "image", MakePacket<ImageFrame>(CreateTestRgb8ImageFrame(32, 32))
+                     .At(Timestamp(0))));
+    TilePlan plan;
+    plan.tiles = {NormTile(0, 0, 0, 1, 1)};
+    MP_ASSERT_OK(graph.AddPacketToInputStream(
+        "tile_plan", MakePacket<TilePlan>(plan).At(Timestamp(0))));
+    // No GPU packet: closing that stream makes the CPU fallback frame ready.
+    MP_ASSERT_OK(graph.CloseAllInputStreams());
+    MP_ASSERT_OK(graph.WaitUntilDone());
+    ASSERT_EQ(inputs.size(), 1);
+    const Tensor& input = inputs[0].Get<std::vector<Tensor>>()[0];
+    EXPECT_EQ(input.shape().dims, (std::vector<int>{1, 256, 256, direct ? 4 : 3}));
+    if (direct) {
+      auto read = input.GetCpuReadView();
+      const float* pixels = read.buffer<float>();
+      for (int i = 0; i < 256 * 256; ++i) EXPECT_EQ(pixels[i * 4 + 3], 0.0f);
+    }
+    ASSERT_EQ(outputs.size(), 1);
+    const Tensor& output = outputs[0].Get<std::vector<Tensor>>()[0];
+    auto read = output.GetCpuReadView();
+    const float* values = read.buffer<float>();
+    if (!direct) {
+      logical_result.assign(values, values + output.shape().num_elements());
+    } else {
+      ASSERT_EQ(logical_result.size(), output.shape().num_elements());
+      for (int i = 0; i < logical_result.size(); ++i) {
+        EXPECT_NEAR(values[i], logical_result[i], 1e-4f) << "element " << i;
+      }
+    }
+  }
 }
 
 }  // namespace

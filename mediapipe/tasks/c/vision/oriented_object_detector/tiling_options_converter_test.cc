@@ -130,5 +130,24 @@ TEST(OrientedTilingOptionsConverterTest, ExplicitTilesDefaultGridToOneByOne) {
   ASSERT_EQ(out.explicit_tiles.size(), 1u);
 }
 
+TEST(OrientedTilingOptionsConverterTest, ExplicitTilesPreserveNegativeGridForValidation) {
+  const MpOrientedTileRect tiles[] = {{0.5f, 0.5f, 1.0f, 1.0f}};
+  MpOrientedTilingOptions in = {};
+  in.explicit_tiles = tiles;
+  in.explicit_tiles_count = 1;
+  in.tile_rows = -1;
+
+  CppTilingOptions out;
+  CppConvertToTilingOptions(in, &out);
+  EXPECT_EQ(out.tile_rows, -1);
+  EXPECT_EQ(out.tile_cols, 1);  // Only a zero-initialized dimension is defaulted.
+
+  in.tile_rows = 0;
+  in.tile_cols = -2;
+  CppConvertToTilingOptions(in, &out);
+  EXPECT_EQ(out.tile_rows, 1);
+  EXPECT_EQ(out.tile_cols, -2);
+}
+
 }  // namespace
 }  // namespace mediapipe::tasks::c::vision::oriented_object_detector

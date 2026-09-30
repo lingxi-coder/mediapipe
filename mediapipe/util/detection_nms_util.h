@@ -44,8 +44,9 @@ float OrientedDetectionIoU(const OrientedDetection& a,
 
 // Greedy rotated-IoU NMS over OrientedDetections. Sorts by score(0)
 // descending (stable), keeps higher-scoring boxes, suppresses a lower-scoring
-// box when IoU >= iou_threshold (note: >=, matching
+// overlapping box when IoU >= iou_threshold (note: >=, matching
 // RotatedNonMaxSuppressionCalculator, while the axis-aligned util uses >).
+// Disjoint boxes are always kept, including when iou_threshold == 0.
 // When !class_agnostic, only boxes with the same label_id(0) suppress each
 // other. A missing score reads as 0.0 and a missing label_id as -1. Returns
 // kept detections in descending-score order.

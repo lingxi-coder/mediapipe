@@ -79,6 +79,18 @@ objc_library(
 )
 
 objc_library(
+    name = "MPPOrientedDetectionHelpers",
+    srcs = ["sources/MPPOrientedDetection+Helpers.mm"],
+    hdrs = ["sources/MPPOrientedDetection+Helpers.h"],
+    deps = [
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/tasks/cc/components/containers:oriented_object_detection_result",
+        "//mediapipe/tasks/ios/common/utils:NSStringHelpers",
+        "//mediapipe/tasks/ios/components/containers:MPPOrientedDetection",
+    ],
+)
+
+objc_library(
     name = "MPPLandmarkHelpers",
     srcs = ["sources/MPPLandmark+Helpers.mm"],
     hdrs = ["sources/MPPLandmark+Helpers.h"],

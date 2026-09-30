@@ -38,7 +38,7 @@ _Layout = oriented_object_detector.Layout
 _RUNNING_MODE = running_mode_module.VisionTaskRunningMode
 
 _MODEL_FILE = 'yolov8n-obb.tflite'
-_IMAGE_FILE = 'cats_and_dogs.jpg'
+_IMAGE_FILE = 'boats.jpg'
 _TEST_DATA_DIR = 'mediapipe/tasks/testdata/vision'
 
 
@@ -59,6 +59,84 @@ _MODEL_PRESENT = _model_available()
 
 
 class OrientedObjectDetectorTest(parameterized.TestCase):
+
+  @parameterized.parameters(True, 1.5, '2', None)
+  def test_tiling_grid_rejects_noninteger_dimensions(self, value):
+    for dimension in ('tile_rows', 'tile_cols'):
+      with self.subTest(dimension=dimension):
+        tiling = oriented_object_detector.TilingOptions(**{dimension: value})
+        with self.assertRaisesRegex(TypeError, 'must be an integer'):
+          oriented_object_detector._build_oriented_tiling_options_c(tiling)  # pylint: disable=protected-access
+
+  @parameterized.parameters(-1, 2**31, 2**32 + 1)
+  def test_tiling_grid_rejects_out_of_range_dimensions(self, value):
+    for dimension in ('tile_rows', 'tile_cols'):
+      with self.subTest(dimension=dimension):
+        tiling = oriented_object_detector.TilingOptions(**{dimension: value})
+        with self.assertRaisesRegex(ValueError, 'must be in'):
+          oriented_object_detector._build_oriented_tiling_options_c(tiling)  # pylint: disable=protected-access
+
+  def test_tiling_grid_rejects_overflowing_tile_count(self):
+    tiling = oriented_object_detector.TilingOptions(
+        tile_rows=65536, tile_cols=65536
+    )
+    with self.assertRaisesRegex(ValueError, 'grid tile count'):
+      oriented_object_detector._build_oriented_tiling_options_c(tiling)  # pylint: disable=protected-access
+
+  @parameterized.parameters((0, 0), (0, 2**31 - 1), (2**31 - 1, 1))
+  def test_tiling_grid_preserves_valid_dimensions(self, rows, cols):
+    tiling = oriented_object_detector.TilingOptions(tile_rows=rows, tile_cols=cols)
+    converted, _ = oriented_object_detector._build_oriented_tiling_options_c(tiling)  # pylint: disable=protected-access
+    self.assertEqual(converted.tile_rows, rows)
+    self.assertEqual(converted.tile_cols, cols)
+
+  def test_explicit_tiles_preserve_zero_initialized_grid(self):
+    tiling = oriented_object_detector.TilingOptions(
+        tile_rows=0, tile_cols=0,
+        explicit_tiles=[oriented_object_detector.TileRect(0.5, 0.5, 1.0, 1.0)],
+    )
+    converted, backing = oriented_object_detector._build_oriented_tiling_options_c(tiling)  # pylint: disable=protected-access
+    self.assertEqual(converted.tile_rows, 0)
+    self.assertEqual(converted.tile_cols, 0)
+    self.assertEqual(converted.explicit_tiles_count, 1)
+    self.assertEqual(converted.explicit_tiles[0].width, 1.0)
+    self.assertLen(backing, 1)
+
+  def test_close_frees_dispatchers_after_native_error(self):
+    lib = mock.Mock()
+    dispatcher = mock.Mock()
+    close_native = lib.MpOrientedObjectDetectorClose
+    close_native.side_effect = RuntimeError('graph failed during processing')
+    detector = _OrientedObjectDetector(
+        lib=lib, handle=123, dispatcher=dispatcher,
+        async_callback=None, label_map=None,
+    )
+
+    with self.assertRaisesRegex(RuntimeError, 'graph failed during processing'):
+      detector.close()
+
+    self.assertIsNone(detector._handle)  # pylint: disable=protected-access
+    close_native.assert_called_once_with(123)
+    dispatcher.close.assert_called_once_with()
+    lib.close.assert_called_once_with()
+    # The native handle was consumed even on failure; never retry its close.
+    detector.close()
+    close_native.assert_called_once_with(123)
+
+  def test_close_frees_library_after_dispatcher_error(self):
+    lib = mock.Mock()
+    dispatcher = mock.Mock()
+    dispatcher.close.side_effect = RuntimeError('dispatcher failed to stop')
+    detector = _OrientedObjectDetector(
+        lib=lib, handle=123, dispatcher=dispatcher,
+        async_callback=None, label_map=None,
+    )
+
+    with self.assertRaisesRegex(RuntimeError, 'dispatcher failed to stop'):
+      detector.close()
+
+    self.assertIsNone(detector._handle)  # pylint: disable=protected-access
+    lib.close.assert_called_once_with()
 
   def test_create_from_model_path_forwards_class_count(self):
     with mock.patch.object(
@@ -317,7 +395,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
     self.assertGreater(
         len(result.detections),
         0,
-        'Expected at least one detection on cats_and_dogs.jpg',
+        'Expected at least one detection on boats.jpg',
     )
 
     for detection in result.detections:
@@ -348,7 +426,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
   def test_detect_image_tiled(self):
     """Smoke-checks the tiled OBB detect path end-to-end (model-gated).
 
-    cats_and_dogs.jpg is detectable without tiling, so this verifies the tiling
+    boats.jpg is detectable without tiling, so this verifies the tiling
     path runs and returns a valid result, not tiling efficacy.
     """
     model_path = test_utils.get_test_data_path(
@@ -375,7 +453,7 @@ class OrientedObjectDetectorTest(parameterized.TestCase):
     self.assertGreater(
         len(result.detections),
         0,
-        'Expected at least one detection on cats_and_dogs.jpg with tiling',
+        'Expected at least one detection on boats.jpg with tiling',
     )
 
   @unittest.skipUnless(

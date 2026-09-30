@@ -16,6 +16,16 @@
 
 licenses(["notice"])
 
+py_test(
+    name = "vision_public_api_test",
+    srcs = ["vision_public_api_test.py"],
+    deps = [
+        "//mediapipe/tasks/python/vision:vision_api",
+        "//mediapipe/tasks/python/vision:oriented_object_detector",
+        "//mediapipe/tasks/python/vision:yolo_object_detector",
+    ],
+)
+
 py_library(
     name = "proto_utils",
     testonly = True,
@@ -273,9 +283,8 @@ py_test(
     name = "yolo_object_detector_test",
     srcs = ["yolo_object_detector_test.py"],
     data = [
-        # test_models is intentionally omitted: yolov8n.tflite is not present;
-        # the inference test is gated with unittest.skipUnless.
         "//mediapipe/tasks/testdata/vision:test_images",
+        "//mediapipe/tasks/testdata/vision:yolo_test_model",
     ],
     tags = ["not_run:arm"],
     deps = [

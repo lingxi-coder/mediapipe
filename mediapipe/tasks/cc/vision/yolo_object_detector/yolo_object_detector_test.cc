@@ -26,9 +26,11 @@ limitations under the License.
 
 #include "mediapipe/tasks/cc/vision/yolo_object_detector/yolo_object_detector.h"
 
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -107,6 +109,22 @@ Image TranslateImage(const Image& src, int dx, int dy) {
 // Verifies that the nested TilingOptions struct is copied correctly into the
 // options proto by ConvertYoloObjectDetectorOptionsToProto.
 // ---------------------------------------------------------------------------
+TEST(YoloObjectDetectorOptionsTest, OversizedTileGridRejectedBeforeLoadingModel) {
+  for (const auto [rows, cols] : {std::pair<int, int>{65536, 65536},
+                                  std::pair<int, int>{46341, 46341},
+                                  std::pair<int, int>{std::numeric_limits<int>::max(), 2}}) {
+    auto options = std::make_unique<YoloObjectDetectorOptions>();
+    options->base_options.model_asset_path = "/missing/model.tflite";
+    options->num_classes = 80;
+    options->tiling.tile_rows = rows;
+    options->tiling.tile_cols = cols;
+    auto result = YoloObjectDetector::Create(std::move(options));
+    EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+    EXPECT_THAT(result.status().message(), testing::HasSubstr(
+        "tiling.tile_rows * tiling.tile_cols must be <= 2147483647"));
+  }
+}
+
 TEST(YoloObjectDetectorOptionsTest, TilingOptionsConvertToProto) {
   auto options = std::make_unique<YoloObjectDetectorOptions>();
   // The converter is a dumb mapper: it intentionally performs no grid/explicit

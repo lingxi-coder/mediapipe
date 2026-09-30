@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef MEDIAPIPE_TASKS_CC_VISION_UTILS_TILED_DETECTION_UTILS_H_
 #define MEDIAPIPE_TASKS_CC_VISION_UTILS_TILED_DETECTION_UTILS_H_
 
+#include <cstdint>
 #include <optional>
 
 #include "absl/status/status.h"
@@ -44,7 +45,8 @@ struct TiledModelInputDims {
 // whether the graph declares a NORM_RECT input).
 template <typename TilingProto>
 bool TilingEnabled(const TilingProto& t) {
-  return t.tile_rows() * t.tile_cols() > 1 || t.explicit_tiles_size() > 0;
+  return static_cast<int64_t>(t.tile_rows()) * t.tile_cols() > 1 ||
+         t.explicit_tiles_size() > 0;
 }
 
 // Returns true when motion scheduling should be active: scheduling is opted in
@@ -68,11 +70,15 @@ struct NormalizedBatchDim {
 NormalizedBatchDim NormalizeTiledBatchDim(int raw_batch);
 
 // Validates the model input tensor for the tiled front and returns its
-// [N,H,W,C] shape dims. The tiled front supports float32 BHWC only.
-// Normalization criterion (spec §2): float32 + 4D are hard requirements; if
-// TFLite Metadata NormalizationOptions exist and differ from (mean 0, std 255)
-// -> InvalidArgument; if absent -> assume /255 (same implicit assumption as
-// the single-image path for this model family).
+// [N,H,W,C] shape dims. Requires one float32 BHWC image input with positive
+// spatial dimensions and 1, 3, or 4 channels. Single-channel inputs use
+// grayscale metadata and scalar normalization; 3/4-channel inputs use RGB
+// metadata. Fixed and dynamic batches are supported; shape_signature marks a
+// dynamic batch even when shape contains
+// a positive allocated batch size. If NormalizationOptions metadata is absent,
+// tiled preprocessing assumes /255. Present normalization metadata must be
+// well-formed, finite, and equal to mean 0 and std 255. Other malformed image
+// metadata is also rejected, independently of the batch size.
 // Shared by the OBB (oriented_object_detector) and axis-aligned YOLO
 // (yolo_object_detector) tiled task graph builders.
 absl::StatusOr<TiledModelInputDims> ValidateTiledModelInputAndGetDims(

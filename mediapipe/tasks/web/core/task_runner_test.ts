@@ -52,6 +52,7 @@ class TaskRunnerFake extends TaskRunner {
         'setAutoRenderToScreen',
         'setGraph',
         'finishProcessing',
+        'closeGraph',
         'registerModelResourcesGraphService',
         'attachErrorListener',
         'getMediapipeApiKey',
@@ -148,6 +149,7 @@ describe('TaskRunner', () => {
           InferenceCalculatorOptions.Delegate.Gpu.InferenceUsage
             .SUSTAINED_SPEED,
         webnn: undefined,
+        metalExternalInputZeroCopy: false,
       },
       litert: undefined,
       tflite: undefined,
@@ -254,6 +256,94 @@ describe('TaskRunner', () => {
     expect(locator?.locateFile('wasm.wasm')).toEqual('a/b/c/wasm.wasm');
     expect(locator?.locateFile('asset.data')).toEqual('asset.data');
     expect(locator?.locateFile('unknown')).toEqual('unknown');
+  });
+
+  it('closes a constructed task when option initialization fails', async () => {
+    const close = spyOn(taskRunner, 'close').and.callThrough();
+    await expectAsync(createTaskRunner(TaskRunnerFake, null, {
+      wasmLoaderPath: 'wasm.js', wasmBinaryPath: 'wasm.wasm',
+    }, {})).toBeRejectedWithError(/Either baseOptions.modelAssetPath/);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a constructed task when model downloading fails', async () => {
+    fetchStatus = 404;
+    const close = spyOn(taskRunner, 'close').and.callThrough();
+    await expectAsync(createTaskRunner(TaskRunnerFake, null, {
+      wasmLoaderPath: 'wasm.js', wasmBinaryPath: 'wasm.wasm',
+    }, {baseOptions: {modelAssetPath: 'missing.tflite'}}))
+      .toBeRejectedWithError(/Failed to fetch model/);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a constructed task when logging initialization fails', async () => {
+    const close = spyOn(taskRunner, 'close').and.callThrough();
+    spyOn(taskRunner, 'enableLogging').and.throwError('Logging failed');
+    await expectAsync(createTaskRunner(TaskRunnerFake, null, {
+      wasmLoaderPath: 'wasm.js', wasmBinaryPath: 'wasm.wasm',
+    }, {baseOptions: {modelAssetBuffer: mockBytes}}))
+      .toBeRejectedWithError('Logging failed');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts pending downloads and ignores late responses after close', async () => {
+    let resolveFetch!: (response: Response) => void;
+    fetchSpy.and.returnValue(new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const refreshGraph = spyOn(taskRunner, 'refreshGraph');
+    const pending = taskRunner.setOptions({
+      baseOptions: {modelAssetPath: 'pending.tflite'},
+    });
+    const result = expectAsync(pending).toBeRejectedWithError('Task is closed.');
+    const signal = fetchSpy.calls.mostRecent().args[1].signal as AbortSignal;
+
+    taskRunner.close();
+    expect(signal.aborted).toBeTrue();
+    await result;
+    resolveFetch({ok: true, arrayBuffer: async () => mockBytes.buffer} as Response);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(taskRunner.wasmModule.FS_unlink).not.toHaveBeenCalled();
+    expect(taskRunner.wasmModule.FS_createDataFile).not.toHaveBeenCalled();
+    expect(refreshGraph).not.toHaveBeenCalled();
+    expect(() => taskRunner.setOptions({baseOptions: {modelAssetBuffer: mockBytes}}))
+      .toThrowError('Task is closed.');
+    expect(() => taskRunner.setGraph(new Uint8Array(), true))
+      .toThrowError('Task is closed.');
+    expect(() => taskRunner.finishProcessing(0))
+      .toThrowError('Task is closed.');
+  });
+
+  it('closes if writing the downloaded model to WASM fails', async () => {
+    taskRunner.wasmModule.FS_createDataFile.and.throwError('Model write failed');
+    const close = spyOn(taskRunner, 'close').and.callThrough();
+    const refreshGraph = spyOn(taskRunner, 'refreshGraph');
+
+    await expectAsync(taskRunner.setOptions({
+      baseOptions: {modelAssetPath: 'model.tflite'},
+    })).toBeRejectedWithError('Model write failed');
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(refreshGraph).not.toHaveBeenCalled();
+    expect(() => taskRunner.setOptions({baseOptions: {modelAssetBuffer: mockBytes}}))
+      .toThrowError('Task is closed.');
+  });
+
+  it('cancels a pending model reader when closed', async () => {
+    const cancel = jasmine.createSpy('cancel');
+    const stream = new ReadableStream<Uint8Array>({cancel});
+    const refreshGraph = spyOn(taskRunner, 'refreshGraph');
+    const pending = taskRunner.setOptions({
+      baseOptions: {modelAssetBuffer: stream.getReader()},
+    });
+    const result = expectAsync(pending).toBeRejectedWithError('Task is closed.');
+
+    taskRunner.close();
+    await result;
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(refreshGraph).not.toHaveBeenCalled();
+    expect(taskRunner.baseOptions.getModelAsset()).toBeUndefined();
   });
 
   it('handles errors during graph update', () => {

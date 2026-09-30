@@ -308,7 +308,7 @@ BoTSORT::track_observed(const std::vector<Detection> &detections,
         const std::shared_ptr<Track> &track =
                 unmatched_tracks_after_1st_association[unmatched_track_index];
         if (track->state != TrackState::Lost &&
-            _center_is_observed(track, observed_rois))
+            _center_is_observed(track, observed_rois, frame.size()))
         {
             track->mark_lost();
             lost_tracks.push_back(track);
@@ -386,7 +386,7 @@ BoTSORT::track_observed(const std::vector<Detection> &detections,
     {
         const std::shared_ptr<Track> &track =
                 unconfirmed_tracks[unmatched_track_index];
-        if (_center_is_observed(track, observed_rois))
+        if (_center_is_observed(track, observed_rois, frame.size()))
         {
             track->mark_removed();
             removed_tracks.push_back(track);
@@ -472,13 +472,29 @@ BoTSORT::track_observed(const std::vector<Detection> &detections,
 
 bool BoTSORT::_center_is_observed(
         const std::shared_ptr<Track> &track,
-        const std::vector<cv::Rect> &observed_rois)
+        const std::vector<cv::Rect> &observed_rois,
+        const cv::Size &frame_size)
 {
     const std::vector<float> tlwh = track->get_tlwh();
     if (tlwh.size() < 4)
         return false;
-    const float center_x = tlwh[0] + tlwh[2] / 2.0F;
-    const float center_y = tlwh[1] + tlwh[3] / 2.0F;
+    float center_x = tlwh[0] + tlwh[2] / 2.0F;
+    float center_y = tlwh[1] + tlwh[3] / 2.0F;
+    if (center_x < 0.0F || center_y < 0.0F ||
+        center_x >= frame_size.width || center_y >= frame_size.height)
+    {
+        const cv::Rect_<float> visible =
+                cv::Rect_<float>(tlwh[0], tlwh[1], tlwh[2], tlwh[3]) &
+                cv::Rect_<float>(0.0F, 0.0F, frame_size.width,
+                                 frame_size.height);
+        // An observed refresh must not retain an off-screen track forever as
+        // "unobserved". For a partly visible box, use its visible center so a
+        // partial refresh elsewhere still supplies no negative evidence.
+        if (visible.empty())
+            return !observed_rois.empty();
+        center_x = visible.x + visible.width / 2.0F;
+        center_y = visible.y + visible.height / 2.0F;
+    }
     for (const cv::Rect &roi: observed_rois)
     {
         if (center_x >= roi.x && center_y >= roi.y &&

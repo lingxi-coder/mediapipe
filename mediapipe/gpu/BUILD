@@ -1707,6 +1707,17 @@ cc_library(
     deps = [":multi_pool"],
 )
 
+cc_library(
+    name = "gpu_test_base",
+    testonly = True,
+    hdrs = ["gpu_test_base.h"],
+    deps = [
+        ":gl_calculator_helper",
+        ":gpu_shared_data_internal",
+        "//mediapipe/framework/port:gtest",
+    ],
+)
+
 cc_test(
     name = "tiling_gpu_resource_test",
     srcs = ["tiling_gpu_resource_test.cc"],

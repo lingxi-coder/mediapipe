@@ -37,7 +37,7 @@ namespace vision {
 // models). The `display_names_locale` may be empty; locale display names are
 // optional.
 absl::StatusOr<mediapipe::proto_ns::Map<int64_t, mediapipe::LabelMapItem>>
-GetLabelItemsFromMetadata(const core::ModelResources& model_resources,
+GetLabelItemsFromMetadata(const tasks::core::ModelResources& model_resources,
                           absl::string_view display_names_locale);
 
 // Resolves category allow/deny NAMES -> class INDEX set using label_items.

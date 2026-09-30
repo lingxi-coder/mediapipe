@@ -29,9 +29,11 @@ limitations under the License.
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <utility>
 #include <vector>
 
@@ -118,6 +120,22 @@ TEST(OrientedObjectDetectorOptionsTest, CopiesCategoryFieldsToProto) {
   EXPECT_EQ(proto->category_allowlist(1), "plane");
   ASSERT_EQ(proto->category_denylist_size(), 1);
   EXPECT_EQ(proto->category_denylist(0), "helicopter");
+}
+
+TEST(OrientedObjectDetectorOptionsTest, OversizedTileGridRejectedBeforeLoadingModel) {
+  for (const auto [rows, cols] : {std::pair<int, int>{65536, 65536},
+                                  std::pair<int, int>{46341, 46341},
+                                  std::pair<int, int>{std::numeric_limits<int>::max(), 2}}) {
+    auto options = std::make_unique<OrientedObjectDetectorOptions>();
+    options->base_options.model_asset_path = "/missing/model.tflite";
+    options->num_classes = 15;
+    options->tiling.tile_rows = rows;
+    options->tiling.tile_cols = cols;
+    auto result = OrientedObjectDetector::Create(std::move(options));
+    EXPECT_EQ(result.status().code(), absl::StatusCode::kInvalidArgument);
+    EXPECT_THAT(result.status().message(), testing::HasSubstr(
+        "tiling.tile_rows * tiling.tile_cols must be <= 2147483647"));
+  }
 }
 
 TEST(OrientedObjectDetectorOptionsTest, TilingOptionsConvertToProto) {

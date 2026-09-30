@@ -168,9 +168,11 @@ cc_library(
     hdrs = ["tiled_detection_utils.h"],
     deps = [
         ":image_tensor_specs",
+        "//mediapipe/framework/port:status",
         "//mediapipe/tasks/cc:common",
         "//mediapipe/tasks/cc/core:model_resources",
         "//mediapipe/tasks/cc/vision/core:image_processing_options",
+        "//mediapipe/tasks/metadata:metadata_schema_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@flatbuffers//:runtime_cc",
@@ -182,9 +184,16 @@ cc_test(
     name = "tiled_detection_utils_test",
     srcs = ["tiled_detection_utils_test.cc"],
     deps = [
+        ":detection_label_resolution",
         ":tiled_detection_utils",
-        "//mediapipe/framework/port:gtest",
-        "@com_google_googletest//:gtest_main",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/tasks/cc/core:model_resources",
+        "//mediapipe/tasks/cc/core/proto:external_file_cc_proto",
+        "//mediapipe/tasks/metadata:metadata_schema_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@flatbuffers//:runtime_cc",
+        "@litert//tflite/schema:schema_fbs",
     ],
 )
 

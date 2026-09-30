@@ -77,7 +77,11 @@ using BoundingBoxProto = ::mediapipe::LocationData::BoundingBox;
 
   return [[MPPDetection alloc] initWithCategories:categories
                                       boundingBox:boundingBox
-                                        keypoints:normalizedKeypoints];
+                                        keypoints:normalizedKeypoints
+                                          trackID:detectionProto.has_track_id()
+                                                      ? [NSString stringWithCppString:
+                                                                      detectionProto.track_id()]
+                                                      : nil];
 }
 
 @end

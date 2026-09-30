@@ -17,6 +17,7 @@ limitations under the License.
 #define MEDIAPIPE_TASKS_CC_VISION_UTILS_IMAGE_TENSOR_SPECS_H_
 
 #include <array>
+#include <optional>
 
 #include "absl/status/statusor.h"
 #include "absl/types/optional.h"
@@ -72,6 +73,17 @@ struct ImageTensorSpecs {
   // other tensor input types, e.g. kTfLiteUInt8.
   absl::optional<NormalizationOptions> normalization_options;
 };
+
+// Reads optional image properties, rejecting metadata that instead describes
+// another kind of tensor content. Does not impose an input batch size.
+absl::StatusOr<const tflite::ImageProperties*> GetImagePropertiesIfAny(
+    const tflite::TensorMetadata& tensor_metadata);
+
+// Reads optional normalization parameters without requiring batch size one.
+// Malformed process units or mean/std vectors return an error; absent
+// normalization metadata returns std::nullopt.
+absl::StatusOr<std::optional<NormalizationOptions>>
+GetNormalizationOptionsIfAny(const tflite::TensorMetadata& tensor_metadata);
 
 // Gets the image tensor metadata from the metadata extractor by tensor index.
 absl::StatusOr<const tflite::TensorMetadata*> GetImageTensorMetadataIfAny(

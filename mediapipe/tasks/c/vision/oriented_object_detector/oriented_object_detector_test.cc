@@ -15,20 +15,17 @@ limitations under the License.
 
 // Integration test for the oriented (OBB) object detector C API.
 //
-// The assertions inside the TEST are gated on the presence of a
-// yolov8n-obb.tflite fixture.  If the fixture is absent the test calls
-// GTEST_SKIP() and exits cleanly (neither failing nor faking a pass).  To
-// enable the assertions:
-//   1.  Place the exported yolov8n-obb.tflite file at
-//       mediapipe/tasks/testdata/vision/yolov8n-obb.tflite.
-//   2.  Add it to mediapipe/tasks/testdata/vision/BUILD (mediapipe_files +
-//       filegroup) and uncomment the data dep in this package's BUILD rule.
-//   3.  Re-run the test.
+// The yolo_obb_test_model data dependency includes locally exported
+// yolov8n-obb.tflite and boats.jpg fixtures. Run
+// mediapipe/tasks/testdata/vision/export_yolov8n_obb_tflite.py to generate them.
+// Model-dependent tests skip when the model is absent.
 
 #include "mediapipe/tasks/c/vision/oriented_object_detector/oriented_object_detector.h"
 
 #include <cmath>
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <cstring>
 #include <string>
 
@@ -40,6 +37,7 @@ limitations under the License.
 #include "mediapipe/tasks/c/core/common.h"
 #include "mediapipe/tasks/c/core/mp_status.h"
 #include "mediapipe/tasks/c/vision/core/image.h"
+#include "mediapipe/tasks/c/vision/core/image_frame_util.h"
 
 namespace {
 
@@ -478,6 +476,71 @@ TEST(OrientedObjectDetectorCApiTest, RejectsAllowlistAndDenylistTogether) {
                                            /*error_msg=*/nullptr),
             kMpOk);
   if (detector) MpOrientedObjectDetectorClose(detector, /*error_msg=*/nullptr);
+}
+
+TEST(OrientedObjectDetectorCApiTest, FailedCloseReleasesNativeTask) {
+  const std::string model_path = GetFullPath(kObbModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "Model fixture not available at " << model_path;
+  }
+  MpOrientedObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.score_threshold = 0.25f;
+  options.iou_threshold = 0.45f;
+  options.num_classes = 15;
+  options.layout = 1;  // CHANNELS_FIRST
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  ScopedMpOrientedObjectDetector detector;
+  ASSERT_EQ(MpOrientedObjectDetectorCreate(&options, &detector.ptr, nullptr), kMpOk);
+
+  // A successful output stays owned by TaskRunner after the caller frees its
+  // image. Its weak reference observes native task destruction without a hook.
+  std::weak_ptr<mediapipe::ImageFrame> retained_frame;
+  {
+    MpImagePtr raw_image = nullptr;
+    ASSERT_EQ(MpImageCreateFromFile(GetFullPath(kImageFile).c_str(), &raw_image,
+                                    nullptr),
+              kMpOk);
+    ScopedMpImage image(raw_image);
+    retained_frame = image.get()->image.GetImageFrameSharedPtr();
+    MpOrientedObjectDetectorResult result = {};
+    ASSERT_EQ(MpOrientedObjectDetectorDetectImage(detector.ptr, image.get(),
+                                    nullptr, &result, nullptr),
+              kMpOk);
+    MpOrientedObjectDetectorCloseResult(&result);
+  }
+  ASSERT_FALSE(retained_frame.expired());
+
+  // Grayscale is accepted by the Image API but fails inside tiled RGB
+  // preprocessing. The graph remains failed, so shutdown returns that error.
+  const std::array<uint8_t, 16 * 16> pixels = {};
+  MpImagePtr raw_gray = nullptr;
+  ASSERT_EQ(MpImageCreateFromUint8Data(kMpImageFormatGray8, 16, 16, pixels.data(),
+                                      pixels.size(), &raw_gray, nullptr),
+            kMpOk);
+  {
+    ScopedMpImage gray(raw_gray);
+    MpOrientedObjectDetectorResult result = {};
+    char* error = nullptr;
+    const MpStatus status = MpOrientedObjectDetectorDetectImage(
+        detector.ptr, gray.get(), nullptr, &result, &error);
+    EXPECT_NE(status, kMpOk);
+    ASSERT_NE(error, nullptr);
+    EXPECT_NE(std::string(error).find("input channels"), std::string::npos);
+    MpErrorFree(error);
+  }
+  ASSERT_FALSE(retained_frame.expired());
+
+  // Close consumes the handle even when it fails. A retry would be invalid.
+  MpOrientedObjectDetectorPtr handle = detector.ptr;
+  detector.ptr = nullptr;
+  char* error = nullptr;
+  EXPECT_NE(MpOrientedObjectDetectorClose(handle, &error), kMpOk);
+  MpErrorFree(error);
+  EXPECT_TRUE(retained_frame.expired());
 }
 
 }  // namespace

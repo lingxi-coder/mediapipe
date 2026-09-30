@@ -58,6 +58,84 @@ _MODEL_PRESENT = _model_available()
 
 class YoloObjectDetectorTest(parameterized.TestCase):
 
+  @parameterized.parameters(True, 1.5, '2', None)
+  def test_tiling_grid_rejects_noninteger_dimensions(self, value):
+    for dimension in ('tile_rows', 'tile_cols'):
+      with self.subTest(dimension=dimension):
+        tiling = yolo_object_detector.TilingOptions(**{dimension: value})
+        with self.assertRaisesRegex(TypeError, 'must be an integer'):
+          yolo_object_detector._build_tiling_options_c(tiling)  # pylint: disable=protected-access
+
+  @parameterized.parameters(-1, 2**31, 2**32 + 1)
+  def test_tiling_grid_rejects_out_of_range_dimensions(self, value):
+    for dimension in ('tile_rows', 'tile_cols'):
+      with self.subTest(dimension=dimension):
+        tiling = yolo_object_detector.TilingOptions(**{dimension: value})
+        with self.assertRaisesRegex(ValueError, 'must be in'):
+          yolo_object_detector._build_tiling_options_c(tiling)  # pylint: disable=protected-access
+
+  def test_tiling_grid_rejects_overflowing_tile_count(self):
+    tiling = yolo_object_detector.TilingOptions(
+        tile_rows=65536, tile_cols=65536
+    )
+    with self.assertRaisesRegex(ValueError, 'grid tile count'):
+      yolo_object_detector._build_tiling_options_c(tiling)  # pylint: disable=protected-access
+
+  @parameterized.parameters((0, 0), (0, 2**31 - 1), (2**31 - 1, 1))
+  def test_tiling_grid_preserves_valid_dimensions(self, rows, cols):
+    tiling = yolo_object_detector.TilingOptions(tile_rows=rows, tile_cols=cols)
+    converted, _ = yolo_object_detector._build_tiling_options_c(tiling)  # pylint: disable=protected-access
+    self.assertEqual(converted.tile_rows, rows)
+    self.assertEqual(converted.tile_cols, cols)
+
+  def test_explicit_tiles_preserve_zero_initialized_grid(self):
+    tiling = yolo_object_detector.TilingOptions(
+        tile_rows=0, tile_cols=0,
+        explicit_tiles=[yolo_object_detector.TileRect(0.5, 0.5, 1.0, 1.0)],
+    )
+    converted, backing = yolo_object_detector._build_tiling_options_c(tiling)  # pylint: disable=protected-access
+    self.assertEqual(converted.tile_rows, 0)
+    self.assertEqual(converted.tile_cols, 0)
+    self.assertEqual(converted.explicit_tiles_count, 1)
+    self.assertEqual(converted.explicit_tiles[0].width, 1.0)
+    self.assertLen(backing, 1)
+
+  def test_close_frees_dispatchers_after_native_error(self):
+    lib = mock.Mock()
+    dispatcher = mock.Mock()
+    close_native = lib.MpYoloObjectDetectorClose
+    close_native.side_effect = RuntimeError('graph failed during processing')
+    detector = _YoloObjectDetector(
+        lib=lib, handle=123, dispatcher=dispatcher,
+        async_callback=None, label_map=None,
+    )
+
+    with self.assertRaisesRegex(RuntimeError, 'graph failed during processing'):
+      detector.close()
+
+    self.assertIsNone(detector._handle)  # pylint: disable=protected-access
+    close_native.assert_called_once_with(123)
+    dispatcher.close.assert_called_once_with()
+    lib.close.assert_called_once_with()
+    # The native handle was consumed even on failure; never retry its close.
+    detector.close()
+    close_native.assert_called_once_with(123)
+
+  def test_close_frees_library_after_dispatcher_error(self):
+    lib = mock.Mock()
+    dispatcher = mock.Mock()
+    dispatcher.close.side_effect = RuntimeError('dispatcher failed to stop')
+    detector = _YoloObjectDetector(
+        lib=lib, handle=123, dispatcher=dispatcher,
+        async_callback=None, label_map=None,
+    )
+
+    with self.assertRaisesRegex(RuntimeError, 'dispatcher failed to stop'):
+      detector.close()
+
+    self.assertIsNone(detector._handle)  # pylint: disable=protected-access
+    lib.close.assert_called_once_with()
+
   def test_create_from_model_path_forwards_class_count(self):
     with mock.patch.object(
         _YoloObjectDetector, 'create_from_options'
@@ -349,7 +427,7 @@ class YoloObjectDetectorTest(parameterized.TestCase):
         base_options=_BaseOptions(model_asset_path=model_path),
         running_mode=_RUNNING_MODE.IMAGE,
         score_threshold=0.25,
-        layout=_Layout.CHANNELS_LAST,
+        layout=_Layout.CHANNELS_FIRST,
         num_classes=80,
     )
     with _YoloObjectDetector.create_from_options(options) as detector:
@@ -395,7 +473,7 @@ class YoloObjectDetectorTest(parameterized.TestCase):
         base_options=_BaseOptions(model_asset_path=model_path),
         running_mode=_RUNNING_MODE.IMAGE,
         score_threshold=0.25,
-        layout=_Layout.CHANNELS_LAST,
+        layout=_Layout.CHANNELS_FIRST,
         num_classes=80,
         tiling=yolo_object_detector.TilingOptions(
             tile_rows=2, tile_cols=2, tile_overlap_fraction=0.2

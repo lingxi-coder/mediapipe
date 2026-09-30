@@ -44,8 +44,9 @@ struct OrientedObjectDetectionResult {
 };
 
 // Converts original-image-normalized OrientedDetection protos to the pixel-unit
-// container. image_size is {width, height} in pixels. Category names/display
-// names are left empty (label enrichment deferred for YOLO-family Tasks).
+// container. image_size is {width, height} in pixels. For non-square images,
+// the normalized corners are mapped to pixel space and refit as the minimum-area
+// enclosing oriented rectangle so width, height, and rotation remain coherent.
 OrientedObjectDetectionResult ConvertToOrientedObjectDetectionResult(
     std::vector<mediapipe::OrientedDetection> detections_proto,
     std::pair<int, int> image_size);

@@ -41,12 +41,27 @@ using ::mediapipe::tasks::metadata::ModelMetadataExtractor;
 }  // namespace
 
 absl::StatusOr<mediapipe::proto_ns::Map<int64_t, mediapipe::LabelMapItem>>
-GetLabelItemsFromMetadata(const core::ModelResources& model_resources,
+GetLabelItemsFromMetadata(const tasks::core::ModelResources& model_resources,
                           absl::string_view display_names_locale) {
   using LabelItems = mediapipe::proto_ns::Map<int64_t, mediapipe::LabelMapItem>;
 
   const ModelMetadataExtractor* metadata_extractor =
       model_resources.GetMetadataExtractor();
+
+  const auto* model_metadata = metadata_extractor->GetModelMetadata();
+  if (model_metadata == nullptr ||
+      model_metadata->subgraph_metadata() == nullptr) {
+    return LabelItems();
+  }
+  // GetOutputTensorMetadata accesses subgraph metadata index zero. Validate it
+  // here because detector graph construction resolves labels before validating
+  // the input tensor metadata.
+  if (model_metadata->subgraph_metadata()->size() != 1) {
+    return CreateStatusWithPayload(
+        absl::StatusCode::kInvalidArgument,
+        "Detection models require exactly one subgraph metadata entry.",
+        MediaPipeTasksStatus::kMetadataInvalidNumSubgraphsError);
+  }
 
   // If there is no output tensor metadata at all, return empty map.
   const auto* output_tensors_metadata =

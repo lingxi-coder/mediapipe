@@ -2680,6 +2680,7 @@ cc_library(
             "//mediapipe/framework/port:status",
             "//mediapipe/gpu:MPPMetalHelper",
             "//mediapipe/gpu:gpu_buffer",
+            "//mediapipe/gpu:gpu_service",
         ],
         "//mediapipe:emscripten": [
             "//mediapipe/gpu:gpu_buffer",
@@ -2706,7 +2707,9 @@ cc_test(
     srcs = ["streaming_tiles_to_tensor_batch_calculator_test.cc"],
     size = "small",
     deps = [
+        ":inference_calculator_cpu",
         ":streaming_tiles_to_tensor_batch_calculator",
+        "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/formats:tiling_cache_stats",
         "//mediapipe/util:tiling_matrix_utils",
         "//mediapipe/framework/formats:tiling_types",
@@ -2717,6 +2720,10 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",
+        "//mediapipe/util/tflite:tflite_model_loader",
+        "@flatbuffers//:runtime_cc",
+        "@litert//tflite:model_builder",
+        "@litert//tflite/schema:schema_fbs",
     ],
 )
 
@@ -2884,11 +2891,16 @@ cc_test(
 cc_test(
     name = "streaming_tiles_to_tensor_batch_calculator_metal_test",
     srcs = ["streaming_tiles_to_tensor_batch_calculator_metal_test.cc"],
+    data = select({
+        "//mediapipe:apple": [":testdata/1x256x256x3_softmax.tflite"],
+        "//conditions:default": [],
+    }),
     deps = [
         "//mediapipe/framework:port",
         "//mediapipe/framework/port:gtest_main",
     ] + select({
         "//mediapipe:apple": [
+            ":inference_calculator",
             ":streaming_tiles_to_tensor_batch_calculator",
             ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
             "//mediapipe/framework/formats:tiling_cache_stats",

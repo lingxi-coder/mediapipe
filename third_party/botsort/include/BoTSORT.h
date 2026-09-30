@@ -109,7 +109,8 @@ private:
     void _load_params_from_config(const TrackerParams &config);
 
     static bool _center_is_observed(const std::shared_ptr<Track> &track,
-                                    const std::vector<cv::Rect> &observed_rois);
+                                    const std::vector<cv::Rect> &observed_rois,
+                                    const cv::Size &frame_size);
     void _predict_tracks(
             const cv::Mat &frame, const std::vector<Detection> &detections,
             std::vector<std::shared_ptr<Track>> *tracks_pool,

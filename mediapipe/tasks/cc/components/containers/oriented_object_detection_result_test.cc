@@ -37,14 +37,31 @@ TEST(OrientedObjectDetectionResultTest, ConvertsNormalizedProtoToPixels) {
   const OrientedObjectDetection& od = result.detections[0];
   EXPECT_NEAR(od.cx, 100.0f, 1e-4);
   EXPECT_NEAR(od.cy, 25.0f, 1e-4);
-  EXPECT_NEAR(od.width, 80.0f, 1e-4);
-  EXPECT_NEAR(od.height, 20.0f, 1e-4);
-  EXPECT_NEAR(od.rotation, 0.3f, 1e-6);
+  EXPECT_NEAR(od.width, 86.0971f, 1e-3);
+  EXPECT_NEAR(od.height, 20.6890f, 1e-3);
+  EXPECT_NEAR(od.rotation, 0.153452f, 1e-5);
   ASSERT_EQ(od.categories.size(), 1);
   EXPECT_EQ(od.categories[0].index, 7);
   EXPECT_NEAR(od.categories[0].score, 0.9f, 1e-6);
   EXPECT_FALSE(od.categories[0].category_name.has_value());
   EXPECT_FALSE(od.categories[0].display_name.has_value());
+}
+
+TEST(OrientedObjectDetectionResultTest,
+     PreservesGeometryWhenPixelAspectRatioIsSquare) {
+  mediapipe::OrientedDetection d;
+  d.set_cx(0.5f);
+  d.set_cy(0.25f);
+  d.set_width(0.4f);
+  d.set_height(0.2f);
+  d.set_rotation(0.3f);
+
+  auto result = ConvertToOrientedObjectDetectionResult({d}, {200, 200});
+
+  ASSERT_EQ(result.detections.size(), 1u);
+  EXPECT_NEAR(result.detections[0].width, 80.0f, 1e-4);
+  EXPECT_NEAR(result.detections[0].height, 40.0f, 1e-4);
+  EXPECT_NEAR(result.detections[0].rotation, 0.3f, 1e-6);
 }
 
 TEST(OrientedObjectDetectionResultTest, PopulatesCategoryNameFromLabel) {

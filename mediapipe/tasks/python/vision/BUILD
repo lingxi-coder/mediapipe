@@ -19,6 +19,31 @@ package(default_visibility = ["//visibility:public"])
 licenses(["notice"])
 
 py_library(
+    name = "vision_api",
+    srcs = ["__init__.py"],
+    deps = [
+        ":drawing_styles",
+        ":drawing_utils",
+        ":face_detector",
+        ":face_landmarker",
+        ":gesture_recognizer",
+        ":hand_landmarker",
+        ":holistic_landmarker",
+        ":image_classifier",
+        ":image_embedder",
+        ":image_segmenter",
+        ":interactive_segmenter",
+        ":interactive_segmenter_legacy",
+        ":object_detector",
+        ":oriented_object_detector",
+        ":pose_landmarker",
+        ":yolo_object_detector",
+        "//mediapipe/tasks/python/vision/core:image_processing_options",
+        "//mediapipe/tasks/python/vision/core:vision_task_running_mode",
+    ],
+)
+
+py_library(
     name = "drawing_utils",
     srcs = ["drawing_utils.py"],
     deps = [

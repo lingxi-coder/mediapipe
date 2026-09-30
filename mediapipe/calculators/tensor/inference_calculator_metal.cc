@@ -124,6 +124,7 @@ class InferenceCalculatorMetalImpl
 #endif  // MEDIAPIPE_TFLITE_GL_INFERENCE
 
 #if MEDIAPIPE_TFLITE_GPU_SUPPORTED
+  std::vector<Tensor::Shape> input_shapes_;
   std::vector<Tensor::Shape> output_shapes_;
   std::vector<std::unique_ptr<Tensor>> gpu_buffers_in_;
   std::vector<std::unique_ptr<Tensor>> gpu_buffers_out_;
@@ -165,6 +166,40 @@ absl::Status InferenceCalculatorMetalImpl::Open(CalculatorContext* cc) {
 
 absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
     CalculatorContext* cc, const TensorSpan& tensor_span) {
+  RET_CHECK_EQ(tensor_span.size(), gpu_buffers_in_.size())
+      << "Metal GPU inference input tensor count does not match the model.";
+  // GPU delegate buffers are fixed at initialization. Check every input before
+  // obtaining a GPU view or scheduling a conversion into those buffers.
+  for (int i = 0; i < tensor_span.size(); ++i) {
+    RET_CHECK(tensor_span[i].element_type() == Tensor::ElementType::kFloat32)
+        << "Metal GPU inference requires float32 input tensors (input #" << i
+        << ").";
+    const auto& dims = tensor_span[i].shape().dims;
+    if (external_input_zero_copy_) {
+      RET_CHECK(!dims.empty() && dims[0] == 1)
+          << "metal_external_input_zero_copy requires input batch N==1, got N="
+          << (dims.empty() ? -1 : dims[0]) << " (input #" << i
+          << "). The delegate input is SHWBC4 (batch-innermost) but the "
+             "zero-copy packet is contiguous batch-outermost PHWC4; they match "
+             "only at N==1. Use the non-zero-copy path for batched models.";
+    }
+    const auto& expected_dims = external_input_zero_copy_
+                                    ? gpu_buffers_in_[i]->shape().dims
+                                    : input_shapes_[i].dims;
+    RET_CHECK(dims == expected_dims)
+        << "Metal GPU inference input shape does not match the fixed model "
+           "input #" << i << "; resizing GPU input tensors is not supported."
+        << (external_input_zero_copy_
+                ? " Direct input must be physical PHWC4 with padded channels."
+                : "");
+    if (external_input_zero_copy_) {
+      RET_CHECK_EQ(tensor_span[i].bytes(), gpu_buffers_in_[i]->bytes())
+          << "metal_external_input_zero_copy input #" << i
+          << " byte-size mismatch: packet " << tensor_span[i].bytes()
+          << " vs delegate input " << gpu_buffers_in_[i]->bytes()
+          << " (input must be physical PHWC4 float32 [N,H,W,RoundUp(C,4)]).";
+    }
+  }
   std::vector<Tensor> output_tensors;
 
   id<MTLCommandBuffer> command_buffer;
@@ -179,20 +214,6 @@ absl::StatusOr<std::vector<Tensor>> InferenceCalculatorMetalImpl::Process(
     if (external_input_zero_copy_) {
       // True zero-copy: bind the packet's PHWC4 MTLBuffer directly as the
       // delegate input and skip BHWC->BPHWC4 conversion.
-      // PERMANENT GUARD: only correct at N==1 (delegate input is batch-innermost
-      // SHWBC4; a contiguous packet matches only when batch==1). Fail loudly.
-      const auto& shape = tensor_span[i].shape();
-      RET_CHECK(!shape.dims.empty() && shape.dims[0] == 1)
-          << "metal_external_input_zero_copy requires input batch N==1, got N="
-          << (shape.dims.empty() ? -1 : shape.dims[0]) << " (input #" << i
-          << "). The delegate input is SHWBC4 (batch-innermost) but the "
-             "zero-copy packet is contiguous batch-outermost PHWC4; they match "
-             "only at N==1. Use the non-zero-copy path for batched models.";
-      RET_CHECK_EQ(tensor_span[i].bytes(), gpu_buffers_in_[i]->bytes())
-          << "metal_external_input_zero_copy input #" << i
-          << " byte-size mismatch: packet " << tensor_span[i].bytes()
-          << " vs delegate input " << gpu_buffers_in_[i]->bytes()
-          << " (input must be physical PHWC4 float32 [N,H,W,RoundUp(C,4)]).";
       RET_CHECK_EQ(TFLGpuDelegateBindMetalBufferToTensor(
                        delegate_.get(), interpreter_->inputs()[i],
                        input_view.buffer()),
@@ -259,6 +280,7 @@ absl::Status InferenceCalculatorMetalImpl::Close(CalculatorContext* cc) {
   converter_from_BPHWC4_ = nil;
   gpu_buffers_in_.clear();
   gpu_buffers_out_.clear();
+  input_shapes_.clear();
   interpreter_ = nullptr;
   delegate_ = nullptr;
   return absl::OkStatus();
@@ -321,6 +343,7 @@ absl::Status InferenceCalculatorMetalImpl::CreateConverters(
     // Create and bind input buffer.
     std::vector<int> dims{tensor->dims->data,
                           tensor->dims->data + tensor->dims->size};
+    input_shapes_.emplace_back(dims);
     dims.back() = RoundUp(dims.back(), 4);
     gpu_buffers_in_.emplace_back(absl::make_unique<Tensor>(
         allow_precision_loss_ ? Tensor::ElementType::kFloat16

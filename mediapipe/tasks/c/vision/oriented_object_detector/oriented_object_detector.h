@@ -185,7 +185,8 @@ MP_EXPORT MpStatus MpOrientedObjectDetectorDetectAsync(
 MP_EXPORT void MpOrientedObjectDetectorCloseResult(
     MpOrientedObjectDetectorResult* result);
 
-// Frees the detector.
+// Frees the detector even if shutdown returns an error. The pointer is invalid
+// after this call regardless of the returned status and must not be reused.
 MP_EXPORT MpStatus MpOrientedObjectDetectorClose(
     MpOrientedObjectDetectorPtr detector, char** error_msg);
 

@@ -15,18 +15,15 @@ limitations under the License.
 
 // Integration test for the YOLO object detector C API.
 //
-// The assertions inside the TEST are gated on the presence of a yolov8n.tflite
-// fixture.  If the fixture is absent the test calls GTEST_SKIP() and exits
-// cleanly (neither failing nor faking a pass).  To enable the assertions:
-//   1.  Place the exported yolov8n.tflite file at
-//       mediapipe/tasks/testdata/vision/yolov8n.tflite.
-//   2.  Add it to mediapipe/tasks/testdata/vision/BUILD (mediapipe_files +
-//       filegroup) and uncomment the data dep in this package's BUILD rule.
-//   3.  Re-run the test.
+// The yolo_test_model data dependency includes locally exported yolov8n.tflite
+// fixtures. Run mediapipe/tasks/testdata/vision/export_yolov8n_tflite.py to
+// generate the model. Model-dependent tests skip when it is absent.
 
 #include "mediapipe/tasks/c/vision/yolo_object_detector/yolo_object_detector.h"
 
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -37,6 +34,7 @@ limitations under the License.
 #include "mediapipe/tasks/c/core/common.h"
 #include "mediapipe/tasks/c/core/mp_status.h"
 #include "mediapipe/tasks/c/vision/core/image.h"
+#include "mediapipe/tasks/c/vision/core/image_frame_util.h"
 
 namespace {
 
@@ -93,7 +91,7 @@ TEST(YoloObjectDetectorCApiTest, ImageMode) {
   options.score_threshold = 0.25f;
   options.iou_threshold = 0.45f;
   options.num_classes = 80;
-  options.layout = 2;  // CHANNELS_LAST
+  options.layout = 1;  // CHANNELS_FIRST: yolov8n.tflite emits [1,84,8400].
 
   MpYoloObjectDetectorPtr detector = nullptr;
   ASSERT_EQ(MpYoloObjectDetectorCreate(&options, &detector, /*error_msg=*/nullptr),
@@ -125,9 +123,9 @@ TEST(YoloObjectDetectorCApiTest, ImageMode) {
 }
 
 // Configures a 2x2 tiling grid through the C API and runs detection. Like
-// ImageMode, this SKIPs cleanly when the yolov8n.tflite fixture is absent
-// (no yolo_test_models data dep is wired). It exercises the full C->C++->proto
-// tiling path end to end when the model is present. In tiled mode the graph
+// ImageMode, this skips when the locally exported yolov8n.tflite is absent.
+// It exercises the full C->C++->proto tiling path when the model is present.
+// In tiled mode the graph
 // has no NORM_RECT input, so we pass null
 // image_processing_options. (A default no-ROI, no-rotation options object is
 // also accepted; only a region-of-interest or non-zero rotation is rejected.)
@@ -147,7 +145,7 @@ TEST(YoloObjectDetectorCApiTest, TiledImageMode) {
   options.score_threshold = 0.25f;
   options.iou_threshold = 0.45f;
   options.num_classes = 80;
-  options.layout = 2;  // CHANNELS_LAST
+  options.layout = 1;  // CHANNELS_FIRST: yolov8n.tflite emits [1,84,8400].
   options.tiling.tile_rows = 2;
   options.tiling.tile_cols = 2;
   options.tiling.tile_overlap_fraction = 0.2f;
@@ -243,7 +241,7 @@ TEST(YoloObjectDetectorCApiTest, RejectsExplicitTilesWithGrid) {
   options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
   options.max_results = 10;
   options.num_classes = 80;
-  options.layout = 2;  // CHANNELS_LAST
+  options.layout = 1;  // CHANNELS_FIRST: yolov8n.tflite emits [1,84,8400].
   options.tiling.tile_rows = 2;
   options.tiling.tile_cols = 2;
   options.tiling.explicit_tiles = tiles;
@@ -271,7 +269,7 @@ TEST(YoloObjectDetectorCApiTest, RejectsNegativeTileGrid) {
   options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
   options.max_results = 10;
   options.num_classes = 80;
-  options.layout = 2;  // CHANNELS_LAST
+  options.layout = 1;  // CHANNELS_FIRST: yolov8n.tflite emits [1,84,8400].
   options.tiling.tile_rows = -1;
   options.tiling.tile_cols = 2;
 
@@ -297,7 +295,7 @@ TEST(YoloObjectDetectorCApiTest, RejectsOutOfRangeTileOverlap) {
   options.running_mode = MpRunningMode::MP_RUNNING_MODE_IMAGE;
   options.max_results = 10;
   options.num_classes = 80;
-  options.layout = 2;  // CHANNELS_LAST
+  options.layout = 1;  // CHANNELS_FIRST: yolov8n.tflite emits [1,84,8400].
   options.tiling.tile_rows = 2;
   options.tiling.tile_cols = 2;
   options.tiling.tile_overlap_fraction = 1.5f;
@@ -312,6 +310,71 @@ TEST(YoloObjectDetectorCApiTest, RejectsOutOfRangeTileOverlap) {
   EXPECT_NE(std::string(error_msg).find("tile_overlap_fraction"),
             std::string::npos);
   MpErrorFree(error_msg);
+}
+
+TEST(YoloObjectDetectorCApiTest, FailedCloseReleasesNativeTask) {
+  const std::string model_path = GetFullPath(kYoloModel);
+  if (!mediapipe::file::Exists(model_path).ok()) {
+    GTEST_SKIP() << "Model fixture not available at " << model_path;
+  }
+  MpYoloObjectDetectorOptions options = {};
+  options.base_options.model_asset_path = model_path.c_str();
+  options.running_mode = MP_RUNNING_MODE_IMAGE;
+  options.max_results = 10;
+  options.score_threshold = 0.25f;
+  options.iou_threshold = 0.45f;
+  options.num_classes = 80;
+  options.layout = 1;  // CHANNELS_FIRST
+  options.tiling.tile_rows = 2;
+  options.tiling.tile_cols = 2;
+  ScopedMpYoloObjectDetector detector;
+  ASSERT_EQ(MpYoloObjectDetectorCreate(&options, &detector.ptr, nullptr), kMpOk);
+
+  // A successful output stays owned by TaskRunner after the caller frees its
+  // image. Its weak reference observes native task destruction without a hook.
+  std::weak_ptr<mediapipe::ImageFrame> retained_frame;
+  {
+    MpImagePtr raw_image = nullptr;
+    ASSERT_EQ(MpImageCreateFromFile(GetFullPath(kImageFile).c_str(), &raw_image,
+                                    nullptr),
+              kMpOk);
+    ScopedMpImage image(raw_image);
+    retained_frame = image.get()->image.GetImageFrameSharedPtr();
+    MpYoloObjectDetectorResult result = {};
+    ASSERT_EQ(MpYoloObjectDetectorDetectImage(detector.ptr, image.get(),
+                                    nullptr, &result, nullptr),
+              kMpOk);
+    MpYoloObjectDetectorCloseResult(&result);
+  }
+  ASSERT_FALSE(retained_frame.expired());
+
+  // Grayscale is accepted by the Image API but fails inside tiled RGB
+  // preprocessing. The graph remains failed, so shutdown returns that error.
+  const std::array<uint8_t, 16 * 16> pixels = {};
+  MpImagePtr raw_gray = nullptr;
+  ASSERT_EQ(MpImageCreateFromUint8Data(kMpImageFormatGray8, 16, 16, pixels.data(),
+                                      pixels.size(), &raw_gray, nullptr),
+            kMpOk);
+  {
+    ScopedMpImage gray(raw_gray);
+    MpYoloObjectDetectorResult result = {};
+    char* error = nullptr;
+    const MpStatus status = MpYoloObjectDetectorDetectImage(
+        detector.ptr, gray.get(), nullptr, &result, &error);
+    EXPECT_NE(status, kMpOk);
+    ASSERT_NE(error, nullptr);
+    EXPECT_NE(std::string(error).find("input channels"), std::string::npos);
+    MpErrorFree(error);
+  }
+  ASSERT_FALSE(retained_frame.expired());
+
+  // Close consumes the handle even when it fails. A retry would be invalid.
+  MpYoloObjectDetectorPtr handle = detector.ptr;
+  detector.ptr = nullptr;
+  char* error = nullptr;
+  EXPECT_NE(MpYoloObjectDetectorClose(handle, &error), kMpOk);
+  MpErrorFree(error);
+  EXPECT_TRUE(retained_frame.expired());
 }
 
 }  // namespace

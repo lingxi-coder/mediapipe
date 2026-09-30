@@ -204,11 +204,10 @@ void CppYoloObjectDetectorCloseResult(MpYoloObjectDetectorResult* result) {
 absl::Status CppYoloObjectDetectorClose(MpYoloObjectDetectorPtr detector) {
   auto cpp_detector = GetCppDetector(detector);
   auto result = cpp_detector->Close();
-  if (!result.ok()) {
-    return result;
-  }
+  // Close stops the runner even when graph shutdown reports an earlier error.
+  // Consume the wrapper on every outcome; retrying Close cannot free it later.
   delete detector;
-  return absl::OkStatus();
+  return result;
 }
 
 }  // namespace mediapipe::tasks::c::vision::yolo_object_detector

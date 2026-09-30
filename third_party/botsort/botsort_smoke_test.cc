@@ -131,6 +131,63 @@ TEST(BotsortSmokeTest, PartialObservationAppliesNegativeEvidenceLocally) {
   EXPECT_NE(partial[0]->track_id, left_id);
 }
 
+TEST(BotsortSmokeTest, FullFrameMissExpiresTracksWithOffScreenCenters) {
+  for (const float x : {90.0F, 110.0F}) {
+    SCOPED_TRACE(x);
+    TrackerParams params = TestParams();
+    params.track_buffer = 3;
+    BoTSORT tracker(params);
+    cv::Mat frame(100, 100, CV_8UC3, cv::Scalar(0, 0, 0));
+    const Detection detection = Box(x, 10.0F, 30.0F, 20.0F);
+
+    auto detected = tracker.track({detection}, frame);
+    ASSERT_EQ(detected.size(), 1u);
+    const int original_id = detected[0]->track_id;
+    for (int i = 0; i < 4; ++i) {
+      EXPECT_TRUE(tracker.track({}, frame).empty());
+    }
+
+    // A new observation after expiry starts a tentative track, then confirms
+    // it with a new ID rather than reviving the indefinitely retained track.
+    EXPECT_TRUE(tracker.track({detection}, frame).empty());
+    auto redetected = tracker.track({detection}, frame);
+    ASSERT_EQ(redetected.size(), 1u);
+    EXPECT_NE(redetected[0]->track_id, original_id);
+  }
+}
+
+TEST(BotsortSmokeTest, BorderTrackSurvivesSkipAndUnrelatedPartialRefresh) {
+  BoTSORT tracker(TestParams());
+  cv::Mat frame(100, 100, CV_8UC3, cv::Scalar(0, 0, 0));
+  auto detected = tracker.track({Box(90.0F, 10.0F, 30.0F, 20.0F)}, frame);
+  ASSERT_EQ(detected.size(), 1u);
+  const int id = detected[0]->track_id;
+
+  auto predicted = tracker.predict_only(frame);
+  ASSERT_EQ(predicted.size(), 1u);
+  EXPECT_EQ(predicted[0]->track_id, id);
+  auto unobserved = tracker.track_observed(
+      {}, frame, {cv::Rect(0, 0, 50, 100)});
+  ASSERT_EQ(unobserved.size(), 1u);
+  EXPECT_EQ(unobserved[0]->track_id, id);
+
+  EXPECT_TRUE(tracker.track_observed(
+                         {}, frame, {cv::Rect(50, 0, 50, 100)})
+                  .empty());
+}
+
+TEST(BotsortSmokeTest, ObservedMissRemovesTentativeBorderTrack) {
+  BoTSORT tracker(TestParams());
+  cv::Mat frame(100, 100, CV_8UC3, cv::Scalar(0, 0, 0));
+  const Detection detection = Box(90.0F, 10.0F, 30.0F, 20.0F);
+  EXPECT_TRUE(tracker.track({}, frame).empty());
+  EXPECT_TRUE(tracker.track({detection}, frame).empty());
+  EXPECT_TRUE(tracker.track({}, frame).empty());
+  // The previous tentative track was removed by the full-frame miss. This
+  // observation creates a new tentative track rather than confirming it.
+  EXPECT_TRUE(tracker.track({detection}, frame).empty());
+}
+
 TEST(BotsortSmokeTest,
      PartialObservationDoesNotConsumeFutureLostTrackRetention) {
   TrackerParams params = TestParams();
@@ -229,6 +286,22 @@ TEST(BotsortSmokeTest,
 
   EXPECT_TRUE(transform.isApprox(HomographyMatrix::Identity(), 1e-6))
       << transform;
+}
+
+TEST(BotsortSmokeTest, VideoStabGmcAcceptsForegroundMasking) {
+  OpenCV_VideoStab_GMC_Params params;
+  params.downscale = 1.0F;
+  params.detection_masking = true;
+  OpenCV_VideoStab_GMC gmc(params);
+
+  cv::Mat frame(96, 96, CV_8UC3);
+  cv::RNG rng(12345);
+  rng.fill(frame, cv::RNG::UNIFORM, 0, 255);
+
+  EXPECT_TRUE(gmc.apply(frame, {}, {}).isApprox(
+      HomographyMatrix::Identity(), 1e-6));
+  EXPECT_NO_THROW(gmc.apply(
+      frame, {}, {cv::Rect_<float>(24.0F, 24.0F, 48.0F, 48.0F)}));
 }
 
 TEST(BotsortSmokeTest, TrackIdsAreUniqueAcrossConcurrentAllocators) {

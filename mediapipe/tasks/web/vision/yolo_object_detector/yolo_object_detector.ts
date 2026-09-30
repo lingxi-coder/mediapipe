@@ -241,8 +241,17 @@ function validateYoloOptions(
       'tiling.tile_overlap_fraction is ignored with tiling.explicit_tiles; do not set both',
     );
   }
-  if (tileRows < 0 || tileCols < 0) {
-    throw new Error('tiling.tile_rows and tiling.tile_cols must be >= 0.');
+  if (
+    !Number.isInteger(tileRows) || !Number.isInteger(tileCols) ||
+    tileRows < 0 || tileCols < 0 ||
+    tileRows > 2147483647 || tileCols > 2147483647
+  ) {
+    throw new Error(
+      'tiling.tile_rows and tiling.tile_cols must be non-negative int32 values.',
+    );
+  }
+  if (tileRows * tileCols > 2147483647) {
+    throw new Error('tiling grid tile count must be <= 2147483647.');
   }
   if (
     tiling.getExplicitTilesList().length > 0 &&
@@ -524,7 +533,17 @@ export class YoloObjectDetector extends VisionTaskRunner {
     this.options.setBaseOptions(proto);
   }
 
+  /**
+   * Applies updates in call order. Await asynchronous updates before inference.
+   * Download and validation failures preserve the existing task. If installing
+   * model data or rebuilding the graph fails, the task closes and must be
+   * recreated.
+   */
   override setOptions(options: YoloObjectDetectorOptionsUpdate): Promise<void> {
+    return this.runWithOptionsUpdate(() => this.updateOptions(options));
+  }
+
+  private updateOptions(options: YoloObjectDetectorOptionsUpdate): Promise<void> {
     const candidate = YoloObjectDetectorOptionsProto.deserializeBinary(
       this.options.serializeBinary(),
     );
@@ -558,6 +577,7 @@ export class YoloObjectDetector extends VisionTaskRunner {
     image: ImageSource,
     imageProcessingOptions?: ImageProcessingOptions,
   ): YoloObjectDetectorResult {
+    this.assertReadyForProcessing();
     this.result = {detections: []};
     if (this.isTilingEnabled()) {
       validateTiledImageProcessingOptions(imageProcessingOptions);
@@ -573,6 +593,7 @@ export class YoloObjectDetector extends VisionTaskRunner {
     timestamp: number,
     imageProcessingOptions?: ImageProcessingOptions,
   ): YoloObjectDetectorResult {
+    this.assertReadyForProcessing();
     this.result = {detections: []};
     if (this.isTilingEnabled()) {
       validateTiledImageProcessingOptions(imageProcessingOptions);

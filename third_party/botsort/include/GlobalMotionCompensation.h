@@ -12,11 +12,16 @@
 
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/core/mat.hpp>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/videostab.hpp>
+#include <opencv2/video/tracking.hpp>
+#if __has_include(<opencv2/videostab/global_motion.hpp>)
+#define BOTSORT_HAS_OPENCV_VIDEOSTAB 1
 #include <opencv2/videostab/global_motion.hpp>
+#else
+#define BOTSORT_HAS_OPENCV_VIDEOSTAB 0
+#endif
 
 
 class GMC_Algorithm
@@ -168,9 +173,11 @@ private:
     cv::Mat _prev_frame;
     cv::Mat _prev_homography;
 
+#if BOTSORT_HAS_OPENCV_VIDEOSTAB
     cv::Ptr<cv::videostab::MotionEstimatorRansacL2> _motion_estimator;
     cv::Ptr<cv::videostab::KeypointBasedMotionEstimator>
             _keypoint_motion_estimator;
+#endif
 };
 
 

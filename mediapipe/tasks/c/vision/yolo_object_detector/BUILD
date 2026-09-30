@@ -62,8 +62,7 @@ cc_test(
         "//mediapipe/framework/port:opencv_core",
         "//mediapipe/framework/port:opencv_imgproc",
         "//mediapipe/tasks/testdata/vision:test_images",
-        # Uncomment when yolov8n.tflite is added to testdata/vision/BUILD:
-        # "//mediapipe/tasks/testdata/vision:yolo_test_models",
+        "//mediapipe/tasks/testdata/vision:yolo_test_model",
     ],
     linkstatic = 1,
     deps = [
@@ -75,6 +74,7 @@ cc_test(
         "//mediapipe/tasks/c/core:common",
         "//mediapipe/tasks/c/core:mp_status",
         "//mediapipe/tasks/c/vision/core:image",
+        "//mediapipe/tasks/c/vision/core:image_frame_util",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],

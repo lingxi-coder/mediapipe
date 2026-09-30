@@ -2,9 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-
-#include <opencv2/videostab/global_motion.hpp>
-#include <opencv2/videostab/motion_core.hpp>
+#include <iostream>
+#include <utility>
 
 std::map<std::string, GMC_Method> GlobalMotionCompensation::GMC_method_map = {
         {"orb", GMC_Method::ORB},
@@ -544,6 +543,7 @@ OpenCV_VideoStab_GMC::OpenCV_VideoStab_GMC(
 {
     _load_params_from_config(config);
 
+#if BOTSORT_HAS_OPENCV_VIDEOSTAB
     _motion_estimator = cv::makePtr<cv::videostab::MotionEstimatorRansacL2>(
             cv::videostab::MM_SIMILARITY);
 
@@ -552,6 +552,7 @@ OpenCV_VideoStab_GMC::OpenCV_VideoStab_GMC(
                     _motion_estimator);
     _keypoint_motion_estimator->setDetector(
             cv::GFTTDetector::create(_num_features));
+#endif
 }
 
 
@@ -569,7 +570,13 @@ OpenCV_VideoStab_GMC::apply(const cv::Mat &frame_raw,
                             const std::vector<Detection> &detections,
                             const std::vector<cv::Rect_<float>> &foreground_boxes)
 {
+#if !BOTSORT_HAS_OPENCV_VIDEOSTAB
+    (void)frame_raw;
+    (void)detections;
     (void)foreground_boxes;
+    return HomographyMatrix::Identity();
+#else
+    (void)detections;
     // Initialization
     int height = frame_raw.rows;
     int width = frame_raw.cols;
@@ -590,26 +597,19 @@ OpenCV_VideoStab_GMC::apply(const cv::Mat &frame_raw,
         cv::resize(frame_raw, frame, cv::Size(width, height));
     }
 
+    if (_detections_masking)
+    {
+        const cv::Mat mask = botsort_internal::BuildForegroundMask(
+                frame.size(), _downscale, foreground_boxes);
+        cv::Mat masked_frame = cv::Mat::zeros(frame.size(), frame.type());
+        frame.copyTo(masked_frame, mask);
+        frame = std::move(masked_frame);
+    }
+
     cv::Mat homography = cv::Mat::eye(3, 3, CV_32F);
 
     if (!_prev_frame.empty())
     {
-        if (_detections_masking)
-        {
-            cv::Mat mask = cv::Mat::zeros(frame.size(), CV_8U);
-            for (const Detection &detection: detections)
-            {
-                cv::Rect rect = detection.bbox_tlwh;
-                rect.x /= _downscale;
-                rect.y /= _downscale;
-                rect.width /= _downscale;
-                rect.height /= _downscale;
-                mask(rect) = 255;
-            }
-
-            _keypoint_motion_estimator->setFrameMask(mask);
-        }
-
         bool ok;
         homography =
                 _keypoint_motion_estimator->estimate(_prev_frame, frame, &ok);
@@ -628,6 +628,7 @@ OpenCV_VideoStab_GMC::apply(const cv::Mat &frame_raw,
     frame.copyTo(_prev_frame);
     homography.copyTo(_prev_homography);
     return H;
+#endif
 }
 
 

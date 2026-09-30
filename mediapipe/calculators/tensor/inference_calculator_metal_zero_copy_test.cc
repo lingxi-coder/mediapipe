@@ -24,6 +24,7 @@
 
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -79,18 +80,20 @@ class InferenceMetalZeroCopyTest : public testing::Test {
   // Builds the input tensor with `batch`xkHxkWx`channels`; fills logical
   // channels 0..kC-1 (for each batch slice) with the pattern, padded channel
   // (if any) with 0.
-  static std::vector<Tensor> MakeInput(int batch, int channels) {
+  static std::vector<Tensor> MakeInput(int batch, int channels, int height = kH,
+                                       int width = kW, bool is_dynamic = false) {
     std::vector<Tensor> input;
     input.emplace_back(Tensor::ElementType::kFloat32,
-                       Tensor::Shape{batch, kH, kW, channels});
+                       Tensor::Shape{{batch, height, width, channels},
+                                      is_dynamic});
     auto w = input[0].GetCpuWriteView();
     float* buf = w.buffer<float>();
-    std::memset(buf, 0, sizeof(float) * batch * kH * kW * channels);
+    std::memset(buf, 0, sizeof(float) * batch * height * width * channels);
     for (int b = 0; b < batch; ++b) {
-      float* slice = buf + b * kH * kW * channels;
-      for (int y = 0; y < kH; ++y) {
-        for (int x = 0; x < kW; ++x) {
-          float* px = slice + (y * kW + x) * channels;
+      float* slice = buf + b * height * width * channels;
+      for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+          float* px = slice + (y * width + x) * channels;
           for (int c = 0; c < kC; ++c) px[c] = Pattern(y, x, c);
         }
       }
@@ -102,7 +105,8 @@ class InferenceMetalZeroCopyTest : public testing::Test {
   // the flattened first output tensor. `channels` is the input tensor's last
   // dim (3 = logical normal path, 4 = physical PHWC4 zero-copy path). Asserts
   // the run is OK (use RunStatus for the negative path).
-  std::vector<float> RunOnce(bool zero_copy, int channels) {
+  std::vector<float> RunOnce(bool zero_copy, int channels,
+                              bool is_dynamic = false) {
     CalculatorGraph graph;
     EXPECT_TRUE(graph.Initialize(Config(zero_copy)).ok());
     EXPECT_TRUE(graph.SetGpuResources(gpu_resources_).ok());
@@ -118,7 +122,8 @@ class InferenceMetalZeroCopyTest : public testing::Test {
     EXPECT_TRUE(graph
                     .AddPacketToInputStream(
                         "tensors", MakePacket<std::vector<Tensor>>(
-                                       MakeInput(/*batch=*/1, channels))
+                                       MakeInput(/*batch=*/1, channels, kH, kW,
+                                                  is_dynamic))
                                        .At(Timestamp(0)))
                     .ok());
     EXPECT_TRUE(graph.WaitUntilIdle().ok());
@@ -137,17 +142,15 @@ class InferenceMetalZeroCopyTest : public testing::Test {
     return result;
   }
 
-  // Runs once with the given batch/channels and returns the graph's terminal
-  // status (the calculator's RET_CHECK surfaces here). Used by the negative
-  // (N>1 rejection) test.
-  absl::Status RunStatus(bool zero_copy, int batch, int channels) {
+  // Runs once and returns the graph's terminal input-validation status.
+  absl::Status RunStatus(bool zero_copy, std::vector<Tensor> input) {
     CalculatorGraph graph;
     ABSL_RETURN_IF_ERROR(graph.Initialize(Config(zero_copy)));
     ABSL_RETURN_IF_ERROR(graph.SetGpuResources(gpu_resources_));
     ABSL_RETURN_IF_ERROR(graph.StartRun({}));
     ABSL_RETURN_IF_ERROR(graph.AddPacketToInputStream(
         "tensors",
-        MakePacket<std::vector<Tensor>>(MakeInput(batch, channels))
+        MakePacket<std::vector<Tensor>>(std::move(input))
             .At(Timestamp(0))));
     ABSL_RETURN_IF_ERROR(graph.CloseAllInputStreams());
     // WaitUntilDone surfaces the calculator Process() error (the N==1 guard).
@@ -171,9 +174,65 @@ TEST_F(InferenceMetalZeroCopyTest, DirectBindMatchesNormalPath) {
 // mentions the N==1 requirement.
 TEST_F(InferenceMetalZeroCopyTest, RejectsBatchedInput) {
   absl::Status status =
-      RunStatus(/*zero_copy=*/true, /*batch=*/2, /*channels=*/kC4);
+      RunStatus(/*zero_copy=*/true, MakeInput(/*batch=*/2, /*channels=*/kC4));
   EXPECT_FALSE(status.ok());
   EXPECT_THAT(status.message(), testing::HasSubstr("N==1"));
+}
+
+TEST_F(InferenceMetalZeroCopyTest, RejectsResizedDynamicBatchBeforeConversion) {
+  const absl::Status status = RunStatus(
+      /*zero_copy=*/false,
+      MakeInput(/*batch=*/2, kC, kH, kW, /*is_dynamic=*/true));
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), testing::HasSubstr("input shape"));
+}
+
+TEST_F(InferenceMetalZeroCopyTest, RejectsDifferentShapeWithMatchingByteSize) {
+  for (const bool zero_copy : {false, true}) {
+    SCOPED_TRACE(zero_copy);
+    const absl::Status status = RunStatus(
+        zero_copy, MakeInput(1, zero_copy ? kC4 : kC, kH / 2, kW * 2));
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.message(), testing::HasSubstr("input shape"));
+  }
+}
+
+TEST_F(InferenceMetalZeroCopyTest, RejectsExtraInputsBeforeAccessingBuffers) {
+  for (const bool zero_copy : {false, true}) {
+    SCOPED_TRACE(zero_copy);
+    auto input = MakeInput(1, zero_copy ? kC4 : kC);
+    auto extra_input = MakeInput(1, zero_copy ? kC4 : kC);
+    input.push_back(std::move(extra_input[0]));
+    const absl::Status status = RunStatus(zero_copy, std::move(input));
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.message(), testing::HasSubstr("input tensor count"));
+  }
+}
+
+TEST_F(InferenceMetalZeroCopyTest, RejectsNonFloatInputsBeforeReadingBuffers) {
+  for (const bool zero_copy : {false, true}) {
+    SCOPED_TRACE(zero_copy);
+    std::vector<Tensor> input;
+    input.emplace_back(Tensor::ElementType::kInt32,
+                       Tensor::Shape{1, kH, kW, zero_copy ? kC4 : kC});
+    const absl::Status status = RunStatus(zero_copy, std::move(input));
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(status.message(), testing::HasSubstr("float32 input"));
+  }
+}
+
+TEST_F(InferenceMetalZeroCopyTest, AcceptsDynamicMarkerWithMatchingDimensions) {
+  const auto expected = RunOnce(/*zero_copy=*/false, kC);
+  ASSERT_FALSE(expected.empty());
+  for (const bool zero_copy : {false, true}) {
+    SCOPED_TRACE(zero_copy);
+    const auto actual = RunOnce(zero_copy, zero_copy ? kC4 : kC,
+                                /*is_dynamic=*/true);
+    ASSERT_EQ(actual.size(), expected.size());
+    for (size_t i = 0; i < actual.size(); ++i) {
+      EXPECT_NEAR(actual[i], expected[i], 1e-4f) << "output elem " << i;
+    }
+  }
 }
 
 }  // namespace

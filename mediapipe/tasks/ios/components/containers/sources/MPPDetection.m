@@ -61,11 +61,22 @@
 - (instancetype)initWithCategories:(NSArray<MPPCategory *> *)categories
                        boundingBox:(CGRect)boundingBox
                          keypoints:(nullable NSArray<MPPNormalizedKeypoint *> *)keypoints {
+  return [self initWithCategories:categories
+                      boundingBox:boundingBox
+                        keypoints:keypoints
+                          trackID:nil];
+}
+
+- (instancetype)initWithCategories:(NSArray<MPPCategory *> *)categories
+                       boundingBox:(CGRect)boundingBox
+                         keypoints:(nullable NSArray<MPPNormalizedKeypoint *> *)keypoints
+                           trackID:(nullable NSString *)trackID {
   self = [super init];
   if (self) {
     _categories = categories;
     _boundingBox = boundingBox;
     _keypoints = keypoints;
+    _trackID = trackID;
   }
   return self;
 }
