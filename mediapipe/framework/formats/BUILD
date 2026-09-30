@@ -839,3 +839,48 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
     ],
 )
+
+cc_library(
+    name = "tiling_types",
+    hdrs = ["tiling_types.h"],
+)
+
+# Metal runtime feasibility gate (Phase 5 Task 1). Apple-only ObjC++ test
+# proving a Metal-backed Tensor + MtlBufferView execute on this machine. On
+# non-apple the source compiles to an ordinary (empty-of-Metal) TU.
+cc_test(
+    name = "metal_tensor_smoke_test",
+    srcs = ["metal_tensor_smoke_test.cc"],
+    copts = select({
+        "//mediapipe:apple": [
+            "-x objective-c++",
+            "-fobjc-arc",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "//mediapipe:apple": [
+            "-framework Metal",
+            "-framework Foundation",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":tensor",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "tiling_cache_stats",
+    hdrs = ["tiling_cache_stats.h"],
+    deps = [
+        ":cache_stats",
+        ":cpu_buffer_pool",
+    ],
+)
+
+cc_library(
+    name = "cache_stats",
+    hdrs = ["cache_stats.h"],
+)

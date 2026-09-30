@@ -17,9 +17,9 @@
 #include <memory>
 #include <vector>
 
-#include "mediapipe/calculators/tensor/tiling_cache_stats.h"
-#include "mediapipe/calculators/tensor/tiling_matrix_utils.h"
-#include "mediapipe/calculators/tensor/tiling_types.h"
+#include "mediapipe/framework/formats/tiling_cache_stats.h"
+#include "mediapipe/util/tiling_matrix_utils.h"
+#include "mediapipe/framework/formats/tiling_types.h"
 #include "mediapipe/framework/calculator_runner.h"
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"

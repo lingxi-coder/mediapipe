@@ -31,7 +31,7 @@
 
 #include "absl/status/status.h"
 #include "mediapipe/calculators/tensor/streaming_tiles_to_tensor_batch_calculator.pb.h"
-#include "mediapipe/calculators/tensor/tiling_types.h"
+#include "mediapipe/framework/formats/tiling_types.h"
 #include "mediapipe/framework/calculator_framework.h"
 #include "mediapipe/framework/formats/inference_metadata.pb.h"
 #include "mediapipe/framework/formats/tensor.h"

@@ -29,7 +29,7 @@ pybind_extension(
     name = "_yolo_pt_graph",
     srcs = ["yolo_pt_graph_bridge.cc"],
     deps = [
-        "//mediapipe/calculators/tensor:yolo_batch_detections_to_single_calculator",
+        "//mediapipe/calculators/util:yolo_batch_detections_to_single_calculator",
         "//mediapipe/calculators/tensor:yolo_tensors_to_detections_calculator",
         "//mediapipe/calculators/util:non_max_suppression_calculator",
         "//mediapipe/framework:calculator_framework",

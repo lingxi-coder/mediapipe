@@ -578,3 +578,70 @@ cc_test(
         "@com_google_absl//absl/strings:string_view",
     ],
 )
+
+cc_library(
+    name = "tiling_matrix_utils",
+    visibility = ["//visibility:public"],
+    srcs = ["tiling_matrix_utils.cc"],
+    hdrs = ["tiling_matrix_utils.h"],
+    deps = [
+        "//mediapipe/framework/formats:tiling_types",
+    ],
+)
+
+cc_test(
+    name = "tiling_matrix_utils_test",
+    srcs = ["tiling_matrix_utils_test.cc"],
+    deps = [
+        ":tiling_matrix_utils",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "tiling_cache_utils",
+    visibility = ["//visibility:public"],
+    hdrs = ["tiling_cache_utils.h"],
+    deps = [
+        "//mediapipe/framework/formats:cache_stats",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "tiling_cache_utils_test",
+    srcs = ["tiling_cache_utils_test.cc"],
+    deps = [
+        ":tiling_cache_utils",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# detection_nms_util: shared axis-aligned NMS utility for frame-level
+# suppression.
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "detection_nms_util",
+    visibility = ["//visibility:public"],
+    srcs = ["detection_nms_util.cc"],
+    hdrs = ["detection_nms_util.h"],
+    deps = [
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:opencv_core",
+        "//mediapipe/framework/port:opencv_imgproc",
+    ],
+)
+
+cc_test(
+    name = "detection_nms_util_test",
+    srcs = ["detection_nms_util_test.cc"],
+    deps = [
+        ":detection_nms_util",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)

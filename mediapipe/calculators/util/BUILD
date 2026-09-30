@@ -460,7 +460,7 @@ cc_library(
     srcs = ["rotated_non_max_suppression_calculator.cc"],
     deps = [
         ":rotated_non_max_suppression_calculator_cc_proto",
-        "//mediapipe/calculators/tensor:detection_nms_util",
+        "//mediapipe/util:detection_nms_util",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
@@ -2084,6 +2084,326 @@ cc_test(
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework:calculator_runner",
         "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_library(
+    name = "yolo_batch_detections_to_single_calculator",
+    srcs = ["yolo_batch_detections_to_single_calculator.cc"],
+    deps = [
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "yolo_batch_detections_to_single_calculator_test",
+    srcs = ["yolo_batch_detections_to_single_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":yolo_batch_detections_to_single_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_library(
+    name = "yolo_obb_batch_detections_to_single_calculator",
+    srcs = ["yolo_obb_batch_detections_to_single_calculator.cc"],
+    deps = [
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "yolo_obb_batch_detections_to_single_calculator_test",
+    srcs = ["yolo_obb_batch_detections_to_single_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":yolo_obb_batch_detections_to_single_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+mediapipe_proto_library(
+    name = "tile_spec_to_tile_plan_calculator_proto",
+    srcs = ["tile_spec_to_tile_plan_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "tile_spec_to_tile_plan_calculator",
+    srcs = ["tile_spec_to_tile_plan_calculator.cc"],
+    deps = [
+        ":tile_spec_to_tile_plan_calculator_cc_proto",
+        "//mediapipe/framework/formats:tiling_cache_stats",
+        "//mediapipe/util:tiling_cache_utils",
+        "//mediapipe/framework/formats:tiling_types",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/api2:packet",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "tile_spec_to_tile_plan_calculator_test",
+    srcs = ["tile_spec_to_tile_plan_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":tile_spec_to_tile_plan_calculator",
+        "//mediapipe/framework/formats:tiling_cache_stats",
+        "//mediapipe/framework/formats:tiling_types",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+mediapipe_proto_library(
+    name = "tile_grid_calculator_proto",
+    srcs = ["tile_grid_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "tile_grid_calculator",
+    srcs = ["tile_grid_calculator.cc"],
+    deps = [
+        ":tile_grid_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "tile_grid_calculator_test",
+    srcs = ["tile_grid_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":tile_grid_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+cc_library(
+    name = "merge_tile_detections_accumulator_calculator",
+    srcs = ["merge_tile_detections_accumulator_calculator.cc"],
+    deps = [
+        ":tile_frame_accumulator",
+        "//mediapipe/util:tiling_matrix_utils",
+        "//mediapipe/framework/formats:tiling_types",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/api2:packet",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "//mediapipe/framework:timestamp",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "tile_frame_accumulator",
+    hdrs = ["tile_frame_accumulator.h"],
+)
+
+cc_library(
+    name = "merge_tile_box_detections_accumulator_calculator",
+    srcs = ["merge_tile_box_detections_accumulator_calculator.cc"],
+    deps = [
+        ":tile_frame_accumulator",
+        "//mediapipe/util:tiling_matrix_utils",
+        "//mediapipe/framework/formats:tiling_types",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:timestamp",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/api2:packet",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "merge_tile_box_detections_accumulator_calculator_test",
+    srcs = ["merge_tile_box_detections_accumulator_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":merge_tile_box_detections_accumulator_calculator",
+        "//mediapipe/util:tiling_matrix_utils",
+        "//mediapipe/framework/formats:tiling_types",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_test(
+    name = "merge_tile_detections_accumulator_calculator_test",
+    srcs = ["merge_tile_detections_accumulator_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":merge_tile_detections_accumulator_calculator",
+        "//mediapipe/util:tiling_matrix_utils",
+        "//mediapipe/framework/formats:tiling_types",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# tiled_frame_suppression_calculator: frame-level NMS with single-tile bypass.
+# ---------------------------------------------------------------------------
+
+mediapipe_proto_library(
+    name = "tiled_frame_suppression_calculator_proto",
+    srcs = ["tiled_frame_suppression_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "tiled_frame_suppression_calculator",
+    srcs = ["tiled_frame_suppression_calculator.cc"],
+    deps = [
+        "//mediapipe/util:detection_nms_util",
+        ":tiled_frame_suppression_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "tiled_frame_suppression_calculator_test",
+    srcs = ["tiled_frame_suppression_calculator_test.cc"],
+    deps = [
+        ":tiled_frame_suppression_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# detection_label_id_codec_calculator: label_id <-> string round-trip for
+# optical-flow tracker integration.
+# ---------------------------------------------------------------------------
+
+mediapipe_proto_library(
+    name = "detection_label_id_codec_calculator_proto",
+    srcs = ["detection_label_id_codec_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "detection_label_id_codec_calculator",
+    srcs = ["detection_label_id_codec_calculator.cc"],
+    deps = [
+        ":detection_label_id_codec_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "detection_label_id_codec_calculator_test",
+    srcs = ["detection_label_id_codec_calculator_test.cc"],
+    deps = [
+        ":detection_label_id_codec_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+cc_library(
+    name = "detections_tick_gate_calculator",
+    srcs = ["detections_tick_gate_calculator.cc"],
+    deps = [
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "detections_tick_gate_calculator_test",
+    srcs = ["detections_tick_gate_calculator_test.cc"],
+    deps = [
+        ":detections_tick_gate_calculator",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",

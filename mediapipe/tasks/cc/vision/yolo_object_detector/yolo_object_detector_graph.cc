@@ -29,7 +29,7 @@ limitations under the License.
 #include "mediapipe/framework/formats/rect.pb.h"
 #include "mediapipe/framework/formats/tensor.h"
 #include "mediapipe/framework/port/status_macros.h"
-#include "mediapipe/graphs/tiled_detection/tiled_detection_graphs.pb.h"
+#include "mediapipe/tasks/cc/components/processors/proto/tiled_detection_graph_options.pb.h"
 #include "mediapipe/tasks/cc/common.h"
 #include "mediapipe/tasks/cc/components/processors/image_preprocessing_graph.h"
 #include "mediapipe/tasks/cc/core/model_resources.h"

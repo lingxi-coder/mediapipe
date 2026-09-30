@@ -17,6 +17,9 @@ fetches a DOTA-appropriate test image (boats.jpg).
 Outputs (next to this script, all gitignored); regenerate with:
     python3 mediapipe/tasks/testdata/vision/export_yolov8n_obb_tflite.py
 
+Downloaded weights and export intermediates stay in .yolo_export_cache/ next
+to this script, regardless of the caller's working directory.
+
 (1) ultralytics exports the float32 TFLite OBB model (input [1,640,640,3],
 output [1, 4+num_classes+1, 8400] = [1,20,8400] for DOTAv1's 15 classes).
 (2) MediaPipe-readable metadata is hand-attached (input NormalizationOptions
@@ -35,6 +38,8 @@ from tflite_support import metadata_schema_py_generated as _fb
 from ultralytics import YOLO
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_EXPORT_CACHE = os.path.join(_HERE, ".yolo_export_cache")
+_WEIGHTS = os.path.join(_EXPORT_CACHE, "yolov8n-obb.pt")
 _OUT_MODEL = os.path.join(_HERE, "yolov8n-obb.tflite")
 _LABELS = os.path.join(_HERE, "yolov8n_obb_labels.txt")
 _IMAGE = os.path.join(_HERE, "boats.jpg")
@@ -43,9 +48,15 @@ _IMAGE_URL = "https://ultralytics.com/images/boats.jpg"
 
 def export_float32_tflite():
   """ultralytics export -> (path to the float32 .tflite, names dict)."""
-  model = YOLO("yolov8n-obb.pt")  # auto-downloads if absent
-  out = model.export(format="tflite", imgsz=640, nms=False)
-  path = str(out)
+  os.makedirs(_EXPORT_CACHE, exist_ok=True)
+  caller_cwd = os.getcwd()
+  try:
+    os.chdir(_EXPORT_CACHE)
+    model = YOLO(_WEIGHTS)  # auto-downloads if absent
+    out = model.export(format="tflite", imgsz=640, nms=False)
+    path = os.path.abspath(str(out))
+  finally:
+    os.chdir(caller_cwd)
   assert path.endswith(".tflite") and os.path.exists(path), f"bad export: {path}"
   return path, model.names  # names: {0: "plane", 1: "ship", ...}
 

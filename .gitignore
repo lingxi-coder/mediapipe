@@ -12,29 +12,15 @@ node_modules/
 .gradle/
 MODULE.bazel.lock
 
-# Local run artifacts (ultralytics weights download + python caches)
-/yolov8n.pt
+# Python caches
 __pycache__/
 
-# Locally-exported YOLO Tasks test fixtures (regenerate via export_yolov8n_tflite.py)
+# Locally generated YOLO/OBB test fixtures. Weights and export intermediates
+# are ignored by mediapipe/tasks/testdata/vision/.gitignore.
 /mediapipe/tasks/testdata/vision/yolov8n.tflite
-
-# Intermediate YOLO export artifacts (regenerate via export_yolov8n_tflite.py)
-/yolov8n.onnx
-/yolov8n_saved_model/
-/calibration_image_sample_data_*.npy
 /mediapipe/tasks/testdata/vision/yolov8n_labels.txt
-
-# Locally-exported OBB Tasks test fixtures + export artifacts (regenerate via export_yolov8n_obb_tflite.py)
 /mediapipe/tasks/testdata/vision/yolov8n-obb.tflite
 /mediapipe/tasks/testdata/vision/yolov8n_obb_labels.txt
 /mediapipe/tasks/testdata/vision/boats.jpg
-/yolov8n-obb.pt
-/yolov8n-obb.onnx
-/yolov8n-obb_saved_model/
-
-# Locally-exported ONNX backend test fixtures (regenerate via export_yolov8n_onnx.py)
 /mediapipe/tasks/testdata/vision/yolov8n.onnx
 /mediapipe/tasks/testdata/vision/yolov8n-obb.onnx
-/mediapipe/tasks/testdata/vision/yolov8n.pt
-/mediapipe/tasks/testdata/vision/yolov8n-obb.pt

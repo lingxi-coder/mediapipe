@@ -19,6 +19,7 @@ load(
     "//mediapipe/framework/tool:mediapipe_files.bzl",
     "mediapipe_files",
 )
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])  # Apache License 2.0
 
@@ -359,4 +360,16 @@ cc_library(
     name = "libc++_shared_lib",
     srcs = [":libc++_shared.so"],
     alwayslink = 1,
+)
+
+cc_test(
+    name = "onnxruntime_link_smoke_test",
+    srcs = ["onnxruntime_link_smoke_test.cc"],
+    tags = ["nomsan", "notsan"],
+    deps = [
+        "//mediapipe/framework/port:gtest_main",
+    ] + select({
+        "//mediapipe:macos": ["@macos_onnxruntime//:onnxruntime"],
+        "//conditions:default": [],
+    }),
 )

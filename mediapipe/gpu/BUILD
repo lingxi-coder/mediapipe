@@ -1696,3 +1696,21 @@ mediapipe_cc_test(
         "@libyuv",
     ],
 )
+
+# GPU zero-copy scaffolding types (Plan 4). Pure types + the in-flight ownership
+# ledger; no GL includes, so this compiles under MEDIAPIPE_DISABLE_GPU=1 and the
+# ledger is CPU-unit-tested. The GLES converter/calculator paths consume these
+# only inside GLES-guarded code.
+cc_library(
+    name = "tiling_gpu_resource",
+    hdrs = ["tiling_gpu_resource.h"],
+)
+
+cc_test(
+    name = "tiling_gpu_resource_test",
+    srcs = ["tiling_gpu_resource_test.cc"],
+    deps = [
+        ":tiling_gpu_resource",
+        "//mediapipe/framework/port:gtest_main",
+    ],
+)

@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "absl/status/status.h"
-#include "mediapipe/calculators/tensor/detection_nms_util.h"
+#include "mediapipe/util/detection_nms_util.h"
 #include "mediapipe/calculators/util/rotated_non_max_suppression_calculator.pb.h"
 #include "mediapipe/framework/api2/node.h"
 #include "mediapipe/framework/calculator_framework.h"

@@ -478,3 +478,156 @@ cc_test(
         "//mediapipe/framework/port:status",
     ],
 )
+
+mediapipe_proto_library(
+    name = "video_tile_scheduler_calculator_proto",
+    srcs = ["video_tile_scheduler_calculator.proto"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "video_tile_scheduler_util",
+    srcs = ["video_tile_scheduler_util.cc"],
+    hdrs = ["video_tile_scheduler_util.h"],
+    deps = [
+        ":video_tile_scheduler_calculator_cc_proto",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
+    ],
+)
+
+cc_library(
+    name = "video_tile_scheduler_calculator",
+    srcs = ["video_tile_scheduler_calculator.cc"],
+    deps = [
+        ":video_tile_scheduler_calculator_cc_proto",
+        ":video_tile_scheduler_util",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:ret_check",
+        "//mediapipe/util/tracking:flow_packager_cc_proto",
+        "//mediapipe/util/tracking:tracking",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "video_tile_scheduler_calculator_test",
+    srcs = ["video_tile_scheduler_calculator_test.cc"],
+    size = "small",
+    deps = [
+        ":video_tile_scheduler_calculator",
+        ":video_tile_scheduler_calculator_cc_proto",
+        ":video_tile_scheduler_util",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/formats:rect_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+        "//mediapipe/util/tracking:flow_packager_cc_proto",
+        "//mediapipe/util/tracking:tracking",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# botsort_tracking_calculator: api2 wrapper around the vendored motion-only
+# BoTSORT tracker (IMAGE + DETECTIONS -> DETECTIONS).
+# ---------------------------------------------------------------------------
+
+mediapipe_proto_library(
+    name = "botsort_tracking_calculator_proto",
+    srcs = ["botsort_tracking_calculator.proto"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
+
+cc_library(
+    name = "botsort_tracking_calculator",
+    srcs = ["botsort_tracking_calculator.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":botsort_tracking_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/formats:tiling_types",
+        "//third_party:opencv",
+        "//third_party/botsort",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "botsort_tracking_calculator_test",
+    srcs = ["botsort_tracking_calculator_test.cc"],
+    deps = [
+        ":botsort_tracking_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:detection_cc_proto",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/formats:location_data_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:opencv_core",
+        "//mediapipe/framework/port:opencv_imgproc",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# oriented_botsort_tracking_calculator: oriented analog of
+# botsort_tracking_calculator. Assigns BoTSORT track ids to oriented
+# detections via ID-association on their axis-aligned bounding boxes, keeping
+# the fresh rotated geometry (IMAGE + ORIENTED_DETECTIONS -> ORIENTED_DETECTIONS).
+# Reuses BotsortTrackingCalculatorOptions (no new options message).
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "oriented_botsort_tracking_calculator",
+    srcs = ["oriented_botsort_tracking_calculator.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":botsort_tracking_calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:node",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:image_frame_opencv",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//third_party:opencv",
+        "//third_party/botsort",
+        "@com_google_absl//absl/status",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "oriented_botsort_tracking_calculator_test",
+    srcs = ["oriented_botsort_tracking_calculator_test.cc"],
+    deps = [
+        ":oriented_botsort_tracking_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:calculator_runner",
+        "//mediapipe/framework/formats:image_frame",
+        "//mediapipe/framework/formats:oriented_detection_cc_proto",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:status_matchers",
+    ],
+)

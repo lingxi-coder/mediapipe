@@ -1,0 +1,2 @@
+# Downloaded weights and intermediate YOLO exports are local cache data.
+.yolo_export_cache/

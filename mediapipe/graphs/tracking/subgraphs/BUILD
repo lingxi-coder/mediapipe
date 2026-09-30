@@ -127,3 +127,14 @@ mediapipe_simple_subgraph(
         "//mediapipe/calculators/util:rect_to_render_data_calculator",
     ],
 )
+
+mediapipe_simple_subgraph(
+    name = "optical_flow_tracking_graph",
+    graph = "optical_flow_tracking_graph.pbtxt",
+    register_as = "OpticalFlowTrackingGraph",
+    deps = [
+        "//mediapipe/calculators/image:image_transformation_calculator",
+        "//mediapipe/calculators/video:flow_packager_calculator",
+        "//mediapipe/calculators/video:motion_analysis_calculator",
+    ],
+)

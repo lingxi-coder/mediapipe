@@ -16,6 +16,9 @@
 The output (yolov8n.tflite, next to this script) is gitignored; regenerate with:
     python3 mediapipe/tasks/testdata/vision/export_yolov8n_tflite.py
 
+Downloaded weights and export intermediates stay in .yolo_export_cache/ next
+to this script, regardless of the caller's working directory.
+
 It (1) exports the float32 TFLite model via ultralytics (input [1,640,640,3],
 output [1,84,8400]) and (2) hand-attaches MediaPipe-readable metadata:
 input NormalizationOptions(mean=0,std=255) so MediaPipe's ImageToTensor feeds the
@@ -33,15 +36,23 @@ from tflite_support import metadata_schema_py_generated as _fb
 from ultralytics import YOLO
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_EXPORT_CACHE = os.path.join(_HERE, ".yolo_export_cache")
+_WEIGHTS = os.path.join(_EXPORT_CACHE, "yolov8n.pt")
 _OUT_MODEL = os.path.join(_HERE, "yolov8n.tflite")
 _LABELS = os.path.join(_HERE, "yolov8n_labels.txt")
 
 
 def export_float32_tflite():
   """ultralytics export -> (path to the float32 .tflite, names dict)."""
-  model = YOLO("yolov8n.pt")  # auto-downloads if absent
-  out = model.export(format="tflite", imgsz=640, nms=False)
-  path = str(out)
+  os.makedirs(_EXPORT_CACHE, exist_ok=True)
+  caller_cwd = os.getcwd()
+  try:
+    os.chdir(_EXPORT_CACHE)
+    model = YOLO(_WEIGHTS)  # auto-downloads if absent
+    out = model.export(format="tflite", imgsz=640, nms=False)
+    path = os.path.abspath(str(out))
+  finally:
+    os.chdir(caller_cwd)
   assert path.endswith(".tflite") and os.path.exists(path), f"bad export: {path}"
   return path, model.names  # names: {id: "person", ...}
 

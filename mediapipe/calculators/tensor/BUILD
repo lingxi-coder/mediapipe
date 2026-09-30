@@ -40,6 +40,11 @@ exports_files(
     ],
 )
 
+exports_files(
+    ["testdata/1x256x256x3_softmax.tflite"],
+    visibility = ["//mediapipe/tasks/cc/components/processors:__pkg__"],
+)
+
 config_setting(
     name = "disable_gpu",
     define_values = {
@@ -2545,7 +2550,7 @@ cc_library(
     name = "yolo_tensors_to_detections_calculator",
     srcs = ["yolo_tensors_to_detections_calculator.cc"],
     deps = [
-        ":detection_nms_util",
+        "//mediapipe/util:detection_nms_util",
         ":yolo_tensors_to_detections_calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
@@ -2577,64 +2582,10 @@ cc_test(
 )
 
 cc_library(
-    name = "yolo_batch_detections_to_single_calculator",
-    srcs = ["yolo_batch_detections_to_single_calculator.cc"],
-    deps = [
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "yolo_batch_detections_to_single_calculator_test",
-    srcs = ["yolo_batch_detections_to_single_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":yolo_batch_detections_to_single_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_library(
-    name = "yolo_obb_batch_detections_to_single_calculator",
-    srcs = ["yolo_obb_batch_detections_to_single_calculator.cc"],
-    deps = [
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "yolo_obb_batch_detections_to_single_calculator_test",
-    srcs = ["yolo_obb_batch_detections_to_single_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":yolo_obb_batch_detections_to_single_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_library(
     name = "yolo_obb_tensors_to_oriented_detections_calculator",
     srcs = ["yolo_obb_tensors_to_oriented_detections_calculator.cc"],
     deps = [
-        ":detection_nms_util",
+        "//mediapipe/util:detection_nms_util",
         ":yolo_obb_tensors_to_oriented_detections_calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework/api2:node",
@@ -2659,112 +2610,6 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_library(
-    name = "tiling_types",
-    hdrs = ["tiling_types.h"],
-)
-
-cc_library(
-    name = "tiling_matrix_utils",
-    srcs = ["tiling_matrix_utils.cc"],
-    hdrs = ["tiling_matrix_utils.h"],
-    deps = [
-        ":image_to_tensor_utils",
-        ":tiling_types",
-    ],
-)
-
-cc_test(
-    name = "tiling_matrix_utils_test",
-    srcs = ["tiling_matrix_utils_test.cc"],
-    deps = [
-        ":tiling_matrix_utils",
-        "//mediapipe/framework/port:gtest_main",
-    ],
-)
-
-mediapipe_proto_library(
-    name = "tile_spec_to_tile_plan_calculator_proto",
-    srcs = ["tile_spec_to_tile_plan_calculator.proto"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "tile_spec_to_tile_plan_calculator",
-    srcs = ["tile_spec_to_tile_plan_calculator.cc"],
-    deps = [
-        ":tile_spec_to_tile_plan_calculator_cc_proto",
-        ":tiling_cache_stats",
-        ":tiling_cache_utils",
-        ":tiling_types",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/api2:packet",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "tile_spec_to_tile_plan_calculator_test",
-    srcs = ["tile_spec_to_tile_plan_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":tile_spec_to_tile_plan_calculator",
-        ":tiling_cache_stats",
-        ":tiling_types",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-        "@com_google_absl//absl/strings:str_format",
-    ],
-)
-
-mediapipe_proto_library(
-    name = "tile_grid_calculator_proto",
-    srcs = ["tile_grid_calculator.proto"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "tile_grid_calculator",
-    srcs = ["tile_grid_calculator.cc"],
-    deps = [
-        ":tile_grid_calculator_cc_proto",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "tile_grid_calculator_test",
-    srcs = ["tile_grid_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":tile_grid_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -2793,11 +2638,11 @@ cc_library(
     features = ["-layering_check"],
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
-        ":tiling_cache_stats",
-        ":tiling_cache_utils",
-        ":tiling_gpu_resource",
-        ":tiling_matrix_utils",
-        ":tiling_types",
+        "//mediapipe/framework/formats:tiling_cache_stats",
+        "//mediapipe/util:tiling_cache_utils",
+        "//mediapipe/gpu:tiling_gpu_resource",
+        "//mediapipe/util:tiling_matrix_utils",
+        "//mediapipe/framework/formats:tiling_types",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework:port",
         "//mediapipe/framework/api2:node",
@@ -2862,9 +2707,9 @@ cc_test(
     size = "small",
     deps = [
         ":streaming_tiles_to_tensor_batch_calculator",
-        ":tiling_cache_stats",
-        ":tiling_matrix_utils",
-        ":tiling_types",
+        "//mediapipe/framework/formats:tiling_cache_stats",
+        "//mediapipe/util:tiling_matrix_utils",
+        "//mediapipe/framework/formats:tiling_types",
         "//mediapipe/framework:calculator_runner",
         "//mediapipe/framework/formats:image_frame",
         "//mediapipe/framework/formats:inference_metadata_cc_proto",
@@ -2872,32 +2717,6 @@ cc_test(
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:parse_text_proto",
         "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-# Metal runtime feasibility gate (Phase 5 Task 1). Apple-only ObjC++ test
-# proving a Metal-backed Tensor + MtlBufferView execute on this machine. On
-# non-apple the source compiles to an ordinary (empty-of-Metal) TU.
-cc_test(
-    name = "metal_tensor_smoke_test",
-    srcs = ["metal_tensor_smoke_test.cc"],
-    copts = select({
-        "//mediapipe:apple": [
-            "-x objective-c++",
-            "-fobjc-arc",
-        ],
-        "//conditions:default": [],
-    }),
-    linkopts = select({
-        "//mediapipe:apple": [
-            "-framework Metal",
-            "-framework Foundation",
-        ],
-        "//conditions:default": [],
-    }),
-    deps = [
-        "//mediapipe/framework/formats:tensor",
-        "//mediapipe/framework/port:gtest_main",
     ],
 )
 
@@ -2978,7 +2797,7 @@ cc_test(
         "//conditions:default": [
             ":streaming_tiles_to_tensor_batch_calculator",
             ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
-            ":tiling_types",
+            "//mediapipe/framework/formats:tiling_types",
             "//mediapipe/framework:calculator_framework",
             "//mediapipe/framework/formats:inference_metadata_cc_proto",
             "//mediapipe/framework/formats:tensor",
@@ -3072,8 +2891,8 @@ cc_test(
         "//mediapipe:apple": [
             ":streaming_tiles_to_tensor_batch_calculator",
             ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
-            ":tiling_cache_stats",
-            ":tiling_types",
+            "//mediapipe/framework/formats:tiling_cache_stats",
+            "//mediapipe/framework/formats:tiling_types",
             "//mediapipe/framework:calculator_framework",
             "//mediapipe/framework/formats:image_frame",
             "//mediapipe/framework/formats:inference_metadata_cc_proto",
@@ -3081,38 +2900,6 @@ cc_test(
             "//mediapipe/framework/port:opencv_imgcodecs",
             "//mediapipe/framework/port:parse_text_proto",
             "//mediapipe/framework/port:status",
-            "//mediapipe/framework/port:status_matchers",
-            "//mediapipe/gpu:gpu_buffer",
-            "//mediapipe/gpu:gpu_shared_data_internal",
-            "//mediapipe/util:image_test_utils",
-            "@com_google_absl//absl/status",
-        ],
-        "//conditions:default": [],
-    }),
-)
-
-# Metal env required. End-to-end: Metal tiled zero-copy preprocessing ->
-# InferenceCalculatorMetal direct external-input, at batch N=1. On non-apple:
-# empty TU.
-cc_test(
-    name = "streaming_to_inference_metal_zero_copy_test",
-    srcs = ["streaming_to_inference_metal_zero_copy_test.cc"],
-    data = select({
-        "//mediapipe:apple": [":testdata/1x256x256x3_softmax.tflite"],
-        "//conditions:default": [],
-    }),
-    deps = [
-        "//mediapipe/framework:port",
-        "//mediapipe/framework/port:gtest_main",
-    ] + select({
-        "//mediapipe:apple": [
-            ":inference_calculator",
-            ":streaming_tiles_to_tensor_batch_calculator",
-            ":tiling_types",
-            "//mediapipe/framework:calculator_framework",
-            "//mediapipe/framework/formats:inference_metadata_cc_proto",
-            "//mediapipe/framework/formats:tensor",
-            "//mediapipe/framework/port:parse_text_proto",
             "//mediapipe/framework/port:status_matchers",
             "//mediapipe/gpu:gpu_buffer",
             "//mediapipe/gpu:gpu_shared_data_internal",
@@ -3152,160 +2939,6 @@ cc_test(
     }),
 )
 
-# Metal env required (runs on this Mac, Apple M2 Max). END-TO-END proof of TRUE
-# Metal zero-copy through a real tiled OBB detection pipeline: GPU frame ->
-# direct-PHWC4 tiled front -> direct Metal delegate input (converter skipped) ->
-# OBB decode -> tile->global merge -> global rotated NMS. Asserts converter-
-# skipped direct bind + buffer identity (ZERO_COPY_DEBUG), no CPU fallback, one
-# merged result, equivalence vs the CPU-front Metal-inference control, and a
-# ship. Gated on the yolov8n-obb.tflite + boats.jpg fixtures. On non-apple the
-# source compiles to an empty TU.
-cc_test(
-    name = "tiled_zero_copy_detection_metal_test",
-    srcs = ["tiled_zero_copy_detection_metal_test.cc"],
-    copts = select({
-        "//mediapipe:apple": [
-            "-x objective-c++",
-            "-fobjc-arc",
-        ],
-        "//conditions:default": [],
-    }),
-    # yolo_obb_test_model globs BOTH yolov8n-obb.tflite AND boats.jpg, and is
-    # the fixture target whose visibility was widened to this package. (The
-    # general :test_images group keeps the package-default //mediapipe/tasks
-    # visibility, so it is intentionally NOT used here.)
-    data = select({
-        "//mediapipe:apple": [
-            "//mediapipe/tasks/testdata/vision:yolo_obb_test_model",
-        ],
-        "//conditions:default": [],
-    }),
-    linkopts = select({
-        "//mediapipe:apple": [
-            "-framework Metal",
-            "-framework Foundation",
-        ],
-        "//conditions:default": [],
-    }),
-    linkstatic = 1,
-    deps = [
-        "//mediapipe/framework:port",
-        "//mediapipe/framework/port:gtest_main",
-    ] + select({
-        "//mediapipe:apple": [
-            ":inference_calculator",
-            ":merge_tile_detections_accumulator_calculator",
-            ":streaming_tiles_to_tensor_batch_calculator",
-            ":streaming_tiles_to_tensor_batch_calculator_cc_proto",
-            ":tiling_cache_stats",
-            ":tiling_types",
-            ":yolo_obb_tensors_to_oriented_detections_calculator",
-            "//mediapipe/calculators/core:pass_through_calculator",
-            "//mediapipe/calculators/util:rotated_non_max_suppression_calculator",
-            "//mediapipe/framework:calculator_framework",
-            "//mediapipe/framework/formats:image_frame",
-            "//mediapipe/framework/formats:inference_metadata_cc_proto",
-            "//mediapipe/framework/formats:oriented_detection_cc_proto",
-            "//mediapipe/framework/formats:tensor",
-            "//mediapipe/framework/port:file_helpers",
-            "//mediapipe/framework/port:opencv_core",
-            "//mediapipe/framework/port:opencv_imgcodecs",
-            "//mediapipe/framework/port:parse_text_proto",
-            "//mediapipe/framework/port:status",
-            "//mediapipe/framework/port:status_matchers",
-            "//mediapipe/gpu:gpu_buffer",
-            "//mediapipe/gpu:gpu_buffer_format",
-            "//mediapipe/gpu:gpu_shared_data_internal",
-            "//mediapipe/util:image_test_utils",
-            "@com_google_absl//absl/status",
-        ],
-        "//conditions:default": [],
-    }),
-)
-
-mediapipe_proto_library(
-    name = "video_tile_scheduler_calculator_proto",
-    srcs = ["video_tile_scheduler_calculator.proto"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "video_tile_scheduler_util",
-    srcs = ["video_tile_scheduler_util.cc"],
-    hdrs = ["video_tile_scheduler_util.h"],
-    deps = [
-        ":video_tile_scheduler_calculator_cc_proto",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-    ],
-)
-
-cc_library(
-    name = "video_tile_scheduler_calculator",
-    srcs = ["video_tile_scheduler_calculator.cc"],
-    deps = [
-        ":video_tile_scheduler_calculator_cc_proto",
-        ":video_tile_scheduler_util",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "//mediapipe/util/tracking:flow_packager_cc_proto",
-        "//mediapipe/util/tracking:tracking",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "video_tile_scheduler_calculator_test",
-    srcs = ["video_tile_scheduler_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":video_tile_scheduler_calculator",
-        ":video_tile_scheduler_calculator_cc_proto",
-        ":video_tile_scheduler_util",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-        "//mediapipe/util/tracking:flow_packager_cc_proto",
-        "//mediapipe/util/tracking:tracking",
-    ],
-)
-
-cc_test(
-    name = "video_tile_scheduler_pipeline_test",
-    srcs = ["video_tile_scheduler_pipeline_test.cc"],
-    size = "small",
-    deps = [
-        ":merge_tile_detections_accumulator_calculator",
-        ":streaming_tiles_to_tensor_batch_calculator",
-        ":tile_spec_to_tile_plan_calculator",
-        ":tiling_cache_stats",
-        ":tiling_types",
-        ":video_tile_scheduler_calculator",
-        ":yolo_obb_tensors_to_oriented_detections_calculator",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:image_frame",
-        "//mediapipe/framework/formats:inference_metadata_cc_proto",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/formats:tensor",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
 cc_test(
     name = "vector_to_tensor_calculator_test",
     srcs = ["vector_to_tensor_calculator_test.cc"],
@@ -3321,406 +2954,4 @@ cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
-)
-
-cc_library(
-    name = "merge_tile_detections_accumulator_calculator",
-    srcs = ["merge_tile_detections_accumulator_calculator.cc"],
-    deps = [
-        ":tile_frame_accumulator",
-        ":tiling_matrix_utils",
-        ":tiling_types",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/api2:packet",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "//mediapipe/framework:timestamp",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
-    name = "tile_frame_accumulator",
-    hdrs = ["tile_frame_accumulator.h"],
-)
-
-cc_library(
-    name = "merge_tile_box_detections_accumulator_calculator",
-    srcs = ["merge_tile_box_detections_accumulator_calculator.cc"],
-    deps = [
-        ":tile_frame_accumulator",
-        ":tiling_matrix_utils",
-        ":tiling_types",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework:timestamp",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/api2:packet",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/port:ret_check",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "merge_tile_box_detections_accumulator_calculator_test",
-    srcs = ["merge_tile_box_detections_accumulator_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":merge_tile_box_detections_accumulator_calculator",
-        ":tiling_matrix_utils",
-        ":tiling_types",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_test(
-    name = "merge_tile_detections_accumulator_calculator_test",
-    srcs = ["merge_tile_detections_accumulator_calculator_test.cc"],
-    size = "small",
-    deps = [
-        ":merge_tile_detections_accumulator_calculator",
-        ":tiling_matrix_utils",
-        ":tiling_types",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_test(
-    name = "tiled_obb_pipeline_test",
-    srcs = ["tiled_obb_pipeline_test.cc"],
-    size = "small",
-    deps = [
-        ":merge_tile_detections_accumulator_calculator",
-        ":tiling_matrix_utils",
-        ":tiling_types",
-        "//mediapipe/calculators/util:rotated_non_max_suppression_calculator",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_library(
-    name = "tiling_cache_stats",
-    hdrs = ["tiling_cache_stats.h"],
-    deps = [
-        ":tiling_cache_utils",
-        "//mediapipe/framework/formats:cpu_buffer_pool",
-    ],
-)
-
-# GPU zero-copy scaffolding types (Plan 4). Pure types + the in-flight ownership
-# ledger; no GL includes, so this compiles under MEDIAPIPE_DISABLE_GPU=1 and the
-# ledger is CPU-unit-tested. The GLES converter/calculator paths consume these
-# only inside GLES-guarded code.
-cc_library(
-    name = "tiling_gpu_resource",
-    hdrs = ["tiling_gpu_resource.h"],
-)
-
-cc_test(
-    name = "tiling_gpu_resource_test",
-    srcs = ["tiling_gpu_resource_test.cc"],
-    deps = [
-        ":tiling_gpu_resource",
-        "//mediapipe/framework/port:gtest_main",
-    ],
-)
-
-cc_library(
-    name = "tiling_cache_utils",
-    hdrs = ["tiling_cache_utils.h"],
-    deps = [
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
-    ],
-)
-
-cc_test(
-    name = "tiling_cache_utils_test",
-    srcs = ["tiling_cache_utils_test.cc"],
-    deps = [
-        ":tiling_cache_utils",
-        "//mediapipe/framework/port:gtest_main",
-    ],
-)
-
-# ---------------------------------------------------------------------------
-# detection_nms_util: shared axis-aligned NMS utility for frame-level
-# suppression.
-# ---------------------------------------------------------------------------
-
-cc_library(
-    name = "detection_nms_util",
-    srcs = ["detection_nms_util.cc"],
-    hdrs = ["detection_nms_util.h"],
-    deps = [
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:opencv_core",
-        "//mediapipe/framework/port:opencv_imgproc",
-    ],
-)
-
-cc_test(
-    name = "detection_nms_util_test",
-    srcs = ["detection_nms_util_test.cc"],
-    deps = [
-        ":detection_nms_util",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-    ],
-)
-
-# ---------------------------------------------------------------------------
-# tiled_frame_suppression_calculator: frame-level NMS with single-tile bypass.
-# ---------------------------------------------------------------------------
-
-mediapipe_proto_library(
-    name = "tiled_frame_suppression_calculator_proto",
-    srcs = ["tiled_frame_suppression_calculator.proto"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "tiled_frame_suppression_calculator",
-    srcs = ["tiled_frame_suppression_calculator.cc"],
-    deps = [
-        ":detection_nms_util",
-        ":tiled_frame_suppression_calculator_cc_proto",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "tiled_frame_suppression_calculator_test",
-    srcs = ["tiled_frame_suppression_calculator_test.cc"],
-    deps = [
-        ":tiled_frame_suppression_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-# ---------------------------------------------------------------------------
-# botsort_tracking_calculator: api2 wrapper around the vendored motion-only
-# BoTSORT tracker (IMAGE + DETECTIONS -> DETECTIONS).
-# ---------------------------------------------------------------------------
-
-mediapipe_proto_library(
-    name = "botsort_tracking_calculator_proto",
-    srcs = ["botsort_tracking_calculator.proto"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "botsort_tracking_calculator",
-    srcs = ["botsort_tracking_calculator.cc"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":botsort_tracking_calculator_cc_proto",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:image_frame",
-        "//mediapipe/framework/formats:image_frame_opencv",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        ":tiling_types",
-        "//third_party:opencv",
-        "//third_party/botsort",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "botsort_tracking_calculator_test",
-    srcs = ["botsort_tracking_calculator_test.cc"],
-    deps = [
-        ":botsort_tracking_calculator",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:image_frame",
-        "//mediapipe/framework/formats:image_frame_opencv",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:opencv_core",
-        "//mediapipe/framework/port:opencv_imgproc",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-# ---------------------------------------------------------------------------
-# oriented_botsort_tracking_calculator: oriented analog of
-# botsort_tracking_calculator. Assigns BoTSORT track ids to oriented
-# detections via ID-association on their axis-aligned bounding boxes, keeping
-# the fresh rotated geometry (IMAGE + ORIENTED_DETECTIONS -> ORIENTED_DETECTIONS).
-# Reuses BotsortTrackingCalculatorOptions (no new options message).
-# ---------------------------------------------------------------------------
-
-cc_library(
-    name = "oriented_botsort_tracking_calculator",
-    srcs = ["oriented_botsort_tracking_calculator.cc"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":botsort_tracking_calculator_cc_proto",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:image_frame",
-        "//mediapipe/framework/formats:image_frame_opencv",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//third_party:opencv",
-        "//third_party/botsort",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "oriented_botsort_tracking_calculator_test",
-    srcs = ["oriented_botsort_tracking_calculator_test.cc"],
-    deps = [
-        ":oriented_botsort_tracking_calculator",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:image_frame",
-        "//mediapipe/framework/formats:oriented_detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-# ---------------------------------------------------------------------------
-# detection_label_id_codec_calculator: label_id <-> string round-trip for
-# optical-flow tracker integration.
-# ---------------------------------------------------------------------------
-
-mediapipe_proto_library(
-    name = "detection_label_id_codec_calculator_proto",
-    srcs = ["detection_label_id_codec_calculator.proto"],
-    deps = [
-        "//mediapipe/framework:calculator_options_proto",
-        "//mediapipe/framework:calculator_proto",
-    ],
-)
-
-cc_library(
-    name = "detection_label_id_codec_calculator",
-    srcs = ["detection_label_id_codec_calculator.cc"],
-    deps = [
-        ":detection_label_id_codec_calculator_cc_proto",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "@com_google_absl//absl/log:absl_log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "detection_label_id_codec_calculator_test",
-    srcs = ["detection_label_id_codec_calculator_test.cc"],
-    deps = [
-        ":detection_label_id_codec_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_library(
-    name = "detections_tick_gate_calculator",
-    srcs = ["detections_tick_gate_calculator.cc"],
-    deps = [
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "@com_google_absl//absl/status",
-    ],
-    alwayslink = 1,
-)
-
-cc_test(
-    name = "detections_tick_gate_calculator_test",
-    srcs = ["detections_tick_gate_calculator_test.cc"],
-    deps = [
-        ":detections_tick_gate_calculator",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-    ],
-)
-
-cc_test(
-    name = "video_tile_scheduler_e2e_test",
-    srcs = ["video_tile_scheduler_e2e_test.cc"],
-    size = "small",
-    deps = [
-        ":tiled_frame_suppression_calculator",
-        ":video_tile_scheduler_calculator",
-        "//mediapipe/calculators/core:previous_loopback_calculator",
-        "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework:calculator_runner",
-        "//mediapipe/framework/api2:node",
-        "//mediapipe/framework/formats:detection_cc_proto",
-        "//mediapipe/framework/formats:location_data_cc_proto",
-        "//mediapipe/framework/formats:rect_cc_proto",
-        "//mediapipe/framework/port:gtest_main",
-        "//mediapipe/framework/port:parse_text_proto",
-        "//mediapipe/framework/port:status_matchers",
-        "//mediapipe/util/tracking:flow_packager_cc_proto",
-        "@com_google_absl//absl/status",
-    ],
-)
-
-cc_test(
-    name = "onnxruntime_link_smoke_test",
-    srcs = ["onnxruntime_link_smoke_test.cc"],
-    tags = ["nomsan", "notsan"],
-    deps = [
-        "//mediapipe/framework/port:gtest_main",
-    ] + select({
-        "//mediapipe:macos": ["@macos_onnxruntime//:onnxruntime"],
-        "//conditions:default": [],
-    }),
 )

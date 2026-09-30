@@ -94,3 +94,13 @@ mediapipe_proto_library(
         "//mediapipe/tasks/cc/core/proto:external_file_proto",
     ],
 )
+
+mediapipe_proto_library(
+    name = "tiled_detection_graph_options_proto",
+    srcs = ["tiled_detection_graph_options.proto"],
+    deps = [
+        "//mediapipe/calculators/util:tile_grid_calculator_proto",
+        "//mediapipe/framework:calculator_options_proto",
+        "//mediapipe/framework:calculator_proto",
+    ],
+)
